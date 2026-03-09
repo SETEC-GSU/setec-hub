@@ -10,6 +10,7 @@ export async function createUser(formData: FormData) {
   const email = formData.get("email") as string
   const senha = formData.get("senha") as string
   const role = formData.get("role") as string
+  const setor = formData.get("setor") as string // NOVO CAMPO
 
   if (!email || !senha || !role) {
     throw new Error("Dados obrigatórios não informados.")
@@ -26,7 +27,7 @@ export async function createUser(formData: FormData) {
 
   await supabaseAdmin
     .from("usuarios")
-    .update({ nome, role })
+    .update({ nome, role, setor }) // ADICIONADO SETOR
     .eq("id", data.user.id)
 
   revalidatePath("/usuarios")
@@ -42,10 +43,11 @@ export async function updateUser(formData: FormData) {
   const id = formData.get("id") as string
   const nome = formData.get("nome") as string
   const role = formData.get("role") as string
+  const setor = formData.get("setor") as string // NOVO CAMPO
 
   await supabaseAdmin
     .from("usuarios")
-    .update({ nome, role })
+    .update({ nome, role, setor }) // ADICIONADO SETOR
     .eq("id", id)
 
   revalidatePath("/usuarios")
