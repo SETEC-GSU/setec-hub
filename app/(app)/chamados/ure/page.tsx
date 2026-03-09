@@ -176,13 +176,9 @@ Nossa equipe da SETEC irá analisar sua solicitação em breve.`
     }
 
     // ⭐ ENVIO DE EMAIL AUTOMÁTICO (ADICIONADO SEM QUEBRAR NADA)
-    if(session.user.email){
-
-      console.log("📧 Chamando função de email")
-
-      await enviarEmailChamado(session.user.email,form.titulo)
-
-    }
+    // if(session.user.email){
+//   await enviarEmailChamado(session.user.email,form.titulo)
+// }
 
     alert("Chamado aberto 🚀")
 
