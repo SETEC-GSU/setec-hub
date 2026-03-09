@@ -1,0 +1,53 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+/* ⭐ DARK DEFAULT */
+:root {
+  --bg-main: #020617;
+  --bg-card: #0f172a;
+  --bg-hover: #1e293b;
+
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+
+  --border-color: #1e293b;
+
+  --brand: #3b82f6;
+}
+
+/* ⭐ LIGHT MODE */
+.light {
+  --bg-main: #f8fafc;
+  --bg-card: #ffffff;
+  --bg-hover: #e2e8f0;
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+
+  --border-color: #e2e8f0;
+
+  --brand: #2563eb;
+}
+
+/* ⭐ BODY */
+body {
+  background: var(--bg-main);
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  transition: background 0.25s ease, color 0.25s ease;
+}
+
+/* ⭐ FIX MAPA LEAFLET (IMPORTANTE) */
+.leaflet-container {
+  background: var(--bg-card);
+  border-radius: 1rem;
+  .leaflet-container {
+  height: 100%;
+  width: 100%;
+}
+
+.leaflet-div-icon {
+  background: transparent;
+  border: none;
+}
+}

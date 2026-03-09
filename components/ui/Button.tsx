@@ -1,0 +1,20 @@
+export default function Button({children}:any){
+  return(
+    <button
+      className="
+      w-full
+      py-3
+      rounded-xl
+      font-semibold
+      bg-gradient-to-r
+      from-indigo-600
+      to-blue-600
+      hover:scale-[1.02]
+      hover:shadow-lg
+      transition
+      "
+    >
+      {children}
+    </button>
+  )
+}
