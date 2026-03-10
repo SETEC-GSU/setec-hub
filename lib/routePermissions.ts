@@ -13,5 +13,6 @@ export const routePermissions: Record<string, Permission> = {
   "/dashboard-escolar":"dashboard.escolar",
   "/fields":"fields.view",
   "/fields/agenda-field":"agenda.field",
-  "/fields/inteligencia-operacional":"intoperacional.field"
+  "/fields/inteligencia-operacional":"intoperacional.field",
+  "/inventario":"inventario.view"
 }

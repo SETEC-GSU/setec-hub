@@ -33,6 +33,13 @@ export default async function Sidebar() {
     },
 
     {
+      title: "💻 Equipamentos",
+      items: [
+        { href: "/inventario", label: "Inventário Tecnológico", icon: "🖥️", permission: "inventario.view" },
+      ]
+    },
+
+    {
       title: "📡 Fields",
       items: [
         { href: "/fields", label: "Atendimento", icon: "🧑‍🔧", permission: "fields.view" },

@@ -16,6 +16,8 @@ export type Permission =
   | "dashboard.escolar"
   | "agenda.field"
   | "intoperacional.field"
+  | "inventario.view"
+
   
 
 
@@ -35,7 +37,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "escolas.manage",
     "dashboard.escolar",
     "agenda.field",
-    "intoperacional.field"
+    "intoperacional.field",
+    "inventario.view"
   ],
 
   analista: [
@@ -49,7 +52,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "fields.view",
     "dashboard.escolar",
     "agenda.field",
-    "intoperacional.field"
+    "intoperacional.field",
+    "inventario.view"
   ],
 
   chefia_ure: [
@@ -68,7 +72,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "chamados.escola.create",
     "escolas.view",
     "calendar.view",
-    "agenda.field"
+    "agenda.field",
+    "inventario.view"
   ],
 
   dirigente: [
@@ -81,7 +86,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "dashboard.escolar",
     "fields.view",
     "agenda.field",
-    "intoperacional.field"
+    "intoperacional.field",
+    "inventario.view"
+  
   ],
 
   seintec: [
@@ -95,7 +102,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "dashboard.escolar",
     "fields.view",
     "agenda.field",
-    "intoperacional.field"
+    "intoperacional.field",
+    "inventario.view"
   ],
 }
 
