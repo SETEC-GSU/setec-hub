@@ -36,6 +36,7 @@ export default async function Sidebar() {
       title: "💻 Equipamentos",
       items: [
         { href: "/inventario", label: "Inventário Tecnológico", icon: "🖥️", permission: "inventario.view" },
+        { href: "/inventario/visao-geral", label: "Visão Geral", icon: "📈", permission: "inventario.vgeral" },
       ]
     },
 

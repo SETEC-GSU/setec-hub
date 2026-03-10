@@ -14,5 +14,6 @@ export const routePermissions: Record<string, Permission> = {
   "/fields":"fields.view",
   "/fields/agenda-field":"agenda.field",
   "/fields/inteligencia-operacional":"intoperacional.field",
-  "/inventario":"inventario.view"
+  "/inventario":"inventario.view",
+  "/inventario/visao-geral":"inventario.vgeral"
 }
