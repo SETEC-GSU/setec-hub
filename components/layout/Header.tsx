@@ -14,16 +14,16 @@ export default function Header() {
           ☰
         </button>
 
-        <div className="truncate">
-          <h1 className="text-white font-semibold hidden sm:block truncate">
+        <div className="min-w-0">
+          <h1 className="text-white font-semibold hidden sm:block truncate whitespace-nowrap">
             Plataforma Operacional - SETEC GSU
           </h1>
 
-          <h1 className="text-white font-semibold sm:hidden">
+          <h1 className="text-white font-semibold sm:hidden whitespace-nowrap">
             SETEC GSU
           </h1>
 
-          <p className="text-slate-400 text-sm hidden sm:block truncate">
+          <p className="text-slate-400 text-sm hidden sm:block truncate whitespace-nowrap">
             Boa tarde, SETEC - URE Guarulhos Sul
           </p>
         </div>
