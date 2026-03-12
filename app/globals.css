@@ -97,26 +97,31 @@ body {
     color: #000 !important;
   }
 
+  /* esconder navegação */
   aside,
   nav,
   header {
     display: none !important;
   }
 
+  /* esconder botões */
   button {
     display: none !important;
   }
 
+  /* ocupar largura total */
   main {
     width: 100% !important;
     margin: 0 !important;
     padding: 0 !important;
   }
 
+  /* preservar grid do Tailwind */
   .grid {
     display: grid !important;
   }
 
+  /* evitar quebra de cards */
   .card,
   .Card,
   [class*="rounded"] {
@@ -124,10 +129,12 @@ body {
     page-break-inside: avoid;
   }
 
+  /* remover sombras */
   * {
     box-shadow: none !important;
   }
 
+  /* garantir texto visível */
   p,
   span,
   h1,
@@ -140,6 +147,7 @@ body {
     color: #000 !important;
   }
 
+  /* barras de progresso visíveis */
   .bg-cyan-400 {
     background-color: #06b6d4 !important;
   }
@@ -156,49 +164,4 @@ body {
     background-color: #f87171 !important;
   }
 
-}
-
-/* ===================================================== */
-/* ⭐ MOBILE GLOBAL IMPROVEMENTS */
-/* ===================================================== */
-
-img,
-video,
-canvas {
-  max-width: 100%;
-  height: auto;
-}
-
-* {
-  word-break: break-word;
-}
-
-.grid {
-  width: 100%;
-}
-
-/* Tipografia responsiva */
-
-h1 {
-  font-size: clamp(1.4rem, 2.5vw, 2rem);
-}
-
-h2 {
-  font-size: clamp(1.2rem, 2vw, 1.6rem);
-}
-
-p {
-  font-size: clamp(0.85rem, 1vw, 1rem);
-}
-
-/* evitar overflow lateral */
-
-body {
-  overflow-x: hidden;
-}
-
-/* padding global mobile */
-
-main {
-  padding-bottom: 40px;
 }

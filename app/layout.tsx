@@ -1,5 +1,5 @@
 import './globals.css'
-import type { Metadata, Viewport } from 'next'
+import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import { ThemeProvider } from '@/components/theme-provider'
 
@@ -14,12 +14,6 @@ export const metadata: Metadata = {
   description: 'Plataforma Operacional SETEC',
 }
 
-export const viewport: Viewport = {
-  width: 'device-width',
-  initialScale: 1,
-  maximumScale: 1,
-}
-
 export default function RootLayout({
   children,
 }: {
@@ -31,30 +25,10 @@ export default function RootLayout({
       className={inter.variable}
       suppressHydrationWarning
     >
-      <body className="font-sans antialiased min-h-screen overflow-x-hidden">
-
-        {/* Container global responsivo */}
-        <div className="min-h-screen flex flex-col">
-
-          <ThemeProvider>
-
-            {/* área principal responsiva */}
-            <main className="
-              flex-1
-              w-full
-              max-w-[1800px]
-              mx-auto
-              px-4
-              sm:px-6
-              lg:px-8
-            ">
-              {children}
-            </main>
-
-          </ThemeProvider>
-
-        </div>
-
+      <body className="font-sans antialiased">
+        <ThemeProvider>
+          {children}
+        </ThemeProvider>
       </body>
     </html>
   )

@@ -76,16 +76,16 @@ export default async function Sidebar() {
   ]
 
   return (
-    <aside className="w-64 sm:w-72 bg-[#020617] border-r border-slate-800 flex flex-col justify-between min-h-screen">
+    <aside className="w-72 bg-[#020617] border-r border-slate-800 flex flex-col justify-between">
 
       <div>
 
-        <div className="h-24 flex items-center px-6 sm:px-8 text-2xl font-bold border-b border-slate-800">
+        <div className="h-24 flex items-center px-8 text-2xl font-bold border-b border-slate-800">
           <span className="text-blue-500">SETEC</span>
           <span className="ml-2 font-light">Hub</span>
         </div>
 
-        <nav className="mt-6 px-3 sm:px-4 space-y-4">
+        <nav className="mt-6 px-4 space-y-4">
 
           {sections.map(section => {
 

@@ -18,10 +18,7 @@ export default function Card({ children, className = "" }: CardProps) {
 
         shadow-[0_20px_60px_-15px_rgba(0,0,0,0.7)]
 
-        p-4 sm:p-6
-
-        w-full
-
+        p-6
         ${className}
       `}
     >
