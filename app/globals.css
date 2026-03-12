@@ -1,6 +1,10 @@
 @import "tailwindcss";
 @import "leaflet/dist/leaflet.css";
 
+/* ===================================================== */
+/* ⭐ VARIÁVEIS DE TEMA */
+/* ===================================================== */
+
 /* ⭐ DARK DEFAULT */
 :root {
   --bg-main: #020617;
@@ -29,19 +33,44 @@
   --brand: #2563eb;
 }
 
+/* ===================================================== */
 /* ⭐ BODY */
+/* ===================================================== */
+
 body {
   background: var(--bg-main);
   color: var(--text-primary);
   font-family: 'Inter', sans-serif;
   transition: background 0.25s ease, color 0.25s ease;
+
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* ⭐ FIX MAPA LEAFLET (IMPORTANTE) */
+/* ===================================================== */
+/* ⭐ SCROLLBAR SUAVE */
+/* ===================================================== */
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-hover);
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ===================================================== */
+/* ⭐ FIX MAPA LEAFLET */
+/* ===================================================== */
+
 .leaflet-container {
   background: var(--bg-card);
   border-radius: 1rem;
-  .leaflet-container {
   height: 100%;
   width: 100%;
 }
@@ -50,4 +79,126 @@ body {
   background: transparent;
   border: none;
 }
+
+/* ===================================================== */
+/* ⭐ PRINT / EXPORT PDF */
+/* ===================================================== */
+
+@page {
+  size: A4 landscape;
+  margin: 18mm;
+}
+
+@media print {
+
+  html,
+  body {
+    background: white !important;
+    color: #000 !important;
+  }
+
+  aside,
+  nav,
+  header {
+    display: none !important;
+  }
+
+  button {
+    display: none !important;
+  }
+
+  main {
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .grid {
+    display: grid !important;
+  }
+
+  .card,
+  .Card,
+  [class*="rounded"] {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  * {
+    box-shadow: none !important;
+  }
+
+  p,
+  span,
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  div {
+    color: #000 !important;
+  }
+
+  .bg-cyan-400 {
+    background-color: #06b6d4 !important;
+  }
+
+  .bg-green-500 {
+    background-color: #22c55e !important;
+  }
+
+  .bg-yellow-400 {
+    background-color: #facc15 !important;
+  }
+
+  .bg-red-400 {
+    background-color: #f87171 !important;
+  }
+
+}
+
+/* ===================================================== */
+/* ⭐ MOBILE GLOBAL IMPROVEMENTS */
+/* ===================================================== */
+
+img,
+video,
+canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+* {
+  word-break: break-word;
+}
+
+.grid {
+  width: 100%;
+}
+
+/* Tipografia responsiva */
+
+h1 {
+  font-size: clamp(1.4rem, 2.5vw, 2rem);
+}
+
+h2 {
+  font-size: clamp(1.2rem, 2vw, 1.6rem);
+}
+
+p {
+  font-size: clamp(0.85rem, 1vw, 1rem);
+}
+
+/* evitar overflow lateral */
+
+body {
+  overflow-x: hidden;
+}
+
+/* padding global mobile */
+
+main {
+  padding-bottom: 40px;
 }

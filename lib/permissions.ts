@@ -18,6 +18,9 @@ export type Permission =
   | "intoperacional.field"
   | "inventario.view"
   | "inventario.vgeral"
+  | "apoio.usuario"
+  | "tutoriais.populares"
+
 
   
 
@@ -40,7 +43,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "agenda.field",
     "intoperacional.field",
     "inventario.view",
-    "inventario.vgeral"
+    "inventario.vgeral",
+    "apoio.usuario",
+    "tutoriais.populares"
   ],
 
   analista: [
@@ -56,7 +61,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "agenda.field",
     "intoperacional.field",
     "inventario.view",
-    "inventario.vgeral"
+    "inventario.vgeral",
+    "apoio.usuario",
+    "tutoriais.populares"
   ],
 
   chefia_ure: [
@@ -66,7 +73,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "escolas.view",
     "calendar.view",
     "dashboard.escolar",
-    "agenda.field"
+    "agenda.field",
+    "apoio.usuario"
   ],
 
   gestao_escolas: [
@@ -76,7 +84,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "escolas.view",
     "calendar.view",
     "agenda.field",
-    "inventario.view"
+    "inventario.view",
+    "apoio.usuario"
   ],
 
   dirigente: [
@@ -91,7 +100,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "agenda.field",
     "intoperacional.field",
     "inventario.view",
-    "inventario.vgeral"
+    "inventario.vgeral",
+    "apoio.usuario",
+    "tutoriais.populares"
   
   ],
 
@@ -108,7 +119,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "agenda.field",
     "intoperacional.field",
     "inventario.view",
-    "inventario.vgeral"
+    "inventario.vgeral",
+    "apoio.usuario",
+    "tutoriais.populares"
   ],
 }
 

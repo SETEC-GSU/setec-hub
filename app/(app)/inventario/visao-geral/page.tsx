@@ -5,7 +5,8 @@ export default async function DiretoriaPage(){
 
 const supabase = await createServerSupabase()
 
-// EQUIPAMENTOS RECEBIDOS (BASE REAL DA DIRETORIA)
+
+// EQUIPAMENTOS RECEBIDOS
 const { data: equipamentos } = await supabase
 .from("equipamentos_recebidos")
 .select(`
@@ -30,7 +31,7 @@ nao_localizado
 `)
 
 
-// ESCOLAS QUE JÁ ENVIARAM INVENTÁRIO
+// INVENTÁRIOS ENVIADOS
 const { data: inventarios } = await supabase
 .from("inventario_respostas")
 .select("escola_nome")
@@ -53,7 +54,7 @@ totalNaoLocalizados += item.nao_localizado || 0
 })
 
 
-// BASE DE EQUIPAMENTOS
+// BASE EQUIPAMENTOS
 
 let totalEquipamentos = 0
 let totalPlataformas = 0
@@ -68,37 +69,17 @@ const modelo = item.equipamentos_modelos?.equipamento
 const quantidade = item.quantidade_recebida
 const escola = item.escola_nome
 
-// SEPARA PLATAFORMAS
 if(finalidade === "Carregamento móvel"){
-
 totalPlataformas += quantidade
 return
-
 }
 
-// TOTAL DIRETORIA
 totalEquipamentos += quantidade
 
-
-// DISTRIBUIÇÃO POR MODELO
-
-if(!modelos[modelo]){
-
-modelos[modelo] = 0
-
-}
-
+if(!modelos[modelo]) modelos[modelo] = 0
 modelos[modelo] += quantidade
 
-
-// RANKING ESCOLAS
-
-if(!ranking[escola]){
-
-ranking[escola] = 0
-
-}
-
+if(!ranking[escola]) ranking[escola] = 0
 ranking[escola] += quantidade
 
 })
@@ -112,14 +93,14 @@ totalEquipamentos > 0
 : 0
 
 
-// RANKING ORDENADO
+// RANKING
 
 const rankingOrdenado = Object.entries(ranking)
 .sort((a:any,b:any)=>b[1]-a[1])
 .slice(0,10)
 
 
-// ESCOLAS COM INVENTÁRIO PENDENTE
+// INVENTÁRIOS
 
 const escolasComEquipamentos = [
 ...new Set(equipamentos?.map((e:any)=>e.escola_nome))
@@ -133,52 +114,55 @@ const escolasPendentes = escolasComEquipamentos.filter(
 (escola:any)=>!escolasComInventario.includes(escola)
 )
 
+const escolasEnviadas = escolasComInventario
+
+const totalEscolas = escolasComEquipamentos.length
+const totalEnviados = escolasEnviadas.length
+
+const progressoInventario =
+totalEscolas > 0
+? Math.round((totalEnviados / totalEscolas) * 100)
+: 0
 
 
 return(
 
 <div className="space-y-8">
 
+<div className="flex justify-between items-center">
+
 <h1 className="text-3xl font-bold text-white">
-Visão Completa do Inventário das UEs
+Visão Geral do Inventário das UEs
 </h1>
+
+</div>
 
 
 <div className="grid grid-cols-5 gap-4">
 
 <Card>
 <p className="text-xs text-slate-400">Equipamentos</p>
-<p className="text-3xl font-bold text-white">
-{totalEquipamentos}
-</p>
+<p className="text-3xl font-bold text-white">{totalEquipamentos}</p>
 </Card>
 
 <Card>
 <p className="text-xs text-slate-400">Funcionando</p>
-<p className="text-3xl font-bold text-green-400">
-{totalFuncionando}
-</p>
+<p className="text-3xl font-bold text-green-400">{totalFuncionando}</p>
 </Card>
 
 <Card>
 <p className="text-xs text-slate-400">Garantia</p>
-<p className="text-3xl font-bold text-yellow-400">
-{totalGarantia}
-</p>
+<p className="text-3xl font-bold text-yellow-400">{totalGarantia}</p>
 </Card>
 
 <Card>
 <p className="text-xs text-slate-400">Danificados</p>
-<p className="text-3xl font-bold text-red-400">
-{totalDanificados}
-</p>
+<p className="text-3xl font-bold text-red-400">{totalDanificados}</p>
 </Card>
 
 <Card>
 <p className="text-xs text-slate-400">Não localizados</p>
-<p className="text-3xl font-bold text-gray-400">
-{totalNaoLocalizados}
-</p>
+<p className="text-3xl font-bold text-gray-400">{totalNaoLocalizados}</p>
 </Card>
 
 </div>
@@ -238,13 +222,9 @@ key={modelo}
 className="bg-slate-900 border border-slate-800 rounded-xl p-3"
 >
 
-<p className="text-xs text-slate-400">
-{modelo}
-</p>
+<p className="text-xs text-slate-400">{modelo}</p>
 
-<p className="text-xl font-bold text-white">
-{total}
-</p>
+<p className="text-xl font-bold text-white">{total}</p>
 
 </div>
 
@@ -270,13 +250,9 @@ key={escola}
 className="flex justify-between bg-slate-900 border border-slate-800 rounded-xl px-4 py-2"
 >
 
-<p className="text-slate-300">
-{i+1}º {escola}
-</p>
+<p className="text-slate-300">{i+1}º {escola}</p>
 
-<p className="text-white font-semibold">
-{total}
-</p>
+<p className="text-white font-semibold">{total}</p>
 
 </div>
 
@@ -290,12 +266,38 @@ className="flex justify-between bg-slate-900 border border-slate-800 rounded-xl 
 <Card>
 
 <h2 className="text-xl font-semibold mb-4">
-Inventários pendentes
+Status Inventários
 </h2>
 
-{escolasPendentes.length > 0 ? (
+<p className="text-sm text-slate-400 mb-2">
+{totalEnviados} / {totalEscolas} escolas enviaram inventário
+</p>
+
+<div className="w-full bg-slate-800 rounded-full h-4 mb-6">
+
+<div
+className="bg-green-500 h-4 rounded-full"
+style={{width:`${progressoInventario}%`}}
+/>
+
+</div>
 
 <div className="space-y-2">
+
+{escolasEnviadas.map((escola:any,i:number)=>(
+
+<div
+key={i}
+className="flex justify-between bg-slate-900 border border-green-800 rounded-xl px-4 py-2"
+>
+
+<p className="text-green-300">{escola}</p>
+
+<p className="text-green-400 font-semibold">Enviado</p>
+
+</div>
+
+))}
 
 {escolasPendentes.map((escola:any,i:number)=>(
 
@@ -304,13 +306,9 @@ key={i}
 className="flex justify-between bg-slate-900 border border-red-900 rounded-xl px-4 py-2"
 >
 
-<p className="text-red-300">
-{escola}
-</p>
+<p className="text-red-300">{escola}</p>
 
-<p className="text-red-400 font-semibold">
-Pendente
-</p>
+<p className="text-red-400 font-semibold">Pendente</p>
 
 </div>
 
@@ -318,13 +316,35 @@ Pendente
 
 </div>
 
-) : (
+</Card>
 
-<p className="text-green-400">
-Todas as escolas já enviaram inventário.
-</p>
 
-)}
+{/* DASHBOARD EXTRA (não interfere em nada) */}
+
+<Card>
+
+<h2 className="text-xl font-semibold mb-4">
+Resumo da Infraestrutura
+</h2>
+
+<div className="grid grid-cols-3 gap-4 text-center">
+
+<div>
+<p className="text-xs text-slate-400">Parque total</p>
+<p className="text-2xl font-bold text-white">{totalEquipamentos + totalPlataformas}</p>
+</div>
+
+<div>
+<p className="text-xs text-slate-400">Dispositivos operacionais</p>
+<p className="text-2xl font-bold text-green-400">{totalFuncionando}</p>
+</div>
+
+<div>
+<p className="text-xs text-slate-400">Inventários recebidos</p>
+<p className="text-2xl font-bold text-blue-400">{totalEnviados}</p>
+</div>
+
+</div>
 
 </Card>
 

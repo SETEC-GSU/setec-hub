@@ -15,5 +15,7 @@ export const routePermissions: Record<string, Permission> = {
   "/fields/agenda-field":"agenda.field",
   "/fields/inteligencia-operacional":"intoperacional.field",
   "/inventario":"inventario.view",
-  "/inventario/visao-geral":"inventario.vgeral"
+  "/inventario/visao-geral":"inventario.vgeral",
+  "/apoio-usuario":"apoio.usuario",
+  "/tutoriais-populares":"tutoriais.populares"
 }
