@@ -7,15 +7,15 @@ export default function Header() {
     <header className="w-full h-16 flex items-center justify-between px-4 sm:px-6 border-b border-slate-800 bg-[#020617]">
 
       {/* ESQUERDA */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 min-w-0">
 
         {/* BOTÃO MENU MOBILE */}
-        <button className="lg:hidden text-white text-2xl">
+        <button className="lg:hidden text-white text-2xl shrink-0">
           ☰
         </button>
 
-        <div>
-          <h1 className="text-white font-semibold hidden sm:block">
+        <div className="truncate">
+          <h1 className="text-white font-semibold hidden sm:block truncate">
             Plataforma Operacional - SETEC GSU
           </h1>
 
@@ -23,7 +23,7 @@ export default function Header() {
             SETEC GSU
           </h1>
 
-          <p className="text-slate-400 text-sm hidden sm:block">
+          <p className="text-slate-400 text-sm hidden sm:block truncate">
             Boa tarde, SETEC - URE Guarulhos Sul
           </p>
         </div>
@@ -31,7 +31,7 @@ export default function Header() {
       </div>
 
       {/* DIREITA */}
-      <div className="flex items-center gap-2 sm:gap-4">
+      <div className="flex items-center gap-2 sm:gap-4 shrink-0">
 
         {/* 🔔 BADGE NOTIFICAÇÃO */}
         <NotificacaoChamados />
