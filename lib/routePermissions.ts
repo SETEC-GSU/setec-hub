@@ -17,5 +17,7 @@ export const routePermissions: Record<string, Permission> = {
   "/inventario":"inventario.view",
   "/inventario/visao-geral":"inventario.vgeral",
   "/apoio-usuario":"apoio.usuario",
-  "/tutoriais-populares":"tutoriais.populares"
+  "/tutoriais-populares":"tutoriais.populares",
+  "/painel-chamados":"painel.chamados",
+  "/avisos":"avisos.view"
 }

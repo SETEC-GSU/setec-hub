@@ -2,236 +2,346 @@
 
 import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase"
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
-} from "recharts"
+import Link from "next/link"
 
-export default function Dashboard() {
-  const supabase = createClient()
+export default function Home() {
 
-  const [stats, setStats] = useState({
-    total: 0,
-    aberto: 0,
-    atendimento: 0,
-    resolvidoHoje: 0,
-    criticos: 0,
-  })
+const supabase = createClient()
 
-  const [ranking, setRanking] = useState<any[]>([])
-  const [meses, setMeses] = useState<any[]>([])
-  const [origem, setOrigem] = useState<any[]>([])
-  const [prioridade, setPrioridade] = useState<any[]>([])
+const [stats,setStats] = useState({
+chamados:0,
+visitas:0,
+equipamentos:0,
+escolas:0
+})
 
-  async function carregar() {
-    const { data } = await supabase.from("chamados").select("*")
-    if (!data) return
+const [tutoriais,setTutoriais] = useState<any[]>([])
+const [visitas,setVisitas] = useState<any[]>([])
+const [avisos,setAvisos] = useState<any[]>([])
+const [inventarioPendentes,setInventarioPendentes] = useState(0)
+const [tecnicos,setTecnicos] = useState<any[]>([])
 
-    const hoje = new Date().toDateString()
+async function carregar(){
 
-    setStats({
-      total: data.length,
-      aberto: data.filter((c) => c.status === "aberto").length,
-      atendimento: data.filter((c) => c.status === "em_atendimento").length,
-      resolvidoHoje: data.filter(
-        (c) => c.resolved_at && new Date(c.resolved_at).toDateString() === hoje
-      ).length,
-      criticos: data.filter((c) => c.prioridade === "critica").length,
-    })
+const agora = new Date().toISOString()
 
-    const mapa: any = {}
-    data.forEach((c) => {
-      mapa[c.categoria] = (mapa[c.categoria] || 0) + 1
-    })
+/* chamados resolvidos */
 
-    setRanking(
-      Object.keys(mapa)
-        .map((k) => ({ categoria: k, total: mapa[k] }))
-        .sort((a, b) => b.total - a.total)
-        .slice(0, 8)
-    )
+const {data:chamados} = await supabase
+.from("chamados")
+.select("id,status")
 
-    const mesMap: any = {}
-    data.forEach((c) => {
-      const mes = new Date(c.created_at).toLocaleDateString("pt-BR", {
-        month: "2-digit",
-        year: "numeric",
-      })
-      mesMap[mes] = (mesMap[mes] || 0) + 1
-    })
+/* visitas realizadas */
 
-    setMeses(Object.keys(mesMap).map((k) => ({ mes: k, total: mesMap[k] })))
+const {data:visitasRealizadas} = await supabase
+.from("fields_visitas")
+.select("id,status")
 
-    const origemMap: any = {}
-    data.forEach((c) => {
-      origemMap[c.origem] = (origemMap[c.origem] || 0) + 1
-    })
+/* equipamentos recebidos */
 
-    const origemArray = Object.keys(origemMap).map((k) => ({
-      name: k,
-      value: origemMap[k],
-    }))
+const {data:equipamentos} = await supabase
+.from("equipamentos_recebidos")
+.select("quantidade_recebida")
 
-    setOrigem(origemArray)
+/* escolas */
 
-    const prioMap: any = {}
-    data.forEach((c) => {
-      prioMap[c.prioridade] = (prioMap[c.prioridade] || 0) + 1
-    })
+const {data:escolas} = await supabase
+.from("escolas")
+.select("id,nome_escola")
 
-    setPrioridade(
-      Object.keys(prioMap).map((k) => ({
-        prioridade: k,
-        total: prioMap[k],
-      }))
-    )
-  }
+const totalEscolas = escolas?.length || 0
 
-  useEffect(() => {
-    carregar()
-  }, [])
 
-  const COLORS = ["#8B5CF6", "#3B82F6", "#22C55E", "#F59E0B", "#EF4444"]
+/* INVENTÁRIOS RESPONDIDOS (CORREÇÃO) */
 
-  const totalOrigem = origem.reduce((acc, cur) => acc + cur.value, 0)
+const {data:inventariosRespondidos} = await supabase
+.from("inventario_respostas")
+.select("escola_nome")
 
-  return (
-    <div className="space-y-6">
+/* remover duplicados */
 
-      <div>
-        <h2 className="text-2xl font-bold text-white">ITSM Dashboard</h2>
-        <p className="text-slate-400 text-sm">
-          Visão operacional dos atendimentos SETEC
-        </p>
-      </div>
+const escolasRespondidas = [
+...new Set(
+inventariosRespondidos?.map((i:any)=>i.escola_nome)
+)
+]
 
-      <div className="grid grid-cols-5 gap-4">
-        <Card title="Total" value={stats.total} color="blue" />
-        <Card title="Abertos" value={stats.aberto} color="yellow" />
-        <Card title="Em atendimento" value={stats.atendimento} color="purple" />
-        <Card title="Resolvidos hoje" value={stats.resolvidoHoje} color="green" />
-        <Card title="Críticos" value={stats.criticos} color="red" />
-      </div>
+const totalRespondidos = escolasRespondidas.length
 
-      <div className="grid grid-cols-2 gap-6">
+setInventarioPendentes(totalEscolas - totalRespondidos)
 
-        <Glass>
-          <h3 className="mb-4 font-semibold text-white">Ranking de solicitações</h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={ranking} layout="vertical">
-              <XAxis type="number" hide />
-              <YAxis
-                dataKey="categoria"
-                type="category"
-                width={180}
-                tick={{ fill: "#94a3b8", fontSize: 12 }}
-              />
-              <Tooltip />
-              <Bar dataKey="total" fill="#3B82F6" radius={[0, 6, 6, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </Glass>
 
-        <Glass>
-          <h3 className="mb-4 font-semibold text-white">Chamados por mês</h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={meses}>
-              <XAxis dataKey="mes" tick={{ fill: "#94a3b8", fontSize: 12 }} />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="total" fill="#8B5CF6" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </Glass>
 
-        {/* ⭐ DONUT PREMIUM */}
-        <Glass>
-          <h3 className="mb-4 font-semibold text-white">Origem dos chamados</h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <PieChart>
-              <Pie
-                data={origem}
-                dataKey="value"
-                nameKey="name"
-                innerRadius={60}
-                outerRadius={100}
-                paddingAngle={4}
-                animationDuration={600}
-              >
-                {origem.map((_, index) => (
-                  <Cell key={index} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
+/* tutoriais */
 
-              <Tooltip
-                formatter={(value: any) =>
-                  `${value} (${((value / totalOrigem) * 100).toFixed(1)}%)`
-                }
-              />
+const {data:tutoriaisData} = await supabase
+.from("base_conhecimento")
+.select("*")
+.order("visualizacoes",{ascending:false})
+.limit(5)
 
-              <Legend
-                layout="vertical"
-                align="right"
-                verticalAlign="middle"
-                iconType="circle"
-                formatter={(value: any, entry: any) => {
-                  const percent = ((entry.payload.value / totalOrigem) * 100).toFixed(1)
-                  return `${value} — ${entry.payload.value} (${percent}%)`
-                }}
-                wrapperStyle={{ color: "#94a3b8", fontSize: "12px" }}
-              />
-            </PieChart>
-          </ResponsiveContainer>
-        </Glass>
 
-        <Glass>
-          <h3 className="mb-4 font-semibold text-white">Chamados por prioridade</h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={prioridade}>
-              <XAxis dataKey="prioridade" />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="total" fill="#EF4444" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </Glass>
 
-      </div>
-    </div>
-  )
+/* visitas field */
+
+const {data:visitasData} = await supabase
+.from("fields_visitas")
+.select("*")
+.order("data_visita",{ascending:false})
+.limit(5)
+
+
+
+/* TÉCNICOS FIELD (CORREÇÃO) */
+
+const {data:todosTecnicos} = await supabase
+.from("fields_visitas")
+.select("tecnico")
+
+const tecnicosUnicos = [
+...new Set(
+todosTecnicos?.map((v:any)=>v.tecnico).filter(Boolean)
+)
+]
+
+setTecnicos(tecnicosUnicos)
+
+
+
+/* avisos */
+
+const {data:avisosData} = await supabase
+.from("avisos_setec")
+.select("*")
+.eq("ativo",true)
+.or(`data_inicio.is.null,data_inicio.lte.${agora},data_fim.is.null,data_fim.gte.${agora}`)
+.order("created_at",{ascending:false})
+.limit(3)
+
+
+
+setStats({
+
+chamados:chamados?.filter(c=>c.status==="resolvido").length || 0,
+
+visitas:visitasRealizadas?.filter(v=>v.status==="REALIZADA").length || 0,
+
+equipamentos:equipamentos?.reduce((acc:any,item:any)=>acc+item.quantidade_recebida,0) || 0,
+
+escolas:totalEscolas
+
+})
+
+setTutoriais(tutoriaisData || [])
+setVisitas(visitasData || [])
+setAvisos(avisosData || [])
+
 }
 
-function Glass({ children }: any) {
-  return (
-    <div className="bg-gradient-to-br from-[#020617] to-[#020617]/70 backdrop-blur-xl border border-slate-800 rounded-2xl p-6 shadow-lg">
-      {children}
-    </div>
-  )
+useEffect(()=>{carregar()},[])
+
+return(
+
+<div className="space-y-8">
+
+{/* HEADER */}
+
+<div>
+
+<h1 className="text-2xl font-bold text-white">Central Operacional SETEC</h1>
+
+<p className="text-slate-400 text-sm">
+Painel rápido da operação tecnológica
+</p>
+
+</div>
+
+{/* INDICADORES */}
+
+<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+
+<Card titulo="Chamados Atendidos" valor={stats.chamados} cor="green"/>
+<Card titulo="Visitas Realizadas - FIELDs" valor={stats.visitas} cor="blue"/>
+<Card titulo="Equipamentos Recebidos - Escolas" valor={stats.equipamentos} cor="purple"/>
+<Card titulo="Escolas Cadastradas" valor={stats.escolas} cor="yellow"/>
+
+</div>
+
+{/* AVISOS */}
+
+<div className="bg-[#020617] border border-slate-800 rounded-2xl p-6">
+
+<h2 className="text-white font-semibold mb-4">
+🚨 Avisos Importantes - SETEC
+</h2>
+
+<div className="space-y-3">
+
+{avisos.map(a=>(
+
+<div key={a.id} className="flex gap-3 bg-slate-900 p-3 rounded-lg">
+
+<span className="text-xl">{a.emoji}</span>
+
+<div>
+
+<p className="text-white text-sm font-semibold flex items-center gap-2">
+{a.titulo}
+
+<span className="text-[10px] px-2 py-0.5 rounded bg-slate-700 text-slate-300 uppercase">
+{a.tipo}
+</span>
+
+</p>
+
+<p className="text-slate-400 text-xs">
+{a.descricao}
+</p>
+
+</div>
+
+</div>
+
+))}
+
+</div>
+
+</div>
+
+{/* ATALHOS RÁPIDOS */}
+
+<div>
+
+<h2 className="text-white font-semibold mb-4">
+⚡ Acesso rápido
+</h2>
+
+<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+
+<Quick href="/chamados" icon="🎫" label="Abrir Chamado com a SETEC"/>
+<Quick href="/painel-chamados" icon="📊" label="Painel de Chamados"/>
+<Quick href="/inventario" icon="💻" label="Inventário Tecnológico"/>
+<Quick href="/apoio-usuario" icon="📚" label="Base de Conhecimento Tecnológico"/>
+<Quick href="/fields/agenda-field" icon="📅" label="Agenda - FIELDs"/>
+<Quick href="/dashboard-escolar" icon="🏫" label="Dashboard Escolar"/>
+
+</div>
+
+</div>
+
+{/* INVENTÁRIO PENDENTE */}
+
+<div className="bg-red-900/20 border border-red-700 rounded-2xl p-6">
+
+<h2 className="text-red-400 font-semibold mb-2">
+📋 Inventários pendentes
+</h2>
+
+<p className="text-white text-2xl font-bold">
+{inventarioPendentes} escolas ainda não atualizaram o inventário
+</p>
+
+</div>
+
+{/* TUTORIAIS */}
+
+<div className="bg-[#020617] border border-slate-800 rounded-2xl p-6">
+
+<h2 className="text-white font-semibold mb-4">
+📚 Tutoriais mais acessados
+</h2>
+
+<div className="space-y-2">
+
+{tutoriais.map(t=>(
+
+<a key={t.id} href={t.arquivo_url} target="_blank"
+className="block text-sm text-slate-300 hover:text-white">
+
+{t.titulo} ({t.visualizacoes})
+
+</a>
+
+))}
+
+</div>
+
+</div>
+
+{/* FIELD - TÉCNICOS */}
+
+<div className="bg-[#020617] border border-slate-800 rounded-2xl p-6">
+
+<h2 className="text-white font-semibold mb-4">
+🧑‍🔧 Técnicos FIELD
+</h2>
+
+<div className="space-y-2 text-slate-300 text-sm">
+
+{tecnicos.map((t:any,i:number)=>(
+
+<div key={i}>• {t}</div>
+
+))}
+
+</div>
+
+</div>
+
+{/* BOTÃO EMERGÊNCIA INTERNET */}
+
+<a
+href="https://wa.me/551124422282?text=Olá%2C%20minha%20escola%20está%20sem%20rede%2C%20poderiam%20abrir%20um%20chamado%20com%20a%20FDE%3F"
+target="_blank"
+className="fixed bottom-6 right-6 bg-red-600 hover:bg-red-700 text-white px-5 py-4 rounded-2xl shadow-xl text-sm font-semibold flex items-center gap-2 animate-pulse"
+>
+
+📡🚨 Minha escola está sem internet
+
+</a>
+
+</div>
+
+)
+
 }
 
-function Card({ title, value, color }: any) {
-  const colors: any = {
-    blue: "bg-blue-500/10 border-blue-500/30 text-blue-400",
-    yellow: "bg-yellow-500/10 border-yellow-500/30 text-yellow-400",
-    purple: "bg-purple-500/10 border-purple-500/30 text-purple-400",
-    green: "bg-green-500/10 border-green-500/30 text-green-400",
-    red: "bg-red-500/10 border-red-500/30 text-red-400",
-  }
+function Card({titulo,valor,cor}:any){
 
-  return (
-    <div
-      className={`p-5 rounded-2xl backdrop-blur-xl border shadow-lg transition hover:scale-[1.02] ${colors[color]}`}
-    >
-      <p className="text-slate-400 text-sm">{title}</p>
-      <p className="text-2xl font-bold">{value}</p>
-    </div>
-  )
+const cores:any={
+
+blue:"text-blue-400 border-blue-500/30",
+green:"text-green-400 border-green-500/30",
+purple:"text-purple-400 border-purple-500/30",
+yellow:"text-yellow-400 border-yellow-500/30"
+
+}
+
+return(
+
+<div className={`border p-4 rounded-xl ${cores[cor]}`}>
+
+<p className="text-xs text-slate-400">{titulo}</p>
+<p className="text-2xl font-bold">{valor}</p>
+
+</div>
+
+)
+
+}
+
+function Quick({href,icon,label}:any){
+
+return(
+
+<Link href={href}
+className="bg-[#020617] border border-slate-800 rounded-xl p-4 text-center hover:bg-slate-900 transition">
+
+<p className="text-2xl">{icon}</p>
+<p className="text-sm text-slate-300 mt-1">{label}</p>
+
+</Link>
+
+)
+
 }

@@ -11,16 +11,10 @@ export default async function Sidebar() {
   const sections = [
 
     {
-      title: "📊 Painel",
-      items: [
-        { href: "/", label: "Painel Geral", icon: "📊", permission: "dashboard.view" },
-      ]
-    },
-
-    {
       title: "🎫 Chamados",
       items: [
         { href: "/chamados", label: "Abra um chamado", icon: "🎫", permission: "chamados.view" },
+        { href: "/painel-chamados", label: "Painel de Chamados", icon: "📋", permission: "painel.chamados" },
       ]
     },
 
@@ -36,7 +30,7 @@ export default async function Sidebar() {
       title: "🏫 Escola",
       items: [
         { href: "/escolas", label: "Escolas", icon: "🏫", permission: "escolas.view" },
-        { href: "/dashboard-escolar", label: "Dashboard Escolar", icon: "🧠", permission: "dashboard.escolar" },
+        { href: "/dashboard-escolar", label: "Dashboard Escolar", icon: "🏫📊", permission: "dashboard.escolar" },
       ]
     },
 
@@ -63,6 +57,7 @@ export default async function Sidebar() {
         { href: "/gestao-escolas", label: "Gestão de Escolas", icon: "⚙️", permission: "escolas.manage" },
         { href: "/usuarios", label: "Gestão de Usuários", icon: "👥", permission: "usuarios.view" },
         { href: "/gestao-chamados", label: "Gestão de Chamados", icon: "🛠️", permission: "gestaoChamados.view" },
+        { href: "/avisos", label: "Gestão de Avisos", icon: "⚠️", permission: "avisos.view" },
       ]
     },
 
@@ -76,7 +71,7 @@ export default async function Sidebar() {
   ]
 
   return (
-    <aside className="hidden lg:flex w-72 bg-[#020617] border-r border-slate-800 flex-col justify-between min-h-screen">
+    <aside className="w-72 bg-[#020617] border-r border-slate-800 flex flex-col justify-between">
 
       <div>
 
@@ -86,6 +81,20 @@ export default async function Sidebar() {
         </div>
 
         <nav className="mt-6 px-4 space-y-4">
+
+          {/* HOME SOLTA */}
+
+          {canAccess(user.role, "dashboard.view") && (
+
+            <Link
+              href="/"
+              className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 transition-all hover:bg-slate-800 hover:text-white hover:translate-x-1 mb-6"
+            >
+              <span className="text-lg">🏠</span>
+              Painel Operacional
+            </Link>
+
+          )}
 
           {sections.map(section => {
 
