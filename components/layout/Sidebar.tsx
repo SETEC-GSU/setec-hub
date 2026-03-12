@@ -76,7 +76,7 @@ export default async function Sidebar() {
   ]
 
   return (
-    <aside className="w-72 bg-[#020617] border-r border-slate-800 flex flex-col justify-between">
+    <aside className="hidden lg:flex w-72 bg-[#020617] border-r border-slate-800 flex-col justify-between min-h-screen">
 
       <div>
 
