@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
+import Image from 'next/image'
 
 export default function LoginPage() {
   const supabase = createClient()
@@ -28,30 +29,39 @@ export default function LoginPage() {
       return
     }
 
-    /**
-     * 🔥 ESSENCIAL PARA SSR + MIDDLEWARE
-     * NÃO usar router.push / replace / refresh
-     * Força reload real para o cookie chegar no server
-     */
     window.location.href = '/'
   }
 
   return (
-    <div className="flex items-center justify-center h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+    <div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-br from-blue-950 via-blue-900 to-slate-950">
 
       <form
         onSubmit={handleLogin}
         className="w-[380px] bg-white rounded-3xl p-8 shadow-2xl space-y-5"
       >
-        {/* TÍTULO */}
-        <div className="text-center space-y-1">
-          <h1 className="text-3xl font-bold text-slate-900">
-            SETEC Hub
-          </h1>
+
+        {/* LOGO + TÍTULO */}
+        <div className="text-center space-y-2">
+
+          <div className="flex justify-center items-center gap--1">
+
+            <img
+              src="https://midiasstoragesec.blob.core.windows.net/001/2026/03/icon.png"
+              alt="SETEC Hub"
+              width={70}
+              height={100}
+            />
+
+            <h1 className="text-3xl font-bold text-slate-900">
+              SETEC Hub
+            </h1>
+
+          </div>
 
           <p className="text-slate-500 text-sm">
             Plataforma Operacional
           </p>
+
         </div>
 
         {/* EMAIL */}
@@ -140,7 +150,9 @@ export default function LoginPage() {
         >
           {loading ? 'Entrando...' : 'Entrar'}
         </button>
+
       </form>
+
     </div>
   )
 }

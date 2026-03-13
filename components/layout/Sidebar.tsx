@@ -52,6 +52,16 @@ export default async function Sidebar() {
     },
 
     {
+      title: "🖨️ Impressoras - URE",
+      items: [
+        { href: "/toners", label: "Gestão de Impressoras", icon: "🖨️", permission: "toners.view" },
+        { href: "/toners/entrada", label: "Registrar Entrada", icon: "📦", permission: "toners.entrada" },
+        { href: "/toners/saida", label: "Registrar Saída", icon: "➖", permission: "toners.saida" },
+        { href: "/toners/movimentacoes", label: "Histórico de Toners", icon: "📜", permission: "toners.historico" }
+      ]
+    },
+
+    {
       title: "⚙️ Gestão",
       items: [
         { href: "/gestao-escolas", label: "Gestão de Escolas", icon: "⚙️", permission: "escolas.manage" },

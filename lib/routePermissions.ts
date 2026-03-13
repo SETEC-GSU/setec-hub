@@ -19,5 +19,9 @@ export const routePermissions: Record<string, Permission> = {
   "/apoio-usuario":"apoio.usuario",
   "/tutoriais-populares":"tutoriais.populares",
   "/painel-chamados":"painel.chamados",
-  "/avisos":"avisos.view"
+  "/avisos":"avisos.view",
+  "/toners":"toners.view",
+  "/toners/entrada":"toners.entrada",
+  "/toners/saida":"toners.saida",
+  "/toners/movimentacoes":"toners.historico"
 }
