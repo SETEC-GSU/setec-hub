@@ -1,8 +1,8 @@
 "use client"
 
-import { useEffect, useState, useMemo } from "react"
+import { useEffect, useState, useMemo, Suspense } from "react"
 import { createClient } from "@/lib/supabase"
-import { useRouter, useSearchParams } from "next/navigation" // Importamos para o filtro
+import { useRouter, useSearchParams } from "next/navigation"
 import dynamic from "next/dynamic"
 
 const MapEscolas = dynamic(() => import("../escolas/MapEscolas"), { ssr: false })
@@ -36,12 +36,12 @@ function calcMetrics(e: any) {
   }
 }
 
-export default function DashboardPage() {
+// ⭐ 1. Mudamos o nome da função principal para DashboardContent
+function DashboardContent() {
   const supabase = createClient()
   const router = useRouter()
   const searchParams = useSearchParams()
   
-  // Captura a escola da URL
   const escolaFiltro = searchParams.get("escola") || ""
 
   const [escolas, setEscolas] = useState<any[]>([])
@@ -56,9 +56,6 @@ export default function DashboardPage() {
 
   useEffect(() => { carregar() }, [])
 
-  // ==========================================
-  // LÓGICA DE FILTRAGEM (A MÁGICA ACONTECE AQUI)
-  // ==========================================
   const escolasFiltradas = useMemo(() => {
     if (!escolaFiltro) return escolas
     return escolas.filter(e => e.nome_escola === escolaFiltro)
@@ -77,7 +74,6 @@ export default function DashboardPage() {
 
   if (loading) return <p className="text-white p-10">Carregando panorama tecnológico...</p>
 
-  // Todas as métricas agora usam 'escolasFiltradas'
   const totalEscolas = escolasFiltradas.length
   const totalAlunos = escolasFiltradas.reduce((acc, e) => acc + e.alunos, 0)
   const totalEquipFuncionando = escolasFiltradas.reduce((acc, e) => acc + e.equipFuncionando, 0)
@@ -108,7 +104,6 @@ export default function DashboardPage() {
   return (
     <div className="space-y-8 pb-10">
       
-      {/* HEADER COM SELETOR */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-white">Dashboard Escolar</h1>
@@ -132,7 +127,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* MÉTRICAS PRINCIPAIS */}
       <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
         <Card title="Escolas" value={totalEscolas} />
         <Card title="Alunos" value={totalAlunos.toLocaleString()} />
@@ -142,7 +136,6 @@ export default function DashboardPage() {
         <Card title="Salas por AP" value={salasPorAP.toFixed(1)} />
       </div>
 
-      {/* MÉTRICAS AVANÇADAS */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card title="Cobertura equipamentos" value={`${(coberturaEquip * 100).toFixed(0)}%`} />
         <Card title="Cobertura Wi-Fi" value={`${(coberturaWifi * 100).toFixed(0)}%`} />
@@ -150,17 +143,14 @@ export default function DashboardPage() {
         <Card title="Alunos por equipamento" value={alunosPorEquip.toFixed(1)} />
       </div>
 
-      {/* DISTRIBUIÇÃO */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <StatusCard title="Escolas críticas" value={criticas} color="red" />
         <StatusCard title="Escolas atenção" value={atencao} color="yellow" />
         <StatusCard title="Escolas saudáveis" value={saudavel} color="green" />
       </div>
 
-      {/* MAPA + RANKINGS */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="xl:col-span-2 bg-[#020617] border border-slate-800 rounded-2xl h-[600px] overflow-hidden">
-          {/* O mapa agora só mostra o(s) pin(s) da escola filtrada */}
           <MapEscolas escolas={escolasFiltradas} />
         </div>
 
@@ -179,7 +169,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* RANKING MAU USO */}
       <div className="bg-[#020617] border border-slate-800 rounded-2xl p-6">
         <h3 className="text-lg font-semibold mb-4 text-white">
           {escolaFiltro ? "Estado de conservação" : "Escolas com maior taxa de mau uso de equipamentos"}
@@ -194,7 +183,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* INSIGHTS */}
       <div className="bg-[#020617] border border-slate-800 rounded-2xl p-6 space-y-2">
         <h3 className="font-semibold text-white">Insights automáticos</h3>
         <p className="text-sm text-slate-400">
@@ -228,5 +216,14 @@ function StatusCard({ title, value, color }: any) {
       <p className="text-sm mb-1">{title}</p>
       <p className="text-3xl font-bold">{value}</p>
     </div>
+  )
+}
+
+// ⭐ 2. Essa é a página real que o Next.js vai renderizar, protegida pelo Suspense!
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={<p className="text-white p-10">Carregando panorama tecnológico...</p>}>
+      <DashboardContent />
+    </Suspense>
   )
 }
