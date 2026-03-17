@@ -4,6 +4,7 @@ import LogoutButton from "@/components/LogoutButton"
 import RoleBadge from "@/components/RoleBadge"
 import Greeting from "@/components/Greeting"
 import NotificacaoChamados from "@/components/NotificacaoChamados"
+import MensagensChamados from "@/components/MensagensChamados"
 
 export default function ProtectedLayout({
   children,
@@ -19,7 +20,7 @@ export default function ProtectedLayout({
       {/* AREA DIREITA */}
       <div className="flex-1 flex flex-col">
 
-        {/* ⭐ HEADER CORRIGIDO */}
+        {/* HEADER */}
         <header className="h-24 bg-[#020617] border-b border-slate-800 flex items-center justify-between px-10">
 
           {/* ESQUERDA */}
@@ -28,18 +29,20 @@ export default function ProtectedLayout({
               Plataforma Operacional - SETEC GSU
             </h1>
 
-            {/* ⭐ GREETING PRESERVADO */}
             <Greeting />
           </div>
 
           {/* DIREITA */}
           <div className="flex items-center gap-4">
 
-            {/* ⭐ BADGE NOTIFICAÇÃO */}
             <NotificacaoChamados />
 
+            <MensagensChamados />
+
             <RoleBadge />
+
             <LogoutButton />
+
           </div>
 
         </header>

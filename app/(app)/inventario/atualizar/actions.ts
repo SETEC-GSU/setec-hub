@@ -43,13 +43,33 @@ export async function salvarInventario(formData: FormData) {
 
   const inventarioId = resposta.id
 
+  // 1. Buscamos a finalidade cruzando com equipamentos_recebidos
+  const { data: equipamentosBanco } = await supabaseAdmin
+    .from("equipamentos_recebidos")
+    .select(`
+      id,
+      equipamentos_modelos (
+        finalidade
+      )
+    `)
+
+  // 2. CRIAMOS O MAPA BLINDADO
+  const mapFinalidade = new Map()
+  if (equipamentosBanco) {
+    equipamentosBanco.forEach((eq: any) => {
+      const finalidade = eq.equipamentos_modelos?.finalidade || ""
+      mapFinalidade.set(String(eq.id), finalidade) 
+    })
+  }
+
   const itens:any[] = []
+  let totalFuncionandoGeral = 0 
 
   for (const [key] of formData.entries()) {
 
     if (!key.startsWith("modelo_")) continue
 
-    const modeloId = key.replace("modelo_", "")
+    const modeloId = String(key.replace("modelo_", "")) 
 
     const recebido = Number(formData.get(`recebido_${modeloId}`))
     const funcionando = Number(formData.get(`funcionando_${modeloId}`))
@@ -64,16 +84,22 @@ export async function salvarInventario(formData: FormData) {
       nao_localizados
 
     if (soma !== recebido) {
-
       throw new Error(
         "Inventário incorreto. A soma deve ser igual à quantidade recebida."
       )
+    }
 
+    // 3. A REGRA DE NEGÓCIO DA SOMA
+    const finalidade = mapFinalidade.get(modeloId)
+    const finalidadeLimpa = finalidade ? String(finalidade).toLowerCase() : ""
+    
+    if (!finalidadeLimpa.includes("carregamento")) {
+      totalFuncionandoGeral += funcionando
     }
 
     itens.push({
       inventario_id: inventarioId,
-      modelo_id: modeloId, // UUID CORRETO
+      modelo_id: modeloId, 
       quantidade_recebida: recebido,
       funcionando: funcionando,
       aguardando_garantia: garantia,
@@ -96,6 +122,34 @@ export async function salvarInventario(formData: FormData) {
     throw erroItens
   }
 
+  // 4. ATUALIZAMOS A ESCOLA COM O NÚMERO E A DATA DE AGORA
+  if (escola) {
+    try {
+      const nomeEscolaLimpo = escola.trim()
+      const totalLimpo = Math.round(Number(totalFuncionandoGeral))
+      
+      // Capturamos o exato momento do envio para salvar no banco
+      const agora = new Date().toISOString()
+
+      const { error: erroAtualizaEscola } = await supabaseAdmin
+        .from("escolas")
+        .update({ 
+          total_equipamentos_funcionando: totalLimpo,
+          ultima_atualizacao_inventario: agora // <--- A MÁGICA ACONTECE AQUI! ⭐
+        }) 
+        .eq("nome_escola", nomeEscolaLimpo)
+
+      if (erroAtualizaEscola) {
+        console.error("ERRO DB ao atualizar total na escola:", erroAtualizaEscola)
+      } else {
+        console.log(`Escola ${nomeEscolaLimpo} atualizada! Total: ${totalLimpo}. Data: ${agora}`)
+      }
+    } catch (err) {
+      console.error("Falha de rede ao tentar atualizar a escola:", err)
+    }
+  }
+
   revalidatePath("/inventario")
+  revalidatePath("/escolas")
 
 }

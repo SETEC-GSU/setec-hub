@@ -59,7 +59,7 @@ export default function LoginPage() {
           </div>
 
           <p className="text-slate-500 text-sm">
-            Plataforma Operacional
+            URE Guarulhos Sul
           </p>
 
         </div>
@@ -150,6 +150,14 @@ export default function LoginPage() {
         >
           {loading ? 'Entrando...' : 'Entrar'}
         </button>
+
+        {/* SUPORTE */}
+        <div className="text-center text-xs text-slate-500 pt-2">
+          Suporte técnico da plataforma:<br/>
+          <span className="text-slate-700 font-medium">
+            gsu.setec@educacao.sp.gov.br
+          </span>
+        </div>
 
       </form>
 

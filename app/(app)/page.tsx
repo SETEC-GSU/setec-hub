@@ -25,25 +25,17 @@ async function carregar(){
 
 const agora = new Date().toISOString()
 
-/* chamados resolvidos */
-
 const {data:chamados} = await supabase
 .from("chamados")
 .select("id,status")
-
-/* visitas realizadas */
 
 const {data:visitasRealizadas} = await supabase
 .from("fields_visitas")
 .select("id,status")
 
-/* equipamentos recebidos */
-
 const {data:equipamentos} = await supabase
 .from("equipamentos_recebidos")
 .select("quantidade_recebida")
-
-/* escolas */
 
 const {data:escolas} = await supabase
 .from("escolas")
@@ -51,14 +43,9 @@ const {data:escolas} = await supabase
 
 const totalEscolas = escolas?.length || 0
 
-
-/* INVENTÁRIOS RESPONDIDOS (CORREÇÃO) */
-
 const {data:inventariosRespondidos} = await supabase
 .from("inventario_respostas")
 .select("escola_nome")
-
-/* remover duplicados */
 
 const escolasRespondidas = [
 ...new Set(
@@ -70,29 +57,17 @@ const totalRespondidos = escolasRespondidas.length
 
 setInventarioPendentes(totalEscolas - totalRespondidos)
 
-
-
-/* tutoriais */
-
 const {data:tutoriaisData} = await supabase
 .from("base_conhecimento")
 .select("*")
 .order("visualizacoes",{ascending:false})
 .limit(5)
 
-
-
-/* visitas field */
-
 const {data:visitasData} = await supabase
 .from("fields_visitas")
 .select("*")
 .order("data_visita",{ascending:false})
 .limit(5)
-
-
-
-/* TÉCNICOS FIELD (CORREÇÃO) */
 
 const {data:todosTecnicos} = await supabase
 .from("fields_visitas")
@@ -106,10 +81,6 @@ todosTecnicos?.map((v:any)=>v.tecnico).filter(Boolean)
 
 setTecnicos(tecnicosUnicos)
 
-
-
-/* avisos */
-
 const {data:avisosData} = await supabase
 .from("avisos_setec")
 .select("*")
@@ -117,8 +88,6 @@ const {data:avisosData} = await supabase
 .or(`data_inicio.is.null,data_inicio.lte.${agora},data_fim.is.null,data_fim.gte.${agora}`)
 .order("created_at",{ascending:false})
 .limit(3)
-
-
 
 setStats({
 
@@ -144,19 +113,15 @@ return(
 
 <div className="space-y-8">
 
-{/* HEADER */}
-
 <div>
 
 <h1 className="text-2xl font-bold text-white">Central Operacional SETEC</h1>
 
 <p className="text-slate-400 text-sm">
-Painel rápido da operação tecnológica
+Painel de operação tecnológica
 </p>
 
 </div>
-
-{/* INDICADORES */}
 
 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
 
@@ -166,8 +131,6 @@ Painel rápido da operação tecnológica
 <Card titulo="Escolas Cadastradas" valor={stats.escolas} cor="yellow"/>
 
 </div>
-
-{/* AVISOS */}
 
 <div className="bg-[#020617] border border-slate-800 rounded-2xl p-6">
 
@@ -208,8 +171,6 @@ Painel rápido da operação tecnológica
 
 </div>
 
-{/* ATALHOS RÁPIDOS */}
-
 <div>
 
 <h2 className="text-white font-semibold mb-4">
@@ -229,8 +190,6 @@ Painel rápido da operação tecnológica
 
 </div>
 
-{/* INVENTÁRIO PENDENTE */}
-
 <div className="bg-red-900/20 border border-red-700 rounded-2xl p-6">
 
 <h2 className="text-red-400 font-semibold mb-2">
@@ -239,11 +198,17 @@ Painel rápido da operação tecnológica
 
 <p className="text-white text-2xl font-bold">
 {inventarioPendentes} escolas ainda não atualizaram o inventário
+<Link
+href="/inventario/atualizar"
+className="ml-4 text-red-300 text-sm underline hover:text-red-200 font-semibold"
+>
+CLIQUE AQUI PARA ATUALIZAR O INVENTÁRIO DA SUA ESCOLA
+</Link>
 </p>
 
 </div>
 
-{/* TUTORIAIS */}
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
 <div className="bg-[#020617] border border-slate-800 rounded-2xl p-6">
 
@@ -268,8 +233,6 @@ className="block text-sm text-slate-300 hover:text-white">
 
 </div>
 
-{/* FIELD - TÉCNICOS */}
-
 <div className="bg-[#020617] border border-slate-800 rounded-2xl p-6">
 
 <h2 className="text-white font-semibold mb-4">
@@ -288,7 +251,7 @@ className="block text-sm text-slate-300 hover:text-white">
 
 </div>
 
-{/* BOTÃO EMERGÊNCIA INTERNET */}
+</div>
 
 <a
 href="https://wa.me/551124422282?text=Olá%2C%20minha%20escola%20está%20sem%20rede%2C%20poderiam%20abrir%20um%20chamado%20com%20a%20FDE%3F"

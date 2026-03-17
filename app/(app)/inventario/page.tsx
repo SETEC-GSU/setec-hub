@@ -34,13 +34,13 @@ export default async function InventarioPage() {
     .from("inventario_respostas")
     .select("id, created_at, responsavel_nome, responsavel_cargo")
     .eq("escola_nome", escola)
-    .order("created_at", { ascending:false })
+    .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle()
 
-  let statusItens:any = []
+  let statusItens: any = []
 
-  if(ultimaResposta){
+  if (ultimaResposta) {
 
     const { data } = await supabase
       .from("inventario_itens")
@@ -56,11 +56,11 @@ export default async function InventarioPage() {
     statusItens = data || []
   }
 
-  function statusModelo(modeloId:string){
-    return statusItens.find((s:any)=> s.modelo_id === modeloId)
+  function statusModelo(modeloId: string) {
+    return statusItens.find((s: any) => s.modelo_id === modeloId)
   }
 
-  function formatarData(data:string){
+  function formatarData(data: string) {
 
     const date = new Date(data)
 
@@ -68,8 +68,8 @@ export default async function InventarioPage() {
       date.getTime() - (date.getTimezoneOffset() * 60000)
     )
 
-    return local.toLocaleString("pt-BR",{
-      timeZone:"America/Sao_Paulo"
+    return local.toLocaleString("pt-BR", {
+      timeZone: "America/Sao_Paulo"
     })
   }
 
@@ -80,7 +80,7 @@ export default async function InventarioPage() {
   let totalDanificados = 0
   let totalNaoLocalizados = 0
 
-  statusItens.forEach((item:any)=>{
+  statusItens.forEach((item: any) => {
     totalFuncionando += item.funcionando || 0
     totalGarantia += item.aguardando_garantia || 0
     totalDanificados += item.danificados_mau_uso || 0
@@ -98,13 +98,49 @@ export default async function InventarioPage() {
       ? Math.round((totalFuncionando / totalEquipamentos) * 100)
       : 0
 
+  // ==========================================
+  // NOVA FEATURE: Lógica de Alerta de 90 Dias
+  // ==========================================
+  let diasDesatualizado = 0;
+  const temData = !!ultimaResposta?.created_at;
+
+  if (temData) {
+    const dataUltima = new Date(ultimaResposta.created_at);
+    const dataHoje = new Date();
+    const diferencaTempo = dataHoje.getTime() - dataUltima.getTime();
+    
+    // O Math.max impede que o fuso horário gere números negativos
+    diasDesatualizado = Math.max(0, Math.floor(diferencaTempo / (1000 * 60 * 60 * 24)));
+  }
+  // ==========================================
+
   return (
 
     <div className="space-y-8">
 
-      <h1 className="text-3xl font-bold text-white">
-        Inventário Tecnológico
-      </h1>
+      {/* Título e Badge de Status agrupados */}
+      <div className="space-y-3">
+        <h1 className="text-3xl font-bold text-white">
+          Inventário Tecnológico
+        </h1>
+
+        {/* ALERTA VISUAL */}
+        <div>
+          {!temData ? (
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-sm font-medium">
+              ⚠️ Nenhum inventário registrado anteriormente
+            </div>
+          ) : diasDesatualizado > 90 ? (
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-medium animate-pulse">
+              ⚠️ Inventário desatualizado há {diasDesatualizado} dias
+            </div>
+          ) : (
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-medium">
+              ✅ Inventário em dia {diasDesatualizado === 0 ? '(Atualizado hoje)' : `(Atualizado há ${diasDesatualizado} ${diasDesatualizado === 1 ? 'dia' : 'dias'})`}
+            </div>
+          )}
+        </div>
+      </div>
 
       <Card>
 
@@ -124,13 +160,13 @@ export default async function InventarioPage() {
 
         <div className="grid grid-cols-3 gap-4">
 
-          {equipamentos?.map((item:any, i:number)=>{
+          {equipamentos?.map((item: any, i: number) => {
 
             const status = statusModelo(item.id)
 
             let saude = 0
 
-            if(status){
+            if (status) {
 
               const total =
                 status.funcionando +
@@ -144,7 +180,7 @@ export default async function InventarioPage() {
 
             }
 
-            return(
+            return (
 
               <div
                 key={i}
@@ -159,7 +195,7 @@ export default async function InventarioPage() {
                   {item.quantidade_recebida}
                 </p>
 
-                {status &&(
+                {status && (
 
                   <div className="text-xs space-y-1 pt-2">
 

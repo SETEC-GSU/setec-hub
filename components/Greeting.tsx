@@ -13,7 +13,11 @@ export default async function Greeting() {
     .eq("id", user?.id)
     .single()
 
-  const hour = new Date().getHours()
+  const now = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" })
+  )
+
+  const hour = now.getHours()
 
   let message = "Boa noite"
 

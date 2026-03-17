@@ -1,12 +1,13 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { createClient } from "@/lib/supabase"
 import { useParams } from "next/navigation"
 
 export default function ChamadoDetalhePage() {
   const supabase = createClient()
   const params = useParams()
+  const scrollRef = useRef<HTMLDivElement>(null)
 
   const id = Array.isArray(params.id) ? params.id[0] : params.id
 
@@ -15,26 +16,37 @@ export default function ChamadoDetalhePage() {
   const [novaMsg, setNovaMsg] = useState("")
   const [userId, setUserId] = useState<string | null>(null)
   const [userRole, setUserRole] = useState<string>("usuario")
+  const [anexos, setAnexos] = useState<any[]>([])
 
-  // ⭐ ADICIONADO
-  const [anexos,setAnexos] = useState<any[]>([])
+  // Roles URE
+  const URE_ROLES = ["admin", "analista", "seintec", "chefia_ure", "dirigente"]
+
+  // Helper para formatar o status sem quebrar o código
+  const formatarStatus = (status: string) => {
+    if (!status) return "Carregando..."
+    return status.replace('_', ' ').toUpperCase()
+  }
 
   function formatarData(data: string) {
     return new Date(data).toLocaleString("pt-BR", {
       timeZone: "America/Sao_Paulo",
       hour12: false,
+      hour: '2-digit',
+      minute: '2-digit'
     })
+  }
+
+  const scrollToBottom = () => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
   }
 
   async function carregar() {
     if (!id) return
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
+    const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-
     setUserId(user.id)
 
     const { data: userData } = await supabase
@@ -43,7 +55,8 @@ export default function ChamadoDetalhePage() {
       .eq("id", user.id)
       .single()
 
-    setUserRole(userData?.role ?? "usuario")
+    const roleAtual = userData?.role ?? "usuario"
+    setUserRole(roleAtual)
 
     const { data: chamadoData } = await supabase
       .from("chamados")
@@ -61,170 +74,153 @@ export default function ChamadoDetalhePage() {
 
     setMensagens(msgs || [])
 
-    // ⭐ ADICIONADO — BUSCAR ANEXOS
     const { data: anexosData } = await supabase
       .from("chamados_anexos")
       .select("*")
-      .eq("chamado_id", id)
+      .eq("id", id) // Se a FK for chamado_id na sua tabela, mude aqui
 
     setAnexos(anexosData || [])
 
-    await supabase
-      .from("chamados")
-      .update({ visualizado_gestao: true })
-      .eq("id", id)
+    // --- Lógica de Limpar Notificações ---
+    // Limpa para a URE
+    if (URE_ROLES.includes(roleAtual)) {
+      await supabase.from("chamados").update({ visualizado_gestao: true }).eq("id", id)
+    } 
+    // Limpa para o Usuário
+    await supabase.from("chamados").update({ visualizado_pelo_usuario: true }).eq("id", id)
   }
 
   useEffect(() => {
     if (id) carregar()
   }, [id])
 
+  useEffect(() => {
+    scrollToBottom()
+  }, [mensagens])
+
   async function enviarMensagem() {
     if (!novaMsg.trim()) return
-    if (chamado.status === "encerrado") {
-      alert("Chamado encerrado")
-      return
-    }
+    if (chamado?.status === "encerrado") return
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
-    if (!user) return
-
-    const tipo =
-      userRole === "admin" || userRole === "analista"
-        ? "analista"
-        : "usuario"
+    const tipo = URE_ROLES.includes(userRole) ? "analista" : "usuario"
 
     const { error } = await supabase.from("chamado_mensagens").insert({
       chamado_id: id,
-      usuario_id: user.id,
+      usuario_id: userId,
       mensagem: novaMsg,
       tipo,
     })
 
-    if (error) {
-      alert(error.message)
-      return
-    }
+    if (error) return
 
     setNovaMsg("")
     carregar()
   }
 
-  if (!chamado) return <p className="text-white">Carregando...</p>
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      enviarMensagem()
+    }
+  }
 
-  const badgeOrigem =
-    chamado.origem === "escola"
-      ? "bg-purple-500/10 text-purple-400"
-      : "bg-blue-500/10 text-blue-400"
+  if (!chamado) return <div className="p-20 text-center text-blue-400 font-bold animate-pulse">Carregando detalhes...</div>
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-5xl mx-auto space-y-6 pb-10">
 
-      <div className="bg-[#020617] p-6 rounded-2xl border border-slate-800 space-y-2">
+      {/* CABEÇALHO */}
+      <div className="bg-[#020617] p-6 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden">
+        <div className="absolute top-4 right-4">
+            <span className="px-4 py-1.5 rounded-full text-[10px] font-black bg-blue-500/10 text-blue-400 border border-blue-500/20">
+              {formatarStatus(chamado.status)}
+            </span>
+        </div>
 
-        <h2 className="text-xl font-bold text-white">
-          Chamado #{chamado.codigo}
-        </h2>
+        <div className="space-y-4">
+          <div>
+            <p className="text-blue-500 text-xs font-bold uppercase tracking-widest mb-1">Protocolo {chamado.codigo}</p>
+            <h2 className="text-2xl font-black text-white leading-tight">{chamado.titulo}</h2>
+          </div>
 
-        <span className={`px-3 py-1 rounded-full text-xs ${badgeOrigem}`}>
-          {chamado.origem?.toUpperCase()}
-        </span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <div className="space-y-2">
+              <p className="text-slate-400"><strong className="text-slate-200">Categoria:</strong> {chamado.categoria}</p>
+              <p className="text-slate-400"><strong className="text-slate-200">Solicitante:</strong> {chamado.solicitante_nome ?? "-"}</p>
+            </div>
+            <div className="space-y-2">
+              <p className="text-slate-400"><strong className="text-slate-200">Unidade:</strong> {chamado.escola || "URE"}</p>
+              <p className="text-slate-400"><strong className="text-slate-200">Origem:</strong> {chamado.origem?.toUpperCase()}</p>
+            </div>
+          </div>
 
-        <p className="text-slate-300">Título: {chamado.titulo}</p>
-        <p className="text-slate-300">Categoria: {chamado.categoria}</p>
+          <div className="bg-slate-900/50 p-4 rounded-2xl border border-slate-800/50">
+            <p className="text-xs font-bold text-slate-500 uppercase mb-2">Descrição</p>
+            <p className="text-slate-300 text-sm leading-relaxed">{chamado.descricao}</p>
+          </div>
 
-        {chamado.subcategoria && (
-          <p className="text-slate-300">
-            Subcategoria: {chamado.subcategoria}
-          </p>
-        )}
+          {anexos.length > 0 && (
+            <div className="flex flex-wrap gap-2 pt-2">
+              {anexos.map((a) => (
+                <a key={a.id} href={a.url} target="_blank" className="flex items-center gap-2 bg-blue-500/5 border border-blue-500/20 px-3 py-2 rounded-xl text-blue-400 text-xs hover:bg-blue-500/10 transition">
+                  📄 {a.nome_arquivo}
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
 
-        {chamado.escola && (
-          <p className="text-slate-300">Escola: {chamado.escola}</p>
-        )}
+      {/* CHAT */}
+      <div className="bg-[#020617] rounded-3xl border border-slate-800 flex flex-col shadow-2xl overflow-hidden">
+        <div className="p-4 border-b border-slate-800 bg-slate-900/20 flex items-center gap-2">
+          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+          <h3 className="text-white font-bold text-sm">Histórico de Atendimento</h3>
+        </div>
 
-        <p className="text-slate-300">
-          Nome do solicitante: {chamado.solicitante_nome ?? "-"}
-        </p>
+        <div ref={scrollRef} className="p-6 space-y-6 h-[450px] overflow-y-auto custom-scrollbar">
+          {mensagens.map((m) => {
+            const isMe = m.usuario_id === userId
+            const isUre = URE_ROLES.includes(m.usuarios?.role)
 
-        <p className="text-slate-300">Status: {chamado.status}</p>
-        <p className="text-slate-300">Descrição: {chamado.descricao}</p>
+            return (
+              <div key={m.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+                <div className={`max-w-[80%] flex flex-col ${isMe ? "items-end" : "items-start"}`}>
+                  <div className="flex items-center gap-2 mb-1 px-1">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{m.usuarios?.nome}</span>
+                    {isUre && <span className="bg-blue-500/20 text-blue-400 text-[8px] font-black px-1.5 py-0.5 rounded uppercase">Suporte</span>}
+                  </div>
+                  <div className={`p-4 rounded-2xl text-sm ${isMe ? "bg-blue-600 text-white rounded-tr-none" : "bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700"}`}>
+                    {m.mensagem}
+                  </div>
+                  <span className="text-[9px] text-slate-600 mt-1.5">{formatarData(m.created_at)}</span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
 
-        {/* ⭐ ANEXOS */}
-        {anexos.length > 0 && (
-          <div className="pt-4 space-y-2">
-            <p className="text-white font-semibold">📎 Anexos</p>
-
-            {anexos.map((a) => (
-              <a
-                key={a.id}
-                href={a.url}
-                target="_blank"
-                className="block text-blue-400 text-sm hover:underline"
-              >
-                📄 {a.nome_arquivo}
-              </a>
-            ))}
+        {chamado.status !== "encerrado" ? (
+          <div className="p-4 bg-slate-900/40 border-t border-slate-800">
+            <div className="flex gap-2 items-center bg-[#0B1120] border border-slate-700 rounded-2xl p-2 focus-within:border-blue-500 transition-all">
+              <input
+                value={novaMsg}
+                onChange={(e) => setNovaMsg(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Escreva sua mensagem..."
+                className="flex-1 bg-transparent border-none px-3 py-2 text-white text-sm outline-none"
+              />
+              <button onClick={enviarMensagem} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-95">
+                Enviar
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="p-4 bg-red-500/5 text-red-400 text-center text-xs font-bold border-t border-red-500/10">
+            CHAMADO ENCERRADO
           </div>
         )}
-
       </div>
-
-      <div className="bg-[#020617] p-6 rounded-2xl border border-slate-800 space-y-4 max-h-[400px] overflow-y-auto">
-        <h3 className="text-white font-semibold">Chat</h3>
-
-        {mensagens.map((m) => {
-          const isMe = m.usuario_id === userId
-
-          return (
-            <div
-              key={m.id}
-              className={`flex flex-col max-w-md ${
-                isMe ? "ml-auto items-end" : "items-start"
-              }`}
-            >
-              <span className="text-xs text-slate-400 mb-1">
-                {m.usuarios?.nome ?? "Usuário"}
-              </span>
-
-              <div
-                className={`p-3 rounded-xl text-sm ${
-                  isMe
-                    ? "bg-blue-500/10 text-blue-300"
-                    : "bg-slate-800 text-slate-300"
-                }`}
-              >
-                {m.mensagem}
-              </div>
-
-              <span className="text-xs opacity-50 mt-1">
-                {formatarData(m.created_at)}
-              </span>
-            </div>
-          )
-        })}
-      </div>
-
-      {chamado.status !== "encerrado" && (
-        <div className="flex gap-2">
-          <input
-            value={novaMsg}
-            onChange={(e) => setNovaMsg(e.target.value)}
-            placeholder="Responder chamado..."
-            className="flex-1 bg-[#0B1120] border border-slate-700 rounded-xl px-4 py-3 text-white"
-          />
-
-          <button
-            onClick={enviarMensagem}
-            className="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-500 text-white"
-          >
-            Enviar
-          </button>
-        </div>
-      )}
     </div>
   )
 }
