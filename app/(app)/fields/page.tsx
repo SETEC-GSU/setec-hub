@@ -1,575 +1,324 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
 import { createClient } from "@/lib/supabase"
 import Link from "next/link"
-
 import {
-BarChart,
-Bar,
-XAxis,
-YAxis,
-Tooltip,
-ResponsiveContainer,
-PieChart,
-Pie,
-Cell
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid
 } from "recharts"
 
+/* -------------------------------------------------------------------------- */
+/* HELPERS                                                                    */
+/* -------------------------------------------------------------------------- */
 
-/* TYPES */
-
-type Visita = {
-tecnico:string
-escola:string
-categoria:string
-data_abertura:string
-data_visita:string | null
+function parseDateLocal(dateStr: string | null) {
+  if (!dateStr) return null
+  const [y, m, d] = dateStr.split("-")
+  return new Date(Number(y), Number(m) - 1, Number(d))
 }
 
-type Avaliacao = {
-tecnico:string
-nota_media:number
+function calcBusinessDays(startStr: string | null, endStr: string | null): number {
+  if (!startStr || !endStr) return 0
+  let start = parseDateLocal(startStr)
+  let end = parseDateLocal(endStr)
+  if (!start || !end || start > end) return 0
+  
+  let count = 0
+  let current = new Date(start)
+  while (current <= end) {
+    const dayOfWeek = current.getDay()
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) count++
+    current.setDate(current.getDate() + 1)
+  }
+  return count
 }
 
-type SLAItem = {
-escola:string
-total:number
-count:number
+const SafeTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload || !payload.length) return null
+  const nome = typeof label === 'object' ? (payload[0]?.name || "Item") : String(label || "Item")
+  
+  return (
+    <div className="bg-[#020617] border border-slate-800 p-3 rounded-xl shadow-2xl">
+      <p className="text-slate-400 text-[10px] uppercase mb-1">{nome}</p>
+      <p className="text-white text-lg font-bold">{String(payload[0].value)}</p>
+    </div>
+  )
 }
 
+/* -------------------------------------------------------------------------- */
+/* MAIN COMPONENT                                                             */
+/* -------------------------------------------------------------------------- */
 
+export default function FieldsPage() {
+  const supabase = createClient()
 
-/* DATE PARSER */
+  const [visitas, setVisitas] = useState<any[]>([])
+  const [avaliacoes, setAvaliacoes] = useState<any[]>([])
+  const [tecnicoFiltro, setTecnicoFiltro] = useState("Todos")
+  const [loading, setLoading] = useState(true)
 
-function parseDateLocal(dateStr:string | null){
+  useEffect(() => {
+    async function carregar() {
+      const { data: vData } = await supabase.from("fields_visitas").select("*")
+      const { data: aData } = await supabase.from("fields_avaliacoes").select("*")
+      setVisitas(vData || [])
+      setAvaliacoes(aData || [])
+      setLoading(false)
+    }
+    carregar()
+  }, [])
 
-if(!dateStr) return null
+  const stats = useMemo(() => {
+    // Filtragem e Ordenação Decrescente por Código
+    const filtradas = (tecnicoFiltro === "Todos" ? visitas : visitas.filter(v => v.tecnico === tecnicoFiltro))
+      .sort((a, b) => {
+        const codA = String(a.chamado || "");
+        const codB = String(b.chamado || "");
+        return codB.localeCompare(codA, undefined, { numeric: true });
+      });
 
-const [y,m,d] = dateStr.split("-")
+    const avalFiltradas = tecnicoFiltro === "Todos" ? avaliacoes : avaliacoes.filter(a => a.tecnico === tecnicoFiltro)
 
-return new Date(Number(y),Number(m)-1,Number(d))
+    const visitasComFinalizacao = filtradas.filter(v => v.data_visita && v.data_finalizacao)
+    const somaDiasUteis = visitasComFinalizacao.reduce((acc, v) => acc + calcBusinessDays(v.data_visita, v.data_finalizacao), 0)
+    const slaMedio = visitasComFinalizacao.length > 0 ? (somaDiasUteis / visitasComFinalizacao.length).toFixed(1) : "0"
 
+    const mediaAval = avalFiltradas.length 
+      ? (avalFiltradas.reduce((acc, a) => acc + Number(a.nota_media || 0), 0) / avalFiltradas.length).toFixed(1)
+      : "0.0"
+
+    const rankingTecnicos = [...new Set(visitas.map(v => v.tecnico))].filter(Boolean).map(t => {
+      const vTec = visitas.filter(v => v.tecnico === t)
+      const aTec = avaliacoes.filter(a => a.tecnico === t)
+      const media = aTec.length ? aTec.reduce((acc, a) => acc + a.nota_media, 0) / aTec.length : 0
+      return { nome: String(t), total: vTec.length, media: media.toFixed(1) }
+    }).sort((a, b) => b.total - a.total)
+
+    const rankingEscolas = Object.entries(
+      filtradas.reduce((acc: any, v) => {
+        if (v.escola) acc[v.escola] = (acc[v.escola] || 0) + 1
+        return acc
+      }, {})
+    ).sort((a: any, b: any) => b[1] - a[1]).slice(0, 10)
+
+    const mesesMap: any = {}
+    filtradas.forEach(v => {
+      if (!v.data_visita) return
+      const data = parseDateLocal(v.data_visita)
+      if (data) {
+        const mesAno = data.toLocaleDateString('pt-BR', { month: 'short' }).toUpperCase()
+        mesesMap[mesAno] = (mesesMap[mesAno] || 0) + 1
+      }
+    })
+    const graficoMes = Object.entries(mesesMap).map(([name, value]) => ({ name, value }))
+
+    return {
+      filtradas,
+      totalVisitas: filtradas.length,
+      tecnicosAtivos: rankingTecnicos.length,
+      slaMedio,
+      mediaAval,
+      rankingTecnicos,
+      rankingEscolas,
+      graficoMes,
+      coberturaEscolas: new Set(filtradas.map(v => v.escola)).size
+    }
+  }, [visitas, avaliacoes, tecnicoFiltro])
+
+  if (loading) return (
+    <div className="flex items-center justify-center h-full bg-[#0B1120]">
+      <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-blue-500"></div>
+    </div>
+  )
+
+  return (
+    <div className="space-y-10">
+      
+      {/* HEADER DA PÁGINA */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div>
+          <h2 className="text-3xl font-bold text-white flex items-center gap-3">
+             <span className="text-blue-500">●</span> Inteligência Field
+          </h2>
+          <p className="text-slate-400 mt-1">Análise operacional e estratégica SETEC</p>
+        </div>
+
+        <select
+          value={tecnicoFiltro}
+          onChange={(e) => setTecnicoFiltro(e.target.value)}
+          className="bg-[#020617] border border-slate-800 text-white rounded-xl px-5 py-3 outline-none focus:ring-2 focus:ring-blue-500/50 transition-all min-w-[260px] font-bold"
+        >
+          <option value="Todos">👨‍🔧 Todos os Técnicos</option>
+          {stats.rankingTecnicos.map(t => (
+            <option key={t.nome} value={t.nome}>{t.nome}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* KPI GRID */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-6">
+        <KpiCard title="Chamados" value={stats.totalVisitas} subtitle="Volume total" color="blue" />
+        <KpiCard title="Técnicos" value={stats.tecnicosAtivos} subtitle="Equipe campo" color="purple" />
+        <KpiCard title="SLA Útil" value={stats.slaMedio + "d"} subtitle="Média conclusão" color="yellow" />
+        <KpiCard title="Média Aval." value={stats.mediaAval + " ⭐"} subtitle="Feedback escolas" color="emerald" />
+        <KpiCard title="Escolas" value={stats.coberturaEscolas + "/82"} subtitle="Atendidas" color="blue" />
+      </div>
+
+      {/* GRÁFICO MENSAL */}
+      <Glass title="Volume de Atendimentos Mensais">
+        <div className="h-[340px] w-full mt-6">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={stats.graficoMes}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+              <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+              <Tooltip content={<SafeTooltip />} cursor={{fill: 'rgba(255,255,255,0.03)'}} />
+              <Bar dataKey="value" fill="#3b82f6" radius={[6, 6, 0, 0]} barSize={50} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </Glass>
+
+      <div className="grid xl:grid-cols-2 gap-8">
+        <Glass title="🏆 Performance por Técnico">
+          <div className="divide-y divide-slate-800/50 mt-2">
+            {stats.rankingTecnicos.slice(0, 5).map((t, i) => (
+              <Link 
+                href={`/fields/tecnico/${encodeURIComponent(t.nome)}`}
+                key={t.nome} 
+                className="flex items-center justify-between py-5 hover:bg-slate-800/30 px-4 rounded-2xl transition group"
+              >
+                <div className="flex items-center gap-5">
+                  <span className={`w-8 h-8 flex items-center justify-center rounded-xl text-xs font-bold ${i === 0 ? 'bg-yellow-500/20 text-yellow-500 border border-yellow-500/30' : 'bg-slate-800 text-slate-400'}`}>
+                    {i + 1}
+                  </span>
+                  <span className="text-slate-100 group-hover:text-blue-400 font-bold transition-colors text-lg">{t.nome}</span>
+                </div>
+                <div className="text-right">
+                  <p className="text-blue-400 text-xl font-bold">{t.media}</p>
+                  <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">{t.total} VISITAS</p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </Glass>
+
+        <Glass title="🚩 Escolas com Maior Demanda">
+          <div className="divide-y divide-slate-800/50 mt-2">
+            {stats.rankingEscolas.slice(0, 5).map((e: any) => (
+              <div key={String(e[0])} className="flex items-center justify-between py-5 px-4">
+                <span className="text-slate-200 font-bold truncate max-w-[280px]">{e[0]}</span>
+                <span className="bg-red-500/10 text-red-400 px-4 py-1.5 rounded-full text-[11px] font-bold border border-red-500/20">
+                  {e[1]} CHAMADOS
+                </span>
+              </div>
+            ))}
+          </div>
+        </Glass>
+      </div>
+
+      {/* TABELA DE CHAMADOS */}
+      <Glass title="📋 Lista de Chamados Atendidos (Decrescente)">
+        <div className="overflow-x-auto mt-4">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-slate-800 text-slate-500 text-[11px] uppercase tracking-widest">
+                <th className="py-4 px-4 font-bold">Código</th>
+                <th className="py-4 px-4 font-bold">Escola</th>
+                <th className="py-4 px-4 font-bold">Status</th>
+                <th className="py-4 px-4 font-bold">Categoria</th>
+                <th className="py-4 px-4 font-bold">Descrição / Resolução</th>
+                <th className="py-4 px-4 font-bold">Técnico</th>
+                <th className="py-4 px-4 font-bold">Aberto por</th>
+              </tr>
+            </thead>
+            <tbody className="text-sm divide-y divide-slate-800/50">
+              {stats.filtradas.slice(0, 100).map((v: any) => {
+                const statusNormalizado = (v.status || "").toLowerCase().trim();
+                const isVerde = statusNormalizado === 'realizada' || statusNormalizado === 'finalizado';
+                const isAmarelo = statusNormalizado === 'pendente';
+
+                return (
+                  <tr key={v.id} className="hover:bg-slate-800/20 transition-colors">
+                    <td className="py-4 px-4 text-blue-400 text-xs font-bold">{v.chamado || "N/A"}</td>
+                    <td className="py-4 px-4 text-slate-200 font-bold">{v.escola}</td>
+                    <td className="py-4 px-4">
+                      <span className={`px-2 py-1 rounded-md text-[10px] font-bold border ${
+                        isVerde 
+                          ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' 
+                          : isAmarelo
+                          ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                          : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
+                      }`}>
+                        {v.status || "Pendente"}
+                      </span>
+                    </td>
+                    <td className="py-4 px-4 text-slate-400">
+                      <div className="flex flex-col">
+                        <span className="font-bold text-slate-300">{v.categoria}</span>
+                        <span className="text-[10px] opacity-60 italic">{v.subcategoria}</span>
+                      </div>
+                    </td>
+                    <td className="py-4 px-4 text-slate-400 max-w-[300px]">
+                      <div className="flex flex-col gap-1">
+                        <span className="truncate text-xs italic">" {v.descricao} "</span>
+                        <span className="text-[10px] text-blue-500/80 truncate font-bold">R: {v.resolucao}</span>
+                      </div>
+                    </td>
+                    <td className="py-4 px-4 text-slate-200 font-bold">{v.tecnico}</td>
+                    <td className="py-4 px-4 text-slate-500 text-xs">{v.abertura_por}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Glass>
+    </div>
+  )
 }
 
-
-
-export default function FieldsPage(){
-
-const supabase = createClient()
-
-const [visitas,setVisitas] = useState<Visita[]>([])
-const [avaliacoes,setAvaliacoes] = useState<Avaliacao[]>([])
-const [escolasTotal,setEscolasTotal] = useState<any[]>([])
-const [tecnicoFiltro,setTecnicoFiltro] = useState("Todos")
-const [loading,setLoading] = useState(true)
-
-
-
-useEffect(()=>{
-
-async function carregar(){
-
-const {data:visitasData} =
-await supabase.from("fields_visitas").select("*")
-
-const {data:avaliacoesData} =
-await supabase.from("fields_avaliacoes").select("*")
-
-const {data:escolasData} =
-await supabase.from("escolas").select("*")
-
-setVisitas(visitasData || [])
-setAvaliacoes(avaliacoesData || [])
-setEscolasTotal(escolasData || [])
-
-setLoading(false)
-
+function Glass({ children, title, className = "" }: any) {
+  return (
+    <div className={`bg-[#020617] border border-slate-800 rounded-[2.5rem] p-10 shadow-sm relative overflow-hidden ${className}`}>
+      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-slate-800 to-transparent opacity-50"></div>
+      {title && <h3 className="text-xs font-bold text-slate-500 uppercase tracking-[0.2em] mb-6">{title}</h3>}
+      {children}
+    </div>
+  )
 }
 
-carregar()
-
-},[])
-
-
-
-if(loading) return <p className="text-white">Carregando...</p>
-
-
-
-/* TECNICOS */
-
-const tecnicos =
-["Todos",...new Set(visitas.map(v=>v.tecnico))]
-
-
-
-/* FILTRO */
-
-const visitasFiltradas =
-tecnicoFiltro==="Todos"
-? visitas
-: visitas.filter(v=>v.tecnico===tecnicoFiltro)
-
-
-
-/* ESCOLAS DO TECNICO */
-
-const escolasTecnico =
-new Set(visitasFiltradas.map(v=>v.escola))
-
-
-
-/* SLA */
-
-const sla = visitasFiltradas.reduce<Record<string,SLAItem>>((acc,visita)=>{
-
-if(!visita.data_visita) return acc
-
-const abertura = parseDateLocal(visita.data_abertura)
-const visitaData = parseDateLocal(visita.data_visita)
-
-if(!abertura || !visitaData) return acc
-
-const dias =
-Math.abs(
-visitaData.getTime() -
-abertura.getTime()
-)/(1000*60*60*24)
-
-if(!acc[visita.escola])
-acc[visita.escola]={escola:visita.escola,total:0,count:0}
-
-acc[visita.escola].total+=dias
-acc[visita.escola].count++
-
-return acc
-
-},{})
-
-
-
-const slaArray =
-Object.values(sla).map(s=>({
-escola:s.escola,
-tempo:(s.total/s.count).toFixed(1)
-}))
-
-
-
-/* TOTAL VISITAS */
-
-const totalVisitas = visitasFiltradas.length
-
-
-
-/* TECNICOS ATIVOS */
-
-const tecnicosAtivos =
-new Set(visitasFiltradas.map(v=>v.tecnico)).size
-
-
-
-/* MEDIA AVALIACAO */
-
-const avaliacoesTecnico =
-tecnicoFiltro==="Todos"
-? avaliacoes
-: avaliacoes.filter(a=>a.tecnico===tecnicoFiltro)
-
-
-
-const mediaAvaliacao =
-avaliacoesTecnico.length
-? avaliacoesTecnico.reduce(
-(acc,a)=>acc+Number(a.nota_media||0),0
-)/avaliacoesTecnico.length
-:0
-
-
-
-/* RANKING */
-
-const ranking = tecnicos.map(t=>{
-
-const visitasTec =
-visitas.filter(v=>v.tecnico===t)
-
-const aval =
-avaliacoes.filter(a=>a.tecnico===t)
-
-const media =
-aval.length
-? aval.reduce((a,b)=>a+Number(b.nota_media||0),0)/aval.length
-:0
-
-return{
-tecnico:t,
-visitas:visitasTec.length,
-media
-}
-
-})
-.filter(t=>t.tecnico!=="Todos")
-.sort((a,b)=>b.media-a.media)
-
-
-
-/* TEMPO MEDIO */
-
-const tempo = tecnicos.map(t=>{
-
-const visTec =
-visitas.filter(v=>v.tecnico===t && v.data_visita)
-
-const dias = visTec.map(v=>{
-
-const abertura = parseDateLocal(v.data_abertura)
-const visitaData = parseDateLocal(v.data_visita)
-
-if(!abertura || !visitaData) return 0
-
-return Math.abs(
-visitaData.getTime() -
-abertura.getTime()
-)/(1000*60*60*24)
-
-})
-
-const media =
-dias.length
-? dias.reduce((a,b)=>a+b,0)/dias.length
-:0
-
-return{
-tecnico:t,
-tempo:media
-}
-
-})
-.filter(t=>t.tecnico!=="Todos")
-
-
-
-/* GRAFICO CATEGORIA */
-
-const categoriaMap:Record<string,number> = {}
-
-visitasFiltradas.forEach(v=>{
-
-if(!categoriaMap[v.categoria])
-categoriaMap[v.categoria]=0
-
-categoriaMap[v.categoria]++
-
-})
-
-
-
-const graficoCategorias =
-Object.entries(categoriaMap).map(([categoria,total])=>({
-categoria,
-total
-}))
-
-
-
-/* VISITAS POR MES */
-
-const mesMap:Record<string,number> = {}
-
-visitasFiltradas.forEach(v=>{
-
-if(!v.data_visita) return
-
-const data = parseDateLocal(v.data_visita)
-
-if(!data) return
-
-const mes =
-data.toLocaleDateString("pt-BR",{month:"short"})
-
-if(!mesMap[mes])
-mesMap[mes]=0
-
-mesMap[mes]++
-
-})
-
-
-
-const graficoMes =
-Object.entries(mesMap).map(([mes,total])=>({
-mes,
-total
-}))
-
-
-
-/* PIZZA ESCOLAS */
-
-const escolasAtendidas = escolasTecnico.size
-const totalEscolas = 82
-
-const pizzaData=[
-{name:"Atendidas",value:escolasAtendidas},
-{name:"Não atendidas",value:totalEscolas-escolasAtendidas}
-]
-
-
-
-return(
-
-<div className="space-y-8">
-
-<div className="flex justify-between items-center">
-
-<h1 className="text-3xl font-bold">
-Visão Geral - Atendimentos Field
-</h1>
-
-<select
-value={tecnicoFiltro}
-onChange={(e)=>setTecnicoFiltro(e.target.value)}
-className="bg-[#020617] border border-slate-800 rounded-lg p-2"
->
-
-{tecnicos.map(t=>
-<option key={t}>{t}</option>
-)}
-
-</select>
-
-</div>
-
-
-
-{/* CARDS */}
-
-<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-
-<Card title="Visitas realizadas" value={totalVisitas}/>
-
-<Card title="Técnicos ativos" value={tecnicosAtivos}/>
-
-<Card title="Avaliação média"
-value={`${mediaAvaliacao.toFixed(1)} ⭐`}/>
-
-<Card title="Escolas atendidas"
-value={escolasTecnico.size}/>
-
-</div>
-
-
-
-{/* RANKING + TEMPO */}
-
-<div className="grid xl:grid-cols-2 gap-6">
-
-<div className="bg-[#020617] border border-slate-800 rounded-2xl p-6">
-
-<h3 className="mb-4 font-semibold">
-Ranking técnicos
-</h3>
-
-{ranking.map((r,i)=>
-
-<div key={i}
-className="p-3 border border-slate-800 rounded-xl flex justify-between mb-2">
-
-<Link
-href={`/fields/tecnico/${encodeURIComponent(r.tecnico)}`}
-className="hover:text-blue-400 transition">
-
-#{i+1} {r.tecnico}
-
-</Link>
-
-<p className="text-blue-400">
-{r.media.toFixed(1)} ⭐
-</p>
-
-</div>
-
-)}
-
-</div>
-
-
-
-<div className="bg-[#020617] border border-slate-800 rounded-2xl p-6">
-
-<h3 className="mb-4 font-semibold">
-Tempo médio atendimento
-</h3>
-
-{tempo.map((t,i)=>
-
-<div key={i}
-className="p-3 border border-slate-800 rounded-xl flex justify-between mb-2">
-
-<p>{t.tecnico}</p>
-
-<p className="text-yellow-400">
-{t.tempo.toFixed(1)} dias
-</p>
-
-</div>
-
-)}
-
-</div>
-
-</div>
-
-
-
-{/* GRAFICOS */}
-
-<div className="grid xl:grid-cols-3 gap-6">
-
-<div className="bg-[#020617] border border-slate-800 rounded-2xl p-6">
-
-<h3 className="mb-4 font-semibold">
-Chamados por categoria
-</h3>
-
-<div style={{height:300}}>
-
-<ResponsiveContainer>
-
-<BarChart data={graficoCategorias}>
-<XAxis dataKey="categoria"/>
-<YAxis/>
-<Tooltip/>
-<Bar dataKey="total" fill="#3b82f6"/>
-</BarChart>
-
-</ResponsiveContainer>
-
-</div>
-
-</div>
-
-
-
-<div className="bg-[#020617] border border-slate-800 rounded-2xl p-6">
-
-<h3 className="mb-4 font-semibold">
-Visitas por mês
-</h3>
-
-<div style={{height:300}}>
-
-<ResponsiveContainer>
-
-<BarChart data={graficoMes}>
-<XAxis dataKey="mes"/>
-<YAxis/>
-<Tooltip/>
-<Bar dataKey="total" fill="#22c55e"/>
-</BarChart>
-
-</ResponsiveContainer>
-
-</div>
-
-</div>
-
-
-
-<div className="bg-[#020617] border border-slate-800 rounded-2xl p-6">
-
-<h3 className="mb-4 font-semibold">
-Cobertura das escolas
-</h3>
-
-<div style={{height:300}}>
-
-<ResponsiveContainer>
-
-<PieChart>
-
-<Pie
-data={pizzaData}
-dataKey="value"
-nameKey="name"
-outerRadius={90}
-label
->
-
-<Cell fill="#22c55e"/>
-<Cell fill="#ef4444"/>
-
-</Pie>
-
-<Tooltip/>
-
-</PieChart>
-
-</ResponsiveContainer>
-
-</div>
-
-</div>
-
-</div>
-
-
-
-{/* SLA */}
-
-<div className="bg-[#020617] border border-slate-800 rounded-2xl p-6">
-
-<h3 className="mb-4 font-semibold">
-SLA por escola
-</h3>
-
-<div className="grid md:grid-cols-2 gap-3 max-h-[260px] overflow-y-auto">
-
-{slaArray.map((s)=>(
-
-<div key={s.escola}
-className="p-3 border border-slate-800 rounded-xl flex justify-between">
-
-<p>{s.escola}</p>
-
-<p className="text-orange-400">
-{s.tempo} dias
-</p>
-
-</div>
-
-))}
-
-</div>
-
-</div>
-
-</div>
-
-)
-
-}
-
-
-
-function Card({title,value}:{title:string,value:any}){
-
-return(
-
-<div className="bg-[#020617] border border-slate-800 rounded-2xl p-4">
-
-<p className="text-xs text-slate-400">
-{title}
-</p>
-
-<p className="text-2xl font-bold">
-{value ?? "-"}
-</p>
-
-</div>
-
-)
-
+function KpiCard({ title, value, subtitle, color }: any) {
+  const gradients: any = {
+    blue: "from-blue-600/20 to-transparent border-blue-500/30",
+    purple: "from-purple-600/20 to-transparent border-purple-500/30",
+    yellow: "from-yellow-600/20 to-transparent border-yellow-500/30",
+    emerald: "from-emerald-600/20 to-transparent border-emerald-500/30",
+  }
+
+  const textColors: any = {
+    blue: "text-blue-400",
+    purple: "text-purple-400",
+    yellow: "text-yellow-400",
+    emerald: "text-emerald-400",
+  }
+
+  return (
+    <div className={`bg-[#020617] border rounded-[2rem] p-7 shadow-2xl relative overflow-hidden transition-all hover:scale-[1.02] ${gradients[color]}`}>
+      <div className={`absolute top-0 left-0 h-full w-1 bg-gradient-to-b ${color === 'blue' ? 'from-blue-500' : color === 'purple' ? 'from-purple-500' : color === 'yellow' ? 'from-yellow-500' : 'from-emerald-500'} to-transparent opacity-70`}></div>
+      <p className="text-slate-400 text-[10px] uppercase font-bold tracking-[0.2em] mb-2">{title}</p>
+      <p className="text-4xl text-white font-bold mb-2">
+        {value}
+      </p>
+      <p className={`text-[11px] font-bold uppercase tracking-tight opacity-90 ${textColors[color]} bg-black/20 py-1 px-2 rounded-md inline-block`}>
+        {subtitle}
+      </p>
+    </div>
+  )
 }
