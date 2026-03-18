@@ -27,10 +27,10 @@ export default async function Sidebar() {
     },
 
     {
-      title: "🏫 Escola",
+      title: "🏫 Escolas",
       items: [
-        { href: "/escolas", label: "Escolas", icon: "🏫", permission: "escolas.view" },
-        { href: "/dashboard-escolar", label: "Dashboard Escolar", icon: "🏫📊", permission: "dashboard.escolar" },
+        { href: "/escolas", label: "Painel Escolar", icon: "🏫", permission: "escolas.view" },
+        { href: "/dashboard-escolar", label: "Dashboard Escolar", icon: "📊", permission: "dashboard.escolar" },
       ]
     },
 
@@ -47,14 +47,13 @@ export default async function Sidebar() {
       items: [
         { href: "/fields", label: "Atendimento", icon: "🧑‍🔧", permission: "fields.view" },
         { href: "/fields/agenda-field", label: "Agenda", icon: "📅", permission: "agenda.field" },
-        { href: "/fields/inteligencia-operacional", label: "Inteligência Operacional", icon: "🧠", permission: "intoperacional.field" }
       ]
     },
 
     {
       title: "🖨️ Impressoras - URE",
       items: [
-        { href: "/toners", label: "Gestão de Impressoras", icon: "🖨️", permission: "toners.view" },
+        { href: "/toners", label: "Painel Geral", icon: "🖨️", permission: "toners.view" },
         { href: "/toners/entrada", label: "Registrar Entrada", icon: "📦", permission: "toners.entrada" },
         { href: "/toners/saida", label: "Registrar Saída", icon: "➖", permission: "toners.saida" },
         { href: "/toners/movimentacoes", label: "Histórico de Toners", icon: "📜", permission: "toners.historico" }
@@ -101,7 +100,7 @@ export default async function Sidebar() {
               className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 transition-all hover:bg-slate-800 hover:text-white hover:translate-x-1 mb-6"
             >
               <span className="text-lg">🏠</span>
-              Painel Operacional
+              Menu Principal
             </Link>
 
           )}
