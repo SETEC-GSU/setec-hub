@@ -1,4 +1,4 @@
-export default function Relatorios() {
+export default function EduMonitor() {
   return (
     <div className="space-y-8">
 
@@ -10,14 +10,14 @@ export default function Relatorios() {
           text-slate-100
           tracking-tight
         ">
-          SETEC DataHub - Dashboard interno
+          EduMonitor - Visão Estratégica
         </h1>
 
         <p className="
           text-slate-400 
           mt-1
         ">
-          Acompanhe os indicadores internos da SETEC em tempo real - PowerBI
+          Panorama geral dos equipamentos recebidos pelas unidades escolares da URE Guarulhos SUl - PowerBI
         </p>
       </div>
 
@@ -51,8 +51,8 @@ export default function Relatorios() {
 
         {/* IFRAME */}
         <iframe
-          title="DASHBOARD NIT DEGSU"
-          src="https://app.powerbi.com/view?r=eyJrIjoiNGM3MGEyYzQtNzc4Zi00YjUzLTgwNDEtNWZkNjFiOGUwOWVhIiwidCI6IjE2Yjg3Nzk4LTQ1MTctNDQyYy05MjAwLWNlMWNjYTkzMjU5YyIsImMiOjR9"
+          title="EduMonitor"
+          src="https://app.powerbi.com/view?r=eyJrIjoiNDJmOTI4ZGMtOGZiNC00ZmE4LThiYzEtOWE4NWYwMjM4NDcxIiwidCI6IjE2Yjg3Nzk4LTQ1MTctNDQyYy05MjAwLWNlMWNjYTkzMjU5YyIsImMiOjR9"
           className="
             w-full 
             h-full 

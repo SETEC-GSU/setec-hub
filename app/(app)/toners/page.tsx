@@ -24,7 +24,9 @@ const ordem = [
 "BLACK COLOR",
 "CIANO",
 "MAGENTA",
-"YELLOW"
+"YELLOW",
+"CILINDRO - MONO",
+"CILINDRO - COLOR"
 ]
 
 const estoqueOrdenado = (estoqueData || []).sort(
@@ -64,6 +66,12 @@ return "border-pink-500 bg-pink-900/40 text-pink-300"
 
 case "YELLOW":
 return "border-yellow-500 bg-yellow-900/40 text-yellow-300"
+
+case "CILINDRO - MONO":
+return "border-slate-500 bg-slate-800 text-slate-300"
+
+case "CILINDRO - COLOR":
+return "border-indigo-500 bg-indigo-900/40 text-indigo-300"
 
 default:
 return "border-slate-700 bg-slate-900 text-white"
@@ -195,9 +203,10 @@ className="bg-slate-900 hover:bg-slate-800 border border-slate-700 p-4 rounded-x
 📦 Estoque atual
 </h2>
 
+{/* Linha dos 5 Toners */}
 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
 
-{estoque.map(e=>(
+{estoque.filter(e => !e.tonner_tipo.includes("CILINDRO")).map(e=>(
 
 <div
 key={e.tonner_tipo_id}
@@ -217,6 +226,32 @@ className={`border rounded-xl p-4 text-center transition hover:scale-105 ${corTo
 ))}
 
 </div>
+
+{/* Linha dos Cilindros (Centralizados) */}
+{estoque.some(e => e.tonner_tipo.includes("CILINDRO")) && (
+<div className="grid grid-cols-2 md:flex md:justify-center gap-4 mt-4">
+
+{estoque.filter(e => e.tonner_tipo.includes("CILINDRO")).map(e=>(
+
+<div
+key={e.tonner_tipo_id}
+className={`w-full md:w-[calc(20%-0.8rem)] border rounded-xl p-4 text-center transition hover:scale-105 ${corToner(e.tonner_tipo)}`}
+>
+
+<p className="text-sm font-semibold tracking-wide">
+{e.tonner_tipo}
+</p>
+
+<p className="text-3xl font-bold mt-1">
+{e.estoque_atual}
+</p>
+
+</div>
+
+))}
+
+</div>
+)}
 
 </div>
 

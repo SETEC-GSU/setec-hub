@@ -144,9 +144,9 @@ export default function FieldsPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
           <h2 className="text-3xl font-bold text-white flex items-center gap-3">
-             <span className="text-blue-500">●</span> Inteligência Field
+             <span className="text-blue-500">●</span> Visão Geral - Atendimentos dos Fields
           </h2>
-          <p className="text-slate-400 mt-1">Análise operacional e estratégica SETEC</p>
+          <p className="text-slate-400 mt-1">Análise operacional e estratégica do suporte em campo da SETEC</p>
         </div>
 
         <select

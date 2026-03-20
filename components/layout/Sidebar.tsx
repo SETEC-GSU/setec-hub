@@ -74,22 +74,23 @@ export default async function Sidebar() {
       title: "🧠 Visão Estratégica",
       items: [
         { href: "/relatorios", label: "SETEC DataHub", icon: "📈", permission: "relatorios.view" },
+        { href: "/edumonitor", label: "EduMonitor", icon: "📊", permission: "edu.monitor" },
       ]
     }
 
   ]
 
   return (
-    <aside className="w-72 bg-[#020617] border-r border-slate-800 flex flex-col justify-between">
+    <aside className="w-72 bg-[#020617] border-r border-slate-800 flex flex-col justify-between overflow-y-auto h-full">
 
       <div>
 
-        <div className="h-24 flex items-center px-8 text-2xl font-bold border-b border-slate-800">
+        <div className="h-24 shrink-0 flex items-center px-8 text-2xl font-bold border-b border-slate-800 sticky top-0 bg-[#020617] z-10">
           <span className="text-blue-500">SETEC</span>
           <span className="ml-2 font-light">Hub</span>
         </div>
 
-        <nav className="mt-6 px-4 space-y-4">
+        <nav className="mt-6 px-4 space-y-4 pb-6">
 
           {/* HOME SOLTA */}
 
@@ -158,7 +159,7 @@ export default async function Sidebar() {
 
       </div>
 
-      <div className="p-6 border-t border-slate-800 text-xs text-slate-500">
+      <div className="p-6 border-t border-slate-800 text-xs text-slate-500 shrink-0 sticky bottom-0 bg-[#020617]">
         Plataforma interna<br/>
         URE Guarulhos Sul
       </div>

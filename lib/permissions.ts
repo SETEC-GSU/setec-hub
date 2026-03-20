@@ -26,6 +26,7 @@ export type Permission =
   | "toners.entrada"
   | "toners.saida"
   | "toners.historico"
+  | "edu.monitor"
 
 
   
@@ -57,7 +58,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "toners.view",
     "toners.entrada",
     "toners.saida",
-    "toners.historico"
+    "toners.historico",
+    "edu.monitor"
   ],
 
   analista: [
@@ -66,6 +68,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "chamados.ure.create",
     "gestaoChamados.view",
     "relatorios.view",
+    "escolas.manage",
     "escolas.view",
     "calendar.view",
     "fields.view",
@@ -81,7 +84,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "toners.view",
     "toners.entrada",
     "toners.saida",
-    "toners.historico"
+    "toners.historico",
+    "edu.monitor"
   ],
 
   chefia_ure: [
@@ -94,7 +98,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "agenda.field",
     "apoio.usuario",
     "painel.chamados",
-    "toners.historico"
+    "toners.historico",
+    "edu.monitor"
   ],
 
   gestao_escolas: [
@@ -126,7 +131,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "tutoriais.populares",
     "painel.chamados",
     "toners.view",
-    "toners.historico"
+    "toners.historico",
+    "edu.monitor"
   
   ],
 
@@ -137,6 +143,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "gestaoChamados.view",
     "relatorios.view",
     "escolas.view",
+    "escolas.manage",
     "calendar.view",
     "dashboard.escolar",
     "fields.view",
@@ -151,7 +158,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "toners.view",
     "toners.entrada",
     "toners.saida",
-    "toners.historico"
+    "toners.historico",
+    "edu.monitor"
   ],
 }
 

@@ -23,7 +23,7 @@ const [tecnicos,setTecnicos] = useState<any[]>([])
 
 async function carregar(){
 
-const agora = new Date().toISOString()
+const agoraTime = new Date().getTime()
 
 const {data:chamados} = await supabase
 .from("chamados")
@@ -81,13 +81,18 @@ todosTecnicos?.map((v:any)=>v.tecnico).filter(Boolean)
 
 setTecnicos(tecnicosUnicos)
 
+// LÓGICA CORRIGIDA: Puxar tudo ativo e filtrar localmente para não dar bug de fuso horário no banco
 const {data:avisosData} = await supabase
 .from("avisos_setec")
 .select("*")
 .eq("ativo",true)
-.or(`data_inicio.is.null,data_inicio.lte.${agora},data_fim.is.null,data_fim.gte.${agora}`)
 .order("created_at",{ascending:false})
-.limit(3)
+
+const avisosValidos = (avisosData || []).filter(a => {
+  const dtInicio = a.data_inicio ? new Date(a.data_inicio).getTime() : 0;
+  const dtFim = a.data_fim ? new Date(a.data_fim).getTime() : Infinity;
+  return dtInicio <= agoraTime && dtFim >= agoraTime;
+}).slice(0, 3);
 
 setStats({
 
@@ -103,7 +108,7 @@ escolas:totalEscolas
 
 setTutoriais(tutoriaisData || [])
 setVisitas(visitasData || [])
-setAvisos(avisosData || [])
+setAvisos(avisosValidos)
 
 }
 
@@ -140,7 +145,10 @@ Painel de operação tecnológica
 
 <div className="space-y-3">
 
-{avisos.map(a=>(
+{avisos.length === 0 ? (
+  <p className="text-slate-500 text-sm">Nenhum aviso no momento.</p>
+) : (
+  avisos.map(a=>(
 
 <div key={a.id} className="flex gap-3 bg-slate-900 p-3 rounded-lg">
 
@@ -165,7 +173,7 @@ Painel de operação tecnológica
 
 </div>
 
-))}
+)))}
 
 </div>
 
@@ -239,7 +247,7 @@ className="block text-sm text-slate-300 hover:text-white">
 🧑‍🔧 Técnicos FIELD
 </h2>
 
-<div className="space-y-2 text-slate-300 text-sm">
+<div className="space-y-2 text-slate-300 text-sm flex flex-col">
 
 {tecnicos.map((t:any,i:number)=>(
 

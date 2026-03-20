@@ -23,5 +23,6 @@ export const routePermissions: Record<string, Permission> = {
   "/toners":"toners.view",
   "/toners/entrada":"toners.entrada",
   "/toners/saida":"toners.saida",
-  "/toners/movimentacoes":"toners.historico"
+  "/toners/movimentacoes":"toners.historico",
+  "/edumonitor":"edu.monitor"
 }
