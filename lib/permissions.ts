@@ -106,7 +106,6 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "dashboard.view",
     "chamados.view",
     "chamados.escola.create",
-    "escolas.view",
     "calendar.view",
     "agenda.field",
     "inventario.view",

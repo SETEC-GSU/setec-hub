@@ -294,12 +294,14 @@ return(
 {m.numero_chamado || "-"}
 </td>
 
+{/* DATA DE ABERTURA CORRIGIDA */}
 <td className="text-slate-400">
-{m.data_abertura ? new Date(m.data_abertura).toLocaleDateString("pt-BR") : "-"}
+{m.data_abertura ? new Date(m.data_abertura).toLocaleDateString("pt-BR", { timeZone: "UTC" }) : "-"}
 </td>
 
+{/* DATA DE RECEBIMENTO CORRIGIDA */}
 <td className="text-slate-400">
-{new Date(m.data_movimentacao).toLocaleDateString("pt-BR")}
+{new Date(m.data_movimentacao).toLocaleDateString("pt-BR", { timeZone: "UTC" })}
 </td>
 
 <td className="text-blue-400">

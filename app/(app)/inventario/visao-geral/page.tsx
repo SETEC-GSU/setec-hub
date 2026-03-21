@@ -12,7 +12,7 @@ export default async function DiretoriaPage({
   const filters = await searchParams
   const escolaSelecionada = filters?.escola || ""
 
-  // 1. EQUIPAMENTOS RECEBIDOS (Agora buscando o ID da própria tabela para cruzar com o inventário)
+  // 1. EQUIPAMENTOS RECEBIDOS
   const { data: equipamentos } = await supabase
     .from("equipamentos_recebidos")
     .select(`
@@ -27,7 +27,7 @@ export default async function DiretoriaPage({
     `)
     .gt("quantidade_recebida", 0)
 
-  // 2. INVENTÁRIOS ENVIADOS COM SEUS ITENS + DADOS DO RESPONSÁVEL (AQUI A MAGIA ACONTECE)
+  // 2. INVENTÁRIOS ENVIADOS COM SEUS ITENS + DADOS DO RESPONSÁVEL + OBSERVAÇÃO
   const { data: inventariosBrutos } = await supabase
     .from("inventario_respostas")
     .select(`
@@ -36,6 +36,7 @@ export default async function DiretoriaPage({
       created_at,
       responsavel_nome,
       responsavel_cargo,
+      observacao,
       inventario_itens (
         modelo_id,
         funcionando,
@@ -66,21 +67,41 @@ export default async function DiretoriaPage({
 
   const listaEscolas = [...new Set(equipamentos?.map((e: any) => e.escola_nome))].sort()
 
-  // --- MAPA DE CRUZAMENTO (O segredo está aqui!) ---
-  const mapaIdParaNome: any = {}
+  // --- MAPA DE CRUZAMENTO DE ID PARA FINALIDADE E NOME ---
+  const mapaEquipamentos: any = {}
   equipamentos?.forEach((item: any) => {
-    // Usamos o ID do recebido, que é o que está salvo no modelo_id do inventário
-    mapaIdParaNome[String(item.id)] = item.equipamentos_modelos?.equipamento
+    mapaEquipamentos[String(item.id)] = {
+      nome: item.equipamentos_modelos?.equipamento,
+      finalidade: item.equipamentos_modelos?.finalidade
+    }
   })
 
-  // --- CÁLCULO DE TOTAIS OPERACIONAIS ---
+  // --- CÁLCULO DE TOTAIS OPERACIONAIS (Ignorando Carregamento) ---
   let totalFuncionando = 0
   let totalGarantia = 0
   let totalDanificados = 0
   let totalNaoLocalizados = 0
+  let totalPlataformasRespondidas = 0 // NOVO: Total de plataformas respondidas
 
   respostasFiltradas.forEach((resposta: any) => {
     resposta.inventario_itens?.forEach((item: any) => {
+      
+      const equipamentoBanco = mapaEquipamentos[String(item.modelo_id)]
+      const finalidadeLimpa = equipamentoBanco?.finalidade ? String(equipamentoBanco.finalidade).toLowerCase() : ""
+      
+      const somaRespondidaItem = 
+          (item.funcionando || 0) + 
+          (item.aguardando_garantia || 0) + 
+          (item.danificados_mau_uso || 0) + 
+          (item.nao_localizado || 0)
+
+      // Se FOR plataforma de carregamento, soma separado e NÃO ENTRA nos totais principais
+      if (finalidadeLimpa.includes("carregamento")) {
+        totalPlataformasRespondidas += somaRespondidaItem
+        return // Sai da iteração deste item
+      }
+
+      // Se NÃO FOR plataforma, entra nos totais principais dos cards
       totalFuncionando += item.funcionando || 0
       totalGarantia += item.aguardando_garantia || 0
       totalDanificados += item.danificados_mau_uso || 0
@@ -90,7 +111,7 @@ export default async function DiretoriaPage({
 
   // --- BASE EQUIPAMENTOS & DISTRIBUIÇÃO POR MODELO ---
   let totalEquipamentos = 0
-  let totalPlataformas = 0
+  let totalPlataformasRecebidas = 0 // Renomeado para ficar mais claro
   const ranking: any = {}
   const modelosAgrupados: any = {}
 
@@ -104,11 +125,14 @@ export default async function DiretoriaPage({
     const finalidadeLimpa = finalidade ? String(finalidade).toLowerCase() : ""
 
     if (finalidadeLimpa.includes("carregamento")) {
-      totalPlataformas += quantidade
-      return
+      totalPlataformasRecebidas += quantidade
+      // Não damos 'return' aqui se quisermos que a plataforma apareça no ranking ou distribuição de modelos.
+      // Caso não queira que plataformas apareçam na distribuição por modelo, ative o 'return' abaixo:
+      // return 
+    } else {
+      // Conta no total principal apenas se não for plataforma
+      totalEquipamentos += quantidade
     }
-
-    totalEquipamentos += quantidade
 
     if (!ranking[escola]) ranking[escola] = 0
     ranking[escola] += quantidade
@@ -119,10 +143,11 @@ export default async function DiretoriaPage({
     modelosAgrupados[modeloNome].recebido += quantidade
   })
 
-  // B. Processa o que foi RESPONDIDO
+  // B. Processa o que foi RESPONDIDO (Para a distribuição por modelo)
   respostasFiltradas.forEach((resposta: any) => {
     resposta.inventario_itens?.forEach((item: any) => {
-      const nomeModelo = mapaIdParaNome[String(item.modelo_id)]
+      const equipamentoBanco = mapaEquipamentos[String(item.modelo_id)]
+      const nomeModelo = equipamentoBanco?.nome
       
       if (nomeModelo && modelosAgrupados[nomeModelo]) {
         const somaRespondida = 
@@ -151,11 +176,11 @@ export default async function DiretoriaPage({
     ? respostasFiltradas[0] 
     : null;
 
-  // Função para formatar a data que vem do Supabase (ex: "2024-05-15T14:30:00Z" -> "15/05/2024")
+  // Função para formatar a data que vem do Supabase (Ajustado para forçar UTC e não perder 1 dia)
   const formatarData = (dataIso: string) => {
     if (!dataIso) return "";
     const data = new Date(dataIso);
-    return data.toLocaleDateString('pt-BR');
+    return data.toLocaleDateString('pt-BR', { timeZone: "UTC" });
   }
 
   return (
@@ -173,30 +198,42 @@ export default async function DiretoriaPage({
         </form>
       </div>
 
-      {/* NOVO BLOCO: DADOS DO RESPONSÁVEL (Aparece só quando filtra escola) */}
+      {/* NOVO BLOCO: DADOS DO RESPONSÁVEL COM OBSERVAÇÃO */}
       {dadosResponsavel && (
-        <div className="bg-[#020617] border border-blue-900/50 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-blue-900/20 rounded-lg hidden sm:block">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-blue-400">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-              </svg>
+        <div className="bg-[#020617] border border-blue-900/50 rounded-xl p-4 flex flex-col gap-4">
+          
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-blue-900/20 rounded-lg hidden sm:block">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-blue-400">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-[10px] sm:text-xs text-blue-400 font-semibold uppercase tracking-widest mb-1">Inventário respondido por</p>
+                <p className="text-white text-base sm:text-lg font-bold">{dadosResponsavel.responsavel_nome}</p>
+                <p className="text-slate-400 text-xs sm:text-sm">{dadosResponsavel.responsavel_cargo}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-[10px] sm:text-xs text-blue-400 font-semibold uppercase tracking-widest mb-1">Inventário respondido por</p>
-              <p className="text-white text-base sm:text-lg font-bold">{dadosResponsavel.responsavel_nome}</p>
-              <p className="text-slate-400 text-xs sm:text-sm">{dadosResponsavel.responsavel_cargo}</p>
+            {/* AQUI ESTÁ A DATA */}
+            <div className="sm:text-right border-t sm:border-t-0 border-slate-800 pt-3 sm:pt-0 w-full sm:w-auto">
+               <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Data de Envio</p>
+               <p className="text-slate-300 font-medium text-sm">{formatarData(dadosResponsavel.created_at)}</p>
             </div>
           </div>
-          {/* AQUI ESTÁ A DATA */}
-          <div className="sm:text-right border-t sm:border-t-0 border-slate-800 pt-3 sm:pt-0 w-full sm:w-auto">
-             <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Data de Envio</p>
-             <p className="text-slate-300 font-medium text-sm">{formatarData(dadosResponsavel.created_at)}</p>
-          </div>
+
+          {/* SESSÃO DE OBSERVAÇÃO */}
+          {dadosResponsavel.observacao && dadosResponsavel.observacao.trim() !== "" && (
+            <div className="mt-2 bg-slate-900/80 border border-slate-800 rounded-lg p-3">
+               <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-widest mb-1">Observações do Responsável</p>
+               <p className="text-sm text-slate-300 italic">"{dadosResponsavel.observacao}"</p>
+            </div>
+          )}
+
         </div>
       )}
 
-      {/* CARDS DO TOPO (Quebram no celular, ficam em 5 no PC) */}
+      {/* CARDS DO TOPO (Equipamentos operacionais - Plataformas ignoradas) */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
         <Card><p className="text-xs text-slate-400">Equipamentos</p><p className="text-2xl lg:text-3xl font-bold text-white truncate">{totalEquipamentos}</p></Card>
         <Card><p className="text-xs text-slate-400">Funcionando</p><p className="text-2xl lg:text-3xl font-bold text-green-400 truncate">{totalFuncionando}</p></Card>
@@ -213,15 +250,27 @@ export default async function DiretoriaPage({
         <p className="text-sm text-cyan-300 mt-2">{saudeGeral}% do parque tecnológico operacional</p>
       </Card>
 
+      {/* CARD DE PLATAFORMAS (Lado a Lado: Recebidos e Respondidos) */}
       <Card>
-        <h2 className="text-lg md:text-xl font-semibold mb-4">Plataformas de carregamento recebidas</h2>
-        <p className="text-3xl font-bold text-blue-400">{totalPlataformas}</p>
-        <p className="text-xs text-slate-400 mt-1">Equipamentos de suporte (não entram no cálculo de dispositivos de rede)</p>
+        <h2 className="text-lg md:text-xl font-semibold mb-6">Plataformas de carregamento</h2>
+        
+        <div className="grid grid-cols-2 gap-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 md:p-6">
+            <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-2 font-bold">Total Recebido</p>
+            <p className="text-3xl md:text-4xl font-black text-blue-400">{totalPlataformasRecebidas}</p>
+          </div>
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 md:p-6">
+            <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-2 font-bold">Total Respondido</p>
+            <p className="text-3xl md:text-4xl font-black text-emerald-400">{totalPlataformasRespondidas}</p>
+          </div>
+        </div>
+
+        <p className="text-xs text-slate-400 mt-4 italic">Equipamentos de suporte logístico (não entram no cálculo geral de dispositivos de rede e saúde operacional).</p>
       </Card>
 
       <Card>
         <h2 className="text-lg md:text-xl font-semibold mb-4">Distribuição por modelo</h2>
-        {/* GRID DE MODELOS (Quebra em 1 no cel, 3 no PC) */}
+        {/* GRID DE MODELOS */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {Object.entries(modelosAgrupados).map(([modelo, totais]: any) => (
             <div key={modelo} className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">

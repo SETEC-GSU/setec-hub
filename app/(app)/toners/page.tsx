@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect,useState } from "react"
+import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase"
 import Link from "next/link"
 
@@ -286,8 +286,9 @@ m.tipo_movimentacao === "ENTRADA"
 {m.impressora}
 </span>
 
+{/* AQUI ESTÁ A CORREÇÃO: { timeZone: "UTC" } */}
 <span className="text-slate-300 text-xs">
-{new Date(m.data_movimentacao).toLocaleDateString("pt-BR")}
+{new Date(m.data_movimentacao).toLocaleDateString("pt-BR", { timeZone: "UTC" })}
 </span>
 
 <span className="text-blue-400 text-xs text-right">

@@ -1,3 +1,4 @@
+// actions.ts
 "use server"
 
 import { createAdminClient } from "@/lib/supabase-admin"
@@ -23,6 +24,7 @@ export async function salvarInventario(formData: FormData) {
 
   const responsavel_nome = formData.get("responsavel_nome") as string
   const responsavel_cargo = formData.get("responsavel_cargo") as string
+  const observacao = formData.get("observacao") as string // <-- NOVA LINHA
 
   // cria inventário
   const { data: resposta, error: erroResposta } = await supabaseAdmin
@@ -31,7 +33,8 @@ export async function salvarInventario(formData: FormData) {
       escola_nome: escola,
       usuario_id: user.id,
       responsavel_nome,
-      responsavel_cargo
+      responsavel_cargo,
+      observacao: observacao || null // <-- NOVA LINHA (Salva no BD)
     })
     .select()
     .single()
@@ -135,7 +138,7 @@ export async function salvarInventario(formData: FormData) {
         .from("escolas")
         .update({ 
           total_equipamentos_funcionando: totalLimpo,
-          ultima_atualizacao_inventario: agora // <--- A MÁGICA ACONTECE AQUI! ⭐
+          ultima_atualizacao_inventario: agora
         }) 
         .eq("nome_escola", nomeEscolaLimpo)
 
