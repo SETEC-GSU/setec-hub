@@ -36,6 +36,7 @@ const materiaisFiltrados = useMemo(()=>{
 },[busca,listaMateriais])
 
 const categorias = {
+  GERAL: materiaisFiltrados.filter((m:any)=>m?.categoria==="GERAL"),
   CONECTIVIDADE: materiaisFiltrados.filter((m:any)=>m?.categoria==="CONECTIVIDADE"),
   EQUIPAMENTOS: materiaisFiltrados.filter((m:any)=>m?.categoria==="EQUIPAMENTOS"),
   SISTEMAS: materiaisFiltrados.filter((m:any)=>m?.categoria==="SISTEMAS"),
@@ -157,10 +158,11 @@ return(
     </Card>
 
     <div className="space-y-4">
-      {renderCategoria("Conectividade",categorias.CONECTIVIDADE,"🌐")}
+      {renderCategoria("Geral",categorias.GERAL,"🌐")}
+      {renderCategoria("Conectividade",categorias.CONECTIVIDADE,"🛜")}
       {renderCategoria("Equipamentos",categorias.EQUIPAMENTOS,"💻")}
       {renderCategoria("Sistemas",categorias.SISTEMAS,"⚙️")}
-      {renderCategoria("Espelhamento",categorias.ESPELHAMENTO,"📡")}
+      {renderCategoria("Espelhamento",categorias.ESPELHAMENTO,"📹")}
     </div>
   </div>
 )

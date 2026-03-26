@@ -27,6 +27,7 @@ export type Permission =
   | "toners.saida"
   | "toners.historico"
   | "edu.monitor"
+  | "segundo.link"
 
 
   
@@ -59,7 +60,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "toners.entrada",
     "toners.saida",
     "toners.historico",
-    "edu.monitor"
+    "edu.monitor",
+    "segundo.link"
+
   ],
 
   analista: [
@@ -85,7 +88,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "toners.entrada",
     "toners.saida",
     "toners.historico",
-    "edu.monitor"
+    "edu.monitor",
+    "segundo.link"
   ],
 
   chefia_ure: [
@@ -99,7 +103,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "apoio.usuario",
     "painel.chamados",
     "toners.historico",
-    "edu.monitor"
+    "edu.monitor",
+    "segundo.link"
   ],
 
   gestao_escolas: [
@@ -110,7 +115,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "agenda.field",
     "inventario.view",
     "apoio.usuario",
-    "painel.chamados"
+    "painel.chamados",
+    "segundo.link"
   ],
 
   dirigente: [
@@ -131,7 +137,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "painel.chamados",
     "toners.view",
     "toners.historico",
-    "edu.monitor"
+    "edu.monitor",
+    "segundo.link"
   
   ],
 
@@ -158,7 +165,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "toners.entrada",
     "toners.saida",
     "toners.historico",
-    "edu.monitor"
+    "edu.monitor",
+    "segundo.link"
   ],
 }
 

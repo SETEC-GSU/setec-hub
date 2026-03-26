@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase'
-import Image from 'next/image'
 
 export default function LoginPage() {
   const supabase = createClient()
@@ -40,28 +39,20 @@ export default function LoginPage() {
         className="w-[380px] bg-white rounded-3xl p-8 shadow-2xl space-y-5"
       >
 
-        {/* LOGO + TÍTULO */}
-        <div className="text-center space-y-2">
-
-          <div className="flex justify-center items-center gap--1">
-
-            <img
-              src="https://midiasstoragesec.blob.core.windows.net/001/2026/03/icon.png"
-              alt="SETEC Hub"
-              width={70}
-              height={100}
-            />
-
-            <h1 className="text-3xl font-bold text-slate-900">
-              SETEC Hub
-            </h1>
-
+        {/* LOGO MODERNIZADO (IGUAL À SIDEBAR) */}
+        <div className="text-center space-y-4 mb-6">
+          <div className="flex justify-center items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-600 to-blue-500 flex items-center justify-center shadow-[0_0_20px_rgba(37,99,235,0.4)] border border-blue-400/20">
+              <span className="text-white font-black text-xl tracking-tight">SH</span>
+            </div>
+            <div className="flex flex-col leading-tight mt-1 text-left">
+              <div className="text-3xl font-black tracking-tight flex items-baseline">
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-blue-700">SETEC</span>
+                <span className="text-slate-700 ml-1 font-light">Hub</span>
+              </div>
+              <span className="text-[11px] font-bold text-slate-500 tracking-[0.2em] uppercase mt-0.5">URE Guarulhos Sul</span>
+            </div>
           </div>
-
-          <p className="text-slate-500 text-sm">
-            URE Guarulhos Sul
-          </p>
-
         </div>
 
         {/* EMAIL */}

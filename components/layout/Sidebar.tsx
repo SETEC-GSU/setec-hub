@@ -43,6 +43,13 @@ export default async function Sidebar() {
     },
 
     {
+      title: "🛜 Conectividade",
+      items: [
+        { href: "/segundo-link", label: "Segundo Link", icon: "🔗", permission: "segundo.link" },
+      ]
+    },
+
+    {
       title: "📡 Fields",
       items: [
         { href: "/fields", label: "Atendimento", icon: "🧑‍🔧", permission: "fields.view" },
@@ -85,10 +92,22 @@ export default async function Sidebar() {
 
       <div>
 
-        <div className="h-24 shrink-0 flex items-center px-8 text-2xl font-bold border-b border-slate-800 sticky top-0 bg-[#020617] z-10">
-          <span className="text-blue-500">SETEC</span>
-          <span className="ml-2 font-light">Hub</span>
+        {/* LOGO MODERNIZADO E BLINDADO AQUI 👇 */}
+        <div className="h-24 shrink-0 flex items-center px-6 border-b border-slate-800 sticky top-0 bg-[#020617]/90 backdrop-blur-md z-10">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-blue-500 flex items-center justify-center shadow-[0_0_20px_rgba(37,99,235,0.4)] border border-blue-400/20">
+              <span className="text-white font-black text-lg tracking-tight">SH</span>
+            </div>
+            <div className="flex flex-col leading-tight mt-1">
+              <div className="text-2xl font-black tracking-tight flex items-baseline">
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-blue-600">SETEC</span>
+                <span className="text-slate-200 ml-1 font-light">Hub</span>
+              </div>
+              <span className="text-[10px] font-semibold text-slate-500 tracking-[0.2em] uppercase mt-0.5">URE GUARULHOS SUL</span>
+            </div>
+          </div>
         </div>
+        {/* FIM DO LOGO MODERNIZADO 👆 */}
 
         <nav className="mt-6 px-4 space-y-4 pb-6">
 
