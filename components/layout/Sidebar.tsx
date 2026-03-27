@@ -54,6 +54,7 @@ export default async function Sidebar() {
       items: [
         { href: "/fields", label: "Atendimento", icon: "🧑‍🔧", permission: "fields.view" },
         { href: "/fields/agenda-field", label: "Agenda", icon: "📅", permission: "agenda.field" },
+        { href: "/fields/avaliacoes", label: "Avaliações", icon: "⭐", permission: "avaliacoes.field" },
       ]
     },
 

@@ -28,6 +28,7 @@ export type Permission =
   | "toners.historico"
   | "edu.monitor"
   | "segundo.link"
+  | "avaliacoes.field"
 
 
   
@@ -61,7 +62,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "toners.saida",
     "toners.historico",
     "edu.monitor",
-    "segundo.link"
+    "segundo.link",
+    "avaliacoes.field"
 
   ],
 
@@ -138,7 +140,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "toners.view",
     "toners.historico",
     "edu.monitor",
-    "segundo.link"
+    "segundo.link",
+    "avaliacoes.field"
   
   ],
 
@@ -166,7 +169,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "toners.saida",
     "toners.historico",
     "edu.monitor",
-    "segundo.link"
+    "segundo.link",
+    "avaliacoes.field"
   ],
 }
 

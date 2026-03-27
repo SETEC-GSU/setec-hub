@@ -68,7 +68,7 @@ export default async function DiretoriaPage({
   const listaEscolas = [...new Set(equipamentos?.map((e: any) => e.escola_nome))].sort()
 
   // --- MAPA DE CRUZAMENTO DE ID PARA FINALIDADE E NOME ---
-  const mapaEquipamentos: any = {}
+  const mapaEquipamentos: Record<string, any> = {}
   equipamentos?.forEach((item: any) => {
     mapaEquipamentos[String(item.id)] = {
       nome: item.equipamentos_modelos?.equipamento,
@@ -113,7 +113,7 @@ export default async function DiretoriaPage({
   let totalEquipamentos = 0
   let totalPlataformasRecebidas = 0 // Renomeado para ficar mais claro
   const ranking: any = {}
-  const modelosAgrupados: any = {}
+  const modelosAgrupados: Record<string, any> = {}
 
   // A. Processa o que foi RECEBIDO
   equipamentosFiltrados?.forEach((item: any) => {
@@ -126,21 +126,27 @@ export default async function DiretoriaPage({
 
     if (finalidadeLimpa.includes("carregamento")) {
       totalPlataformasRecebidas += quantidade
-      // Não damos 'return' aqui se quisermos que a plataforma apareça no ranking ou distribuição de modelos.
-      // Caso não queira que plataformas apareçam na distribuição por modelo, ative o 'return' abaixo:
-      // return 
     } else {
-      // Conta no total principal apenas se não for plataforma
       totalEquipamentos += quantidade
     }
 
     if (!ranking[escola]) ranking[escola] = 0
     ranking[escola] += quantidade
 
-    if (!modelosAgrupados[modeloNome]) {
-      modelosAgrupados[modeloNome] = { recebido: 0, respondido: 0 }
+    // Inicialização robusta do agrupador
+    if (modeloNome) {
+      if (!modelosAgrupados[modeloNome]) {
+        modelosAgrupados[modeloNome] = { 
+          recebido: 0, 
+          respondido: 0,
+          funcionando: 0,
+          garantia: 0,
+          danificados: 0,
+          nao_localizado: 0
+        }
+      }
+      modelosAgrupados[modeloNome].recebido += quantidade
     }
-    modelosAgrupados[modeloNome].recebido += quantidade
   })
 
   // B. Processa o que foi RESPONDIDO (Para a distribuição por modelo)
@@ -150,13 +156,18 @@ export default async function DiretoriaPage({
       const nomeModelo = equipamentoBanco?.nome
       
       if (nomeModelo && modelosAgrupados[nomeModelo]) {
-        const somaRespondida = 
-          (item.funcionando || 0) + 
-          (item.aguardando_garantia || 0) + 
-          (item.danificados_mau_uso || 0) + 
-          (item.nao_localizado || 0)
+        const func = item.funcionando || 0
+        const gar = item.aguardando_garantia || 0
+        const dan = item.danificados_mau_uso || 0
+        const nloc = item.nao_localizado || 0
+
+        const somaRespondida = func + gar + dan + nloc
         
         modelosAgrupados[nomeModelo].respondido += somaRespondida
+        modelosAgrupados[nomeModelo].funcionando += func
+        modelosAgrupados[nomeModelo].garantia += gar
+        modelosAgrupados[nomeModelo].danificados += dan
+        modelosAgrupados[nomeModelo].nao_localizado += nloc
       }
     })
   })
@@ -235,7 +246,7 @@ export default async function DiretoriaPage({
 
       {/* CARDS DO TOPO (Equipamentos operacionais - Plataformas ignoradas) */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        <Card><p className="text-xs text-slate-400">Equipamentos</p><p className="text-2xl lg:text-3xl font-bold text-white truncate">{totalEquipamentos}</p></Card>
+        <Card><p className="text-xs text-slate-400">Equipamentos recebidos</p><p className="text-2xl lg:text-3xl font-bold text-white truncate">{totalEquipamentos}</p></Card>
         <Card><p className="text-xs text-slate-400">Funcionando</p><p className="text-2xl lg:text-3xl font-bold text-green-400 truncate">{totalFuncionando}</p></Card>
         <Card><p className="text-xs text-slate-400">Garantia</p><p className="text-2xl lg:text-3xl font-bold text-yellow-400 truncate">{totalGarantia}</p></Card>
         <Card><p className="text-xs text-slate-400">Danificados</p><p className="text-2xl lg:text-3xl font-bold text-red-400 truncate">{totalDanificados}</p></Card>
@@ -269,22 +280,48 @@ export default async function DiretoriaPage({
       </Card>
 
       <Card>
-        <h2 className="text-lg md:text-xl font-semibold mb-4">Distribuição por modelo</h2>
-        {/* GRID DE MODELOS */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <h2 className="text-lg md:text-xl font-semibold mb-6">Distribuição por modelo e status</h2>
+        {/* 🚀 GRID DE MODELOS COM STATUS */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {Object.entries(modelosAgrupados).map(([modelo, totais]: any) => (
-            <div key={modelo} className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
-              <p className="text-sm font-semibold text-slate-300 mb-4">{modelo}</p>
-              <div className="flex justify-between items-end">
-                <div>
-                  <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Recebidos</p>
-                  <p className="text-2xl font-bold text-white">{totais.recebido}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Respondidos</p>
-                  <p className="text-2xl font-bold text-blue-400">{totais.respondido > 0 ? totais.respondido : "-"}</p>
-                </div>
+            <div key={modelo} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between shadow-lg">
+              
+              <div className="flex justify-between items-start mb-4 border-b border-slate-800 pb-3">
+                 <p className="text-sm font-bold text-white leading-tight pr-2">{modelo}</p>
+                 <div className="text-right shrink-0">
+                   <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-0.5">Qtd. Total Recebida</p>
+                   <p className="text-2xl font-black text-white leading-none">{totais.recebido}</p>
+                 </div>
               </div>
+
+              {totais.respondido > 0 ? (
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-2">
+                    <p className="text-[10px] text-green-500 uppercase tracking-wider font-semibold">Funcionando</p>
+                    <p className="text-lg font-bold text-green-400">{totais.funcionando}</p>
+                  </div>
+                  
+                  <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-2">
+                    <p className="text-[10px] text-yellow-500 uppercase tracking-wider font-semibold">Em Garantia</p>
+                    <p className="text-lg font-bold text-yellow-400">{totais.garantia}</p>
+                  </div>
+                  
+                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-2">
+                    <p className="text-[10px] text-red-500 uppercase tracking-wider font-semibold">Danificados</p>
+                    <p className="text-lg font-bold text-red-400">{totais.danificados}</p>
+                  </div>
+                  
+                  <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-2">
+                    <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Não Localizado</p>
+                    <p className="text-lg font-bold text-slate-300">{totais.nao_localizado}</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-6 bg-slate-900/50 rounded-lg border border-dashed border-slate-700 mt-2">
+                   <p className="text-xs text-slate-500 uppercase font-semibold tracking-wider">Aguardando Inventário</p>
+                </div>
+              )}
+              
             </div>
           ))}
         </div>

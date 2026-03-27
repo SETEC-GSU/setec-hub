@@ -263,7 +263,7 @@ export default function SegundoLinkPage() {
               <div>
                 <h4 className="text-white font-bold text-base mb-2">O link da SDWAN conflita com a rede Wi-Fi?</h4>
                 <p className="text-slate-400 text-sm leading-relaxed">
-                  Não deveria, pois a rede Intragov atua de forma independente. No entanto, <b>recomenda-se que o Wi-Fi do link SDWAN não seja utilizado</b> para evitar possíveis interferências. A escola deve solicitar ao provedor a desativação da função Wi-Fi no modem.
+                   <b>Sim. É obrigatório que o Wi-Fi do link SDWAN não seja utilizado</b> para evitar possíveis interferências. A escola deve solicitar ao provedor a desativação da função Wi-Fi no modem.
                 </p>
               </div>
             </div>
@@ -275,7 +275,7 @@ export default function SegundoLinkPage() {
               <div>
                 <h4 className="text-white font-bold text-base mb-2">A SDWAN vai melhorar a velocidade da Intragov?</h4>
                 <p className="text-slate-400 text-sm leading-relaxed">
-                  A SDWAN <b>não aumenta a velocidade</b> do link da Intragov. Sua principal função é atuar como <b>failover (contingência)</b> caso o link principal falhe. Ele gerencia o tráfego de forma inteligente, mas não soma as velocidades dos links.
+                  A SDWAN <b>não aumenta a velocidade</b> do link da Intragov. Sua principal função é atuar como <b>failover (contingência)</b> caso o link principal falhe. Ele gerencia o tráfego de forma inteligente, mas não soma as velocidades dos links. Otimiza o desempenho das duas larguras de banda de internet, reforçando a continuidade das atividades diárias das escolas.
                 </p>
               </div>
             </div>
