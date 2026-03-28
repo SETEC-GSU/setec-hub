@@ -187,7 +187,7 @@ export default function GestaoEscolasGrid() {
                        <div>
                          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Status Hardware</p>
                          <div className="flex gap-4 mt-1">
-                            <span className="text-xs text-emerald-400 font-bold">{row.total_equipamentos_funcionando || 0} OK</span>
+                            <span className="text-xs text-emerald-400 font-bold">{row.total_equipamentos_funcionando || 0} EQUIPAMENTOS FUNCIONANDO</span>
                             <span className="text-xs text-blue-400 font-bold">{row.aps_instalados || 0} APs</span>
                          </div>
                        </div>

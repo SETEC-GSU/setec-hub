@@ -71,7 +71,7 @@ export default async function Sidebar() {
     {
       title: "⚙️ Gestão",
       items: [
-        { href: "/gestao-escolas", label: "Gestão de Escolas", icon: "⚙️", permission: "escolas.manage" },
+        { href: "/gestao-escolas", label: "Gestão de Escolas", icon: "🏫", permission: "escolas.manage" },
         { href: "/usuarios", label: "Gestão de Usuários", icon: "👥", permission: "usuarios.view" },
         { href: "/gestao-chamados", label: "Gestão de Chamados", icon: "🛠️", permission: "gestaoChamados.view" },
         { href: "/gestao-equipamentos", label: "Gestão de Equipamentos", icon: "💻", permission: "gestao.equipamentos" }, // 🚀 ADICIONADO AQUI
