@@ -94,21 +94,44 @@ function renderCategoria(nome:string,lista:any[],icone:string){
         ):( 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {Object.entries(agrupado).map(([subcategoria,itens]:any)=>{
+              
+              // 🚀 LÓGICA DA IMAGEM: Procura se algum item dentro desta subcategoria tem imagem_url
+              // E só faz isso se a categoria principal for "Equipamentos"
+              const itemComImagem = nome === "Equipamentos" ? itens.find((i: any) => i.imagem_url) : null;
+              const imagemDaSubcategoria = itemComImagem ? itemComImagem.imagem_url : null;
+
               return(
                 <div
                   key={subcategoria}
-                  className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4 hover:border-cyan-500 transition"
+                  className="bg-slate-900 border border-slate-800 rounded-xl p-5 hover:border-cyan-500 transition flex flex-col h-full"
                 >
-                  <div className="flex justify-between items-center">
-                     <h3 className="text-white font-semibold text-lg leading-tight">
-                       {subcategoria}
-                     </h3>
-                     <span className="text-[10px] text-slate-500 font-bold bg-[#020617] px-2 py-0.5 rounded border border-slate-800">
-                       {itens.length}
-                     </span>
+                  {/* CABEÇALHO DO CARD DA SUBCATEGORIA (AGORA COM SUPORTE A IMAGEM) */}
+                  <div className="flex items-start justify-between gap-3 mb-4 border-b border-slate-800/60 pb-3">
+                    <div className="flex items-start gap-3 flex-1">
+                      
+                      {/* SÓ RENDERIZA A CAIXA DA IMAGEM SE EXISTIR IMAGEM */}
+                      {imagemDaSubcategoria && (
+                        <div className="w-12 h-12 shrink-0 bg-white rounded-xl p-1.5 border border-slate-200 shadow-inner flex items-center justify-center overflow-hidden">
+                          <img
+                            src={imagemDaSubcategoria}
+                            alt={subcategoria}
+                            className="w-full h-full object-contain"
+                          />
+                        </div>
+                      )}
+                      
+                      <h3 className="text-white font-semibold text-lg leading-tight mt-1">
+                        {subcategoria}
+                      </h3>
+                    </div>
+
+                    <span className="text-[10px] text-slate-500 font-bold bg-[#020617] px-2 py-0.5 rounded border border-slate-800 shrink-0 mt-1">
+                      {itens.length}
+                    </span>
                   </div>
 
-                  <div className="space-y-3 pt-2">
+                  {/* LISTA DE ARQUIVOS (BOTÕES) */}
+                  <div className="space-y-3 pt-1 flex-1">
                     {itens.map((item:any)=>(
                       <button
                         key={item.id}

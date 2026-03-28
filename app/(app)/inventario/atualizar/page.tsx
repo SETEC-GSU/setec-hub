@@ -19,13 +19,16 @@ export default async function AtualizarInventario() {
 
   const escola = perfil?.setor
 
+  // 🚀 ADICIONADO imagem_url e ano_recebimento NA QUERY
   const { data: equipamentos } = await supabase
     .from("equipamentos_recebidos")
     .select(`
       id,
       quantidade_recebida,
       equipamentos_modelos (
-        equipamento
+        equipamento,
+        imagem_url,
+        ano_recebimento
       )
     `)
     .eq("escola_nome", escola)

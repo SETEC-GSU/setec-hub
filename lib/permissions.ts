@@ -29,6 +29,8 @@ export type Permission =
   | "edu.monitor"
   | "segundo.link"
   | "avaliacoes.field"
+  | "gestao.equipamentos"
+
 
 
   
@@ -63,7 +65,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "toners.historico",
     "edu.monitor",
     "segundo.link",
-    "avaliacoes.field"
+    "avaliacoes.field",
+    "gestao.equipamentos"
 
   ],
 
@@ -170,7 +173,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "toners.historico",
     "edu.monitor",
     "segundo.link",
-    "avaliacoes.field"
+    "avaliacoes.field",
+    "gestao.equipamentos"
   ],
 }
 

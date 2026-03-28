@@ -19,13 +19,16 @@ export default async function InventarioPage() {
 
   const escola = perfil?.setor
 
+  // 🚀 ADICIONADO imagem_url e ano_recebimento AQUI 👇
   const { data: equipamentos } = await supabase
     .from("equipamentos_recebidos")
     .select(`
       id,
       quantidade_recebida,
       equipamentos_modelos (
-        equipamento
+        equipamento,
+        imagem_url,
+        ano_recebimento
       )
     `)
     .eq("escola_nome", escola)
@@ -144,7 +147,7 @@ export default async function InventarioPage() {
           </a>
         </div>
 
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {equipamentos?.map((item: any, i: number) => {
             const status = statusModelo(item.id)
             let saude = 0
@@ -161,18 +164,45 @@ export default async function InventarioPage() {
             return (
               <div
                 key={i}
-                className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2"
+                className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col gap-3"
               >
-                <p className="text-sm font-bold text-white">
-                  {item.equipamentos_modelos.equipamento}
-                </p>
-                <p className="text-2xl font-bold text-white">
-                  {item.quantidade_recebida}
-                </p>
+                {/* 🚀 NOVO CABEÇALHO: Imagem e Título/Ano */}
+                <div className="flex items-start gap-3">
+                  {item.equipamentos_modelos.imagem_url ? (
+                    <div className="w-16 h-16 shrink-0 bg-white rounded-xl p-1.5 border border-slate-200 shadow-inner flex items-center justify-center overflow-hidden">
+                      <img
+                        src={item.equipamentos_modelos.imagem_url}
+                        alt={item.equipamentos_modelos.equipamento}
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                  ) : (
+                    <div className="w-16 h-16 shrink-0 bg-slate-800/50 border border-slate-700 rounded-xl flex items-center justify-center">
+                      <span className="text-[9px] text-slate-500 uppercase font-bold text-center px-1">Sem<br/>Imagem</span>
+                    </div>
+                  )}
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-white leading-snug">
+                      {item.equipamentos_modelos.equipamento}
+                    </p>
+                    {item.equipamentos_modelos.ano_recebimento && (
+                      <span className="inline-block mt-1.5 bg-blue-500/10 border border-blue-500/30 text-blue-400 text-[9px] uppercase font-black px-1.5 py-0.5 rounded-md tracking-wider">
+                        Ano de recebimento: {item.equipamentos_modelos.ano_recebimento}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-800/60 pt-3">
+                   <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold mb-1">Total Recebido</p>
+                   <p className="text-2xl font-bold text-white leading-none">
+                     {item.quantidade_recebida}
+                   </p>
+                </div>
 
                 {status && (
-                  <div className="text-xs space-y-1 pt-2">
-                    <p className="text-green-400">
+                  <div className="text-xs space-y-1 pt-2 border-t border-slate-800/60 mt-1">
+                    <p className="text-green-400 mt-2">
                       Funcionando: {status.funcionando}
                     </p>
                     <p className="text-yellow-400">
@@ -228,7 +258,7 @@ export default async function InventarioPage() {
             )}
 
             {/* CARDS RESUMO */}
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <Card>
                 <p className="text-xs text-slate-400">Funcionando</p>
                 <p className="text-3xl font-bold text-green-400">

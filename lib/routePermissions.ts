@@ -26,5 +26,6 @@ export const routePermissions: Record<string, Permission> = {
   "/toners/movimentacoes":"toners.historico",
   "/edumonitor":"edu.monitor",
   "/segundo-link":"segundo.link",
-  "/fields/avaliacoes":"avaliacoes.field"
+  "/fields/avaliacoes":"avaliacoes.field",
+  "/gestao-equipamentos":"gestao.equipamentos"
 }

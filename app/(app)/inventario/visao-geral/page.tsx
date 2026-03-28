@@ -12,7 +12,7 @@ export default async function DiretoriaPage({
   const filters = await searchParams
   const escolaSelecionada = filters?.escola || ""
 
-  // 1. EQUIPAMENTOS RECEBIDOS
+  // 1. EQUIPAMENTOS RECEBIDOS (🚀 ADICIONADO IMAGEM E ANO AQUI)
   const { data: equipamentos } = await supabase
     .from("equipamentos_recebidos")
     .select(`
@@ -22,7 +22,9 @@ export default async function DiretoriaPage({
       equipamentos_modelos(
         id,
         equipamento,
-        finalidade
+        finalidade,
+        imagem_url,
+        ano_recebimento
       )
     `)
     .gt("quantidade_recebida", 0)
@@ -119,6 +121,8 @@ export default async function DiretoriaPage({
   equipamentosFiltrados?.forEach((item: any) => {
     const finalidade = item.equipamentos_modelos?.finalidade
     const modeloNome = item.equipamentos_modelos?.equipamento
+    const imagemUrl = item.equipamentos_modelos?.imagem_url // Pega a imagem
+    const anoRecebimento = item.equipamentos_modelos?.ano_recebimento // Pega o ano
     const quantidade = item.quantidade_recebida || 0
     const escola = item.escola_nome
 
@@ -133,7 +137,7 @@ export default async function DiretoriaPage({
     if (!ranking[escola]) ranking[escola] = 0
     ranking[escola] += quantidade
 
-    // Inicialização robusta do agrupador
+    // Inicialização robusta do agrupador com os novos dados visuais
     if (modeloNome) {
       if (!modelosAgrupados[modeloNome]) {
         modelosAgrupados[modeloNome] = { 
@@ -142,7 +146,9 @@ export default async function DiretoriaPage({
           funcionando: 0,
           garantia: 0,
           danificados: 0,
-          nao_localizado: 0
+          nao_localizado: 0,
+          imagem_url: imagemUrl, // Armazena a imagem
+          ano_recebimento: anoRecebimento // Armazena o ano
         }
       }
       modelosAgrupados[modeloNome].recebido += quantidade
@@ -281,17 +287,45 @@ export default async function DiretoriaPage({
 
       <Card>
         <h2 className="text-lg md:text-xl font-semibold mb-6">Distribuição por modelo e status</h2>
-        {/* 🚀 GRID DE MODELOS COM STATUS */}
+        {/* 🚀 GRID DE MODELOS COM STATUS VISUAL ATUALIZADO */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {Object.entries(modelosAgrupados).map(([modelo, totais]: any) => (
             <div key={modelo} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between shadow-lg">
               
-              <div className="flex justify-between items-start mb-4 border-b border-slate-800 pb-3">
-                 <p className="text-sm font-bold text-white leading-tight pr-2">{modelo}</p>
-                 <div className="text-right shrink-0">
-                   <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-0.5">Qtd. Total Recebida</p>
-                   <p className="text-2xl font-black text-white leading-none">{totais.recebido}</p>
-                 </div>
+              <div className="flex items-start justify-between gap-3 mb-4 border-b border-slate-800 pb-4">
+                
+                {/* 🚀 LADO ESQUERDO: IMAGEM, TÍTULO E ANO */}
+                <div className="flex items-start gap-3 flex-1">
+                  {totais.imagem_url ? (
+                    <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-white rounded-xl p-1.5 border border-slate-200 shadow-inner flex items-center justify-center overflow-hidden">
+                      <img
+                        src={totais.imagem_url}
+                        alt={modelo}
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                  ) : (
+                    <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-slate-800/50 border border-slate-700 rounded-xl flex items-center justify-center">
+                      <span className="text-[8px] sm:text-[9px] text-slate-500 uppercase font-bold text-center px-1">Sem<br/>Imagem</span>
+                    </div>
+                  )}
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-white leading-snug">
+                      {modelo}
+                    </p>
+                    {totais.ano_recebimento && (
+                      <span className="inline-block mt-1 bg-blue-500/10 border border-blue-500/30 text-blue-400 text-[9px] uppercase font-black px-1.5 py-0.5 rounded-md tracking-wider">
+                        ANO DE RECEBIMENTO: {totais.ano_recebimento}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* 🚀 LADO DIREITO: TOTAL RECEBIDO */}
+                <div className="text-right shrink-0">
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-0.5">Total Recebido</p>
+                  <p className="text-2xl font-black text-white leading-none">{totais.recebido}</p>
+                </div>
               </div>
 
               {totais.respondido > 0 ? (
