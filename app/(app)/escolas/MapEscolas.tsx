@@ -16,7 +16,8 @@ export default function MapEscolas({ escolas, selected, onSelect }: any) {
   })
 
   return (
-    <MapContainer center={[-23.45, -46.53]} zoom={11} style={{ height: "100%", width: "100%" }}>
+    // 🚀 SCROLLWHEELZOOM DESATIVADO AQUI!
+    <MapContainer center={[-23.45, -46.53]} zoom={11} scrollWheelZoom={false} style={{ height: "100%", width: "100%" }}>
       <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
       {escolas

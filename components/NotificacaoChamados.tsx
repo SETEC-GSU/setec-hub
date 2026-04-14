@@ -21,25 +21,6 @@ export default function NotificacaoChamados() {
   const VISÃO_URE = ["admin", "analista", "seintec", "chefia_ure", "dirigente"];
   const ROLE_ESCOLA = "gestao_escolas";
 
-  // Som Sintetizado
-  const tocarSom = () => {
-    try {
-      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-      const context = new AudioContext();
-      const oscillator = context.createOscillator();
-      const gainNode = context.createGain();
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(880, context.currentTime); 
-      oscillator.frequency.exponentialRampToValueAtTime(440, context.currentTime + 0.5); 
-      gainNode.gain.setValueAtTime(0.1, context.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.5);
-      oscillator.connect(gainNode);
-      gainNode.connect(context.destination);
-      oscillator.start();
-      oscillator.stop(context.currentTime + 0.5);
-    } catch (e) { console.warn("Interação necessária para som") }
-  }
-
   // ⭐ NOVA LÓGICA DE CARREGAMENTO BLINDADA
   async function carregar() {
     const uId = userIdRef.current
@@ -97,14 +78,13 @@ export default function NotificacaoChamados() {
       // Carga inicial
       carregar()
 
-      // Canal Realtime unificado e direto
+      // Canal Realtime unificado e direto (SEM SOM)
       const channel = supabase
         .channel(`sino-global`)
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "chamados" },
           () => {
-            tocarSom()
             carregar()
           }
         )

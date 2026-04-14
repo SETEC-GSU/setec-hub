@@ -127,15 +127,20 @@ export default function TecnicoPage() {
         <KpiCard title="Avaliação" value={stats.mediaAval + " ⭐"} subtitle="Média feedback" color="emerald" />
       </div>
 
-      {/* NOVO: GRÁFICO DE PIZZA (Design Preservado) */}
+      {/* GRÁFICO DE PIZZA E FEEDBACKS (ALINHAMENTO CORRIGIDO) */}
       <div className="grid lg:grid-cols-3 gap-8">
+        
+        {/* CAIXA DO GRÁFICO: Agora usa a mesma estrutura/borda/padding do FeedbackSection */}
         <div className="lg:col-span-1">
-            <Glass title="📦 Mix de Categorias">
-                <div className="flex flex-col items-center py-4">
+            <div className="p-8 border rounded-[2rem] bg-[#020617] border-slate-800 h-full flex flex-col">
+                <h3 className="text-xs uppercase font-bold tracking-widest mb-6 text-slate-400">📦 Mix de Categorias</h3>
+                <div className="flex-1 flex flex-col items-center justify-center w-full">
                     <SimplePieChart data={stats.categorias} />
                 </div>
-            </Glass>
+            </div>
         </div>
+        
+        {/* CAIXAS DE FEEDBACK */}
         <div className="lg:col-span-2 grid md:grid-cols-2 gap-8">
             <FeedbackSection title="Elogios" color="emerald" items={stats.elogios} />
             <FeedbackSection title="Sugestões" color="yellow" items={stats.sugestoes} />
@@ -204,7 +209,7 @@ export default function TecnicoPage() {
 /* -------------------------------------------------------------------------- */
 
 function SimplePieChart({ data }: { data: any[] }) {
-  const colors = ['#3b82f6', '#8b5cf6', '#10b981', '#facc15', '#ef4444'];
+  const colors = ['#3b82f6', '#8b5cf6', '#10b981', '#facc15', '#ef4444', '#f97316', '#06b6d4'];
   const total = data.reduce((acc, curr) => acc + curr.value, 0);
   let cumulativePercent = 0;
 
@@ -217,21 +222,40 @@ function SimplePieChart({ data }: { data: any[] }) {
   if (total === 0) return <div className="text-slate-600 text-xs italic">Sem dados</div>
 
   return (
-    <div className="relative w-48 h-48">
-      <svg viewBox="-1 -1 2 2" className="transform -rotate-90 w-full h-full">
-        {data.map((slice, i) => {
-          const [startX, startY] = getCoordinatesForPercent(cumulativePercent);
-          cumulativePercent += slice.value / total;
-          const [endX, endY] = getCoordinatesForPercent(cumulativePercent);
-          const largeArcFlag = slice.value / total > 0.5 ? 1 : 0;
-          const pathData = [`M ${startX} ${startY}`, `A 1 1 0 ${largeArcFlag} 1 ${endX} ${endY}`, `L 0 0`].join(' ');
-          return <path key={i} d={pathData} fill={colors[i % colors.length]} stroke="#020617" strokeWidth="0.02" />;
-        })}
-        <circle cx="0" cy="0" r="0.7" fill="#020617" />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-        <span className="text-[10px] text-slate-500 font-bold uppercase">Total</span>
-        <span className="text-2xl text-white font-bold">{total}</span>
+    <div className="flex flex-col items-center w-full">
+      {/* O GRÁFICO */}
+      <div className="relative w-48 h-48 shrink-0">
+        <svg viewBox="-1 -1 2 2" className="transform -rotate-90 w-full h-full">
+          {data.map((slice, i) => {
+            if (slice.value === total) {
+              return <circle key={i} cx="0" cy="0" r="1" fill={colors[i % colors.length]} />;
+            }
+            const [startX, startY] = getCoordinatesForPercent(cumulativePercent);
+            cumulativePercent += slice.value / total;
+            const [endX, endY] = getCoordinatesForPercent(cumulativePercent);
+            const largeArcFlag = slice.value / total > 0.5 ? 1 : 0;
+            const pathData = [`M ${startX} ${startY}`, `A 1 1 0 ${largeArcFlag} 1 ${endX} ${endY}`, `L 0 0`].join(' ');
+            return <path key={i} d={pathData} fill={colors[i % colors.length]} stroke="#020617" strokeWidth="0.02" />;
+          })}
+          {/* Furo no meio para fazer o formato de Donut */}
+          <circle cx="0" cy="0" r="0.7" fill="#020617" />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Total</span>
+          <span className="text-2xl text-white font-black leading-none mt-1">{total}</span>
+        </div>
+      </div>
+
+      {/* A LEGENDA */}
+      <div className="mt-8 flex flex-wrap justify-center gap-2 w-full">
+        {data.map((slice, i) => (
+          <div key={i} className="flex items-center gap-2 bg-slate-800/30 px-3 py-1.5 rounded-lg border border-slate-700/50">
+            <span className="w-3 h-3 rounded-full shadow-inner" style={{ backgroundColor: colors[i % colors.length] }}></span>
+            <span className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">
+              {slice.name} <span className="text-slate-500 ml-0.5">({slice.value})</span>
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );

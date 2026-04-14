@@ -1,18 +1,19 @@
 import Card from "@/components/ui/Card"
 import { createServerSupabase } from "@/lib/supabase-server"
+import FiltroVisaoGeral from "@/components/ui/FiltroVisaoGeral" 
 
 export default async function DiretoriaPage({ 
   searchParams 
 }: { 
-  searchParams: Promise<{ escola?: string }> 
+  searchParams: Promise<{ escola?: string, ano?: string }> 
 }) {
 
   const supabase = await createServerSupabase()
   
   const filters = await searchParams
   const escolaSelecionada = filters?.escola || ""
+  const anoSelecionado = filters?.ano || "" 
 
-  // 1. EQUIPAMENTOS RECEBIDOS (🚀 ADICIONADO IMAGEM E ANO AQUI)
   const { data: equipamentos } = await supabase
     .from("equipamentos_recebidos")
     .select(`
@@ -24,12 +25,13 @@ export default async function DiretoriaPage({
         equipamento,
         finalidade,
         imagem_url,
-        ano_recebimento
+        ano_recebimento,
+        uso,
+        tipo
       )
     `)
     .gt("quantidade_recebida", 0)
 
-  // 2. INVENTÁRIOS ENVIADOS COM SEUS ITENS + DADOS DO RESPONSÁVEL + OBSERVAÇÃO
   const { data: inventariosBrutos } = await supabase
     .from("inventario_respostas")
     .select(`
@@ -49,7 +51,6 @@ export default async function DiretoriaPage({
     `)
     .order("created_at", { ascending: false })
 
-  // --- LÓGICA DE DEDUPLICAÇÃO (Última resposta por escola) ---
   const ultimasRespostasMap = new Map()
   inventariosBrutos?.forEach((resp: any) => {
     if (!ultimasRespostasMap.has(resp.escola_nome)) {
@@ -58,71 +59,60 @@ export default async function DiretoriaPage({
   })
   const inventariosValidos = Array.from(ultimasRespostasMap.values())
 
-  // --- FILTROS DE SEGMENTAÇÃO ---
-  const equipamentosFiltrados = escolaSelecionada
-    ? equipamentos?.filter((e: any) => e.escola_nome === escolaSelecionada)
-    : equipamentos
+  const listaAnos = [...new Set(equipamentos?.map((e: any) => e.equipamentos_modelos?.ano_recebimento).filter(Boolean))].sort()
+  const listaEscolas = [...new Set(equipamentos?.map((e: any) => e.escola_nome))].sort()
+
+  const equipamentosFiltrados = equipamentos?.filter((e: any) => {
+    const matchEscola = escolaSelecionada ? e.escola_nome === escolaSelecionada : true;
+    const matchAno = anoSelecionado ? String(e.equipamentos_modelos?.ano_recebimento) === anoSelecionado : true;
+    return matchEscola && matchAno;
+  })
 
   const respostasFiltradas = escolaSelecionada
     ? inventariosValidos.filter((r: any) => r.escola_nome === escolaSelecionada)
     : inventariosValidos
 
-  const listaEscolas = [...new Set(equipamentos?.map((e: any) => e.escola_nome))].sort()
-
-  // --- MAPA DE CRUZAMENTO DE ID PARA FINALIDADE E NOME ---
   const mapaEquipamentos: Record<string, any> = {}
   equipamentos?.forEach((item: any) => {
     mapaEquipamentos[String(item.id)] = {
       nome: item.equipamentos_modelos?.equipamento,
-      finalidade: item.equipamentos_modelos?.finalidade
+      finalidade: item.equipamentos_modelos?.finalidade,
+      ano: item.equipamentos_modelos?.ano_recebimento 
     }
   })
 
-  // --- CÁLCULO DE TOTAIS OPERACIONAIS (Ignorando Carregamento) ---
-  let totalFuncionando = 0
-  let totalGarantia = 0
-  let totalDanificados = 0
-  let totalNaoLocalizados = 0
-  let totalPlataformasRespondidas = 0 // NOVO: Total de plataformas respondidas
+  let totalPlataformasRespondidas = 0 
+  let totalGarantiaGeral = 0 
 
   respostasFiltradas.forEach((resposta: any) => {
     resposta.inventario_itens?.forEach((item: any) => {
-      
       const equipamentoBanco = mapaEquipamentos[String(item.modelo_id)]
       const finalidadeLimpa = equipamentoBanco?.finalidade ? String(equipamentoBanco.finalidade).toLowerCase() : ""
       
-      const somaRespondidaItem = 
-          (item.funcionando || 0) + 
-          (item.aguardando_garantia || 0) + 
-          (item.danificados_mau_uso || 0) + 
-          (item.nao_localizado || 0)
+      if (anoSelecionado && String(equipamentoBanco?.ano) !== anoSelecionado) return;
 
-      // Se FOR plataforma de carregamento, soma separado e NÃO ENTRA nos totais principais
       if (finalidadeLimpa.includes("carregamento")) {
-        totalPlataformasRespondidas += somaRespondidaItem
-        return // Sai da iteração deste item
+        totalPlataformasRespondidas += (item.funcionando || 0) + (item.aguardando_garantia || 0) + (item.danificados_mau_uso || 0) + (item.nao_localizado || 0)
+      } else {
+        totalGarantiaGeral += (item.aguardando_garantia || 0);
       }
-
-      // Se NÃO FOR plataforma, entra nos totais principais dos cards
-      totalFuncionando += item.funcionando || 0
-      totalGarantia += item.aguardando_garantia || 0
-      totalDanificados += item.danificados_mau_uso || 0
-      totalNaoLocalizados += item.nao_localizado || 0
     })
   })
 
-  // --- BASE EQUIPAMENTOS & DISTRIBUIÇÃO POR MODELO ---
   let totalEquipamentos = 0
-  let totalPlataformasRecebidas = 0 // Renomeado para ficar mais claro
+  let totalPlataformasRecebidas = 0 
   const ranking: any = {}
   const modelosAgrupados: Record<string, any> = {}
 
-  // A. Processa o que foi RECEBIDO
+  const saudeEscolasData: Record<string, { recebido: number, funcionando: number }> = {};
+
   equipamentosFiltrados?.forEach((item: any) => {
     const finalidade = item.equipamentos_modelos?.finalidade
     const modeloNome = item.equipamentos_modelos?.equipamento
-    const imagemUrl = item.equipamentos_modelos?.imagem_url // Pega a imagem
-    const anoRecebimento = item.equipamentos_modelos?.ano_recebimento // Pega o ano
+    const imagemUrl = item.equipamentos_modelos?.imagem_url 
+    const anoRecebimento = item.equipamentos_modelos?.ano_recebimento 
+    const uso = item.equipamentos_modelos?.uso 
+    const tipo = item.equipamentos_modelos?.tipo 
     const quantidade = item.quantidade_recebida || 0
     const escola = item.escola_nome
 
@@ -132,12 +122,13 @@ export default async function DiretoriaPage({
       totalPlataformasRecebidas += quantidade
     } else {
       totalEquipamentos += quantidade
+      if (!ranking[escola]) ranking[escola] = 0
+      ranking[escola] += quantidade
+
+      if (!saudeEscolasData[escola]) saudeEscolasData[escola] = { recebido: 0, funcionando: 0 };
+      saudeEscolasData[escola].recebido += quantidade;
     }
 
-    if (!ranking[escola]) ranking[escola] = 0
-    ranking[escola] += quantidade
-
-    // Inicialização robusta do agrupador com os novos dados visuais
     if (modeloNome) {
       if (!modelosAgrupados[modeloNome]) {
         modelosAgrupados[modeloNome] = { 
@@ -147,26 +138,36 @@ export default async function DiretoriaPage({
           garantia: 0,
           danificados: 0,
           nao_localizado: 0,
-          imagem_url: imagemUrl, // Armazena a imagem
-          ano_recebimento: anoRecebimento // Armazena o ano
+          imagem_url: imagemUrl,
+          ano_recebimento: anoRecebimento,
+          uso: uso, 
+          tipo: tipo, 
+          finalidade: finalidade 
         }
       }
       modelosAgrupados[modeloNome].recebido += quantidade
     }
   })
 
-  // B. Processa o que foi RESPONDIDO (Para a distribuição por modelo)
   respostasFiltradas.forEach((resposta: any) => {
     resposta.inventario_itens?.forEach((item: any) => {
       const equipamentoBanco = mapaEquipamentos[String(item.modelo_id)]
       const nomeModelo = equipamentoBanco?.nome
       
+      if (anoSelecionado && String(equipamentoBanco?.ano) !== anoSelecionado) return;
+
+      const finalidadeLimpa = equipamentoBanco?.finalidade ? String(equipamentoBanco.finalidade).toLowerCase() : ""
+      if (!finalidadeLimpa.includes("carregamento") && item.funcionando > 0) {
+         if (saudeEscolasData[resposta.escola_nome]) {
+             saudeEscolasData[resposta.escola_nome].funcionando += item.funcionando;
+         }
+      }
+
       if (nomeModelo && modelosAgrupados[nomeModelo]) {
         const func = item.funcionando || 0
         const gar = item.aguardando_garantia || 0
         const dan = item.danificados_mau_uso || 0
         const nloc = item.nao_localizado || 0
-
         const somaRespondida = func + gar + dan + nloc
         
         modelosAgrupados[nomeModelo].respondido += somaRespondida
@@ -178,53 +179,73 @@ export default async function DiretoriaPage({
     })
   })
 
-  const saudeGeral = totalEquipamentos > 0 ? Math.round((totalFuncionando / totalEquipamentos) * 100) : 0
-  const rankingOrdenado = Object.entries(ranking).sort((a: any, b: any) => b[1] - a[1]).slice(0, 10)
+  const rankingOrdenado = Object.entries(ranking).sort((a: any, b: any) => b[1] - a[1])
+  const maiorValorRanking = rankingOrdenado.length > 0 ? Number(rankingOrdenado[0][1]) : 1;
+
   const escolasComEquipamentos = [...new Set(equipamentos?.map((e: any) => e.escola_nome))]
-  const escolasComInventario = [...new Set(inventariosValidos?.map((i: any) => i.escola_nome))]
-  const escolasPendentes = escolasComEquipamentos.filter((escola: any) => !escolasComInventario.includes(escola))
-  const escolasEnviadas = escolasComInventario
+  const dataCorte = new Date();
+  dataCorte.setDate(dataCorte.getDate() - 90);
+
+  const escolasEnviadasAtualizadas: { escola: string, vencido: boolean }[] = [];
+  
+  inventariosValidos?.forEach((resp: any) => {
+    const dataResposta = new Date(resp.created_at);
+    if (dataResposta > dataCorte) {
+      escolasEnviadasAtualizadas.push({ escola: resp.escola_nome, vencido: false });
+    } else {
+      escolasEnviadasAtualizadas.push({ escola: resp.escola_nome, vencido: true });
+    }
+  });
+
+  const escolasAtivas = escolasEnviadasAtualizadas.filter(e => !e.vencido).map(e => e.escola);
+  const escolasPendentesAtualizadas = escolasComEquipamentos.filter(escola => !escolasAtivas.includes(escola));
+
   const totalEscolas = escolaSelecionada ? (escolasComEquipamentos.includes(escolaSelecionada) ? 1 : 0) : escolasComEquipamentos.length
-  const totalEnviados = escolaSelecionada ? (escolasComInventario.includes(escolaSelecionada) ? 1 : 0) : escolasEnviadas.length
+  const totalEnviados = escolaSelecionada ? (escolasAtivas.includes(escolaSelecionada) ? 1 : 0) : escolasAtivas.length
   const progressoInventario = totalEscolas > 0 ? Math.round((totalEnviados / totalEscolas) * 100) : 0
 
-  // Pega os dados do responsável da escola selecionada (se houver filtro e se a escola enviou)
-  const dadosResponsavel = escolaSelecionada && respostasFiltradas.length > 0 
-    ? respostasFiltradas[0] 
-    : null;
+  const dadosResponsavel = escolaSelecionada && respostasFiltradas.length > 0 ? respostasFiltradas[0] : null;
 
-  // Função para formatar a data que vem do Supabase (Ajustado para forçar UTC e não perder 1 dia)
   const formatarData = (dataIso: string) => {
     if (!dataIso) return "";
     const data = new Date(dataIso);
     return data.toLocaleDateString('pt-BR', { timeZone: "UTC" });
   }
 
+  const percentualGarantia = totalEquipamentos > 0 ? ((totalGarantiaGeral / totalEquipamentos) * 100).toFixed(1) : "0";
+  const alertaGarantia = Number(percentualGarantia) >= 5; 
+
+  const heatmapArray = Object.keys(saudeEscolasData).map(escola => {
+      const data = saudeEscolasData[escola];
+      const saude = data.recebido > 0 ? Math.round((data.funcionando / data.recebido) * 100) : 0;
+      return { escola, saude, recebido: data.recebido };
+  }).filter(e => e.recebido > 0).sort((a, b) => b.saude - a.saude); 
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 pb-8 min-h-screen flex flex-col">
       
-      {/* HEADER AJUSTADO PARA MOBILE */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <h1 className="text-2xl md:text-3xl font-bold text-white">Visão Geral do Inventário das UEs</h1>
+        <h1 className="text-2xl md:text-3xl font-bold text-white">Visão Executiva da Rede</h1>
+        
         <form method="GET" className="flex flex-col sm:flex-row items-center gap-2 w-full md:w-auto">
+          <select name="ano" defaultValue={anoSelecionado} className="w-full sm:w-auto bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:border-blue-500">
+            <option value="">Todo o Histórico (Anos)</option>
+            {listaAnos.map((ano: any) => (<option key={ano} value={ano}>Lote {ano}</option>))}
+          </select>
           <select name="escola" defaultValue={escolaSelecionada} className="w-full sm:w-auto bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:border-blue-500">
-            <option value="">Todas as Unidades Escolares</option>
+            <option value="">Todas as UEs</option>
             {listaEscolas.map((escola: any) => (<option key={escola} value={escola}>{escola}</option>))}
           </select>
           <button type="submit" className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors">Filtrar</button>
         </form>
       </div>
 
-      {/* NOVO BLOCO: DADOS DO RESPONSÁVEL COM OBSERVAÇÃO */}
       {dadosResponsavel && (
         <div className="bg-[#020617] border border-blue-900/50 rounded-xl p-4 flex flex-col gap-4">
-          
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div className="flex items-center gap-4">
               <div className="p-3 bg-blue-900/20 rounded-lg hidden sm:block">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-blue-400">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-                </svg>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-blue-400"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" /></svg>
               </div>
               <div>
                 <p className="text-[10px] sm:text-xs text-blue-400 font-semibold uppercase tracking-widest mb-1">Inventário respondido por</p>
@@ -232,168 +253,146 @@ export default async function DiretoriaPage({
                 <p className="text-slate-400 text-xs sm:text-sm">{dadosResponsavel.responsavel_cargo}</p>
               </div>
             </div>
-            {/* AQUI ESTÁ A DATA */}
             <div className="sm:text-right border-t sm:border-t-0 border-slate-800 pt-3 sm:pt-0 w-full sm:w-auto">
                <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Data de Envio</p>
                <p className="text-slate-300 font-medium text-sm">{formatarData(dadosResponsavel.created_at)}</p>
             </div>
           </div>
-
-          {/* SESSÃO DE OBSERVAÇÃO */}
           {dadosResponsavel.observacao && dadosResponsavel.observacao.trim() !== "" && (
             <div className="mt-2 bg-slate-900/80 border border-slate-800 rounded-lg p-3">
                <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-widest mb-1">Observações do Responsável</p>
                <p className="text-sm text-slate-300 italic">"{dadosResponsavel.observacao}"</p>
             </div>
           )}
-
         </div>
       )}
 
-      {/* CARDS DO TOPO (Equipamentos operacionais - Plataformas ignoradas) */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        <Card><p className="text-xs text-slate-400">Equipamentos recebidos</p><p className="text-2xl lg:text-3xl font-bold text-white truncate">{totalEquipamentos}</p></Card>
-        <Card><p className="text-xs text-slate-400">Funcionando</p><p className="text-2xl lg:text-3xl font-bold text-green-400 truncate">{totalFuncionando}</p></Card>
-        <Card><p className="text-xs text-slate-400">Garantia</p><p className="text-2xl lg:text-3xl font-bold text-yellow-400 truncate">{totalGarantia}</p></Card>
-        <Card><p className="text-xs text-slate-400">Danificados</p><p className="text-2xl lg:text-3xl font-bold text-red-400 truncate">{totalDanificados}</p></Card>
-        <Card><p className="text-[10px] lg:text-xs text-slate-400">Não localizados</p><p className="text-2xl lg:text-3xl font-bold text-gray-400 truncate">{totalNaoLocalizados}</p></Card>
+      {/* COMPONENTE PRINCIPAL DE DISTRIBUIÇÃO */}
+      <FiltroVisaoGeral 
+        modelosAgrupados={modelosAgrupados} 
+        totalPlataformasRecebidas={totalPlataformasRecebidas}
+        totalPlataformasRespondidas={totalPlataformasRespondidas}
+      />
+
+      {/* RANKING E STATUS: LADO A LADO E COM SCROLL RESTAURADO */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+        <div className="h-full">
+          <Card className="h-full flex flex-col">
+            <h2 className="text-lg md:text-xl font-semibold mb-4 shrink-0">Ranking de escolas com mais equipamentos</h2>
+            {/* 🚀 O H-96 com min-h-0 garante a mesma altura nos dois blocos E restaura o scroll */}
+            <div className="space-y-3 h-96 overflow-y-auto pr-2 min-h-0 w-full">
+              {rankingOrdenado.map(([escola, total]: any, i: number) => {
+                const widthPercent = (total / maiorValorRanking) * 100;
+                return (
+                  <div key={escola} className="relative bg-slate-900 border border-slate-800 rounded-xl overflow-hidden h-12 flex items-center shrink-0">
+                    <div 
+                      className="absolute top-0 left-0 h-full bg-blue-600/20 transition-all duration-1000"
+                      style={{ width: `${widthPercent}%` }}
+                    />
+                    <div className="relative z-10 flex justify-between w-full px-4 gap-2 items-center">
+                      <p className="text-slate-300 text-sm">{i + 1}º {escola}</p>
+                      <p className="text-white font-semibold">{total}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </div>
+
+        <div className="h-full">
+          <Card className="h-full flex flex-col">
+            <h2 className="text-lg md:text-xl font-semibold mb-4 shrink-0">Recertificação e Status (90 Dias)</h2>
+            <div className="shrink-0">
+               <p className="text-sm text-slate-400 mb-2">{totalEnviados} / {totalEscolas} escolas enviaram inventário ativo</p>
+               <div className="w-full bg-slate-800 rounded-full h-4 mb-6">
+                 <div className="bg-green-500 h-4 rounded-full transition-all duration-1000" style={{ width: `${progressoInventario}%` }} />
+               </div>
+            </div>
+            {/* 🚀 Usando min-h-0 e uma altura adaptada que empata perfeitamente com o vizinho */}
+            <div className="space-y-2 h-[20.5rem] overflow-y-auto pr-2 min-h-0 w-full">
+              {escolasAtivas.map((escola: any, i: number) => (
+                <div key={`env-${i}`} className="flex justify-between bg-slate-900 border border-green-800/30 rounded-xl px-4 py-2 gap-2 items-center shrink-0">
+                  <p className="text-green-300 text-sm truncate">{escola}</p>
+                  <p className="text-green-400 font-semibold text-xs sm:text-sm uppercase tracking-wide">Enviado</p>
+                </div>
+              ))}
+              {escolasPendentesAtualizadas.map((escola: any, i: number) => {
+                 const isVencida = escolasEnviadasAtualizadas.some(e => e.escola === escola && e.vencido);
+                 return (
+                  <div key={`pend-${i}`} className="flex justify-between bg-slate-900 border border-red-900/30 rounded-xl px-4 py-2 gap-2 items-center shrink-0">
+                    <p className="text-red-300 text-sm truncate">{escola}</p>
+                    <div className="flex gap-2 items-center">
+                      {isVencida && <span className="bg-red-500/10 text-red-400 text-[10px] px-2 py-0.5 rounded font-bold uppercase border border-red-500/20">Vencido</span>}
+                      <p className="text-red-400 font-semibold text-xs sm:text-sm uppercase tracking-wide">Pendente</p>
+                    </div>
+                  </div>
+                 )
+              })}
+            </div>
+          </Card>
+        </div>
       </div>
 
-      <Card>
-        <h2 className="text-lg md:text-xl font-semibold mb-4">Saúde Operacional da Rede</h2>
-        <div className="w-full bg-slate-800 rounded-full h-4">
-          <div className="bg-cyan-400 h-4 rounded-full transition-all duration-1000" style={{ width: `${saudeGeral}%` }} />
-        </div>
-        <p className="text-sm text-cyan-300 mt-2">{saudeGeral}% do parque tecnológico operacional</p>
-      </Card>
-
-      {/* CARD DE PLATAFORMAS (Lado a Lado: Recebidos e Respondidos) */}
-      <Card>
-        <h2 className="text-lg md:text-xl font-semibold mb-6">Plataformas de carregamento</h2>
+      {/* PAINEL DE INSIGHTS MOVIDOS PARA O FUNDO DA PÁGINA */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch pt-4">
         
-        <div className="grid grid-cols-2 gap-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 md:p-6">
-            <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-2 font-bold">Total Recebido</p>
-            <p className="text-3xl md:text-4xl font-black text-blue-400">{totalPlataformasRecebidas}</p>
-          </div>
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 md:p-6">
-            <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-2 font-bold">Total Respondido</p>
-            <p className="text-3xl md:text-4xl font-black text-emerald-400">{totalPlataformasRespondidas}</p>
-          </div>
-        </div>
-
-        <p className="text-xs text-slate-400 mt-4 italic">Equipamentos de suporte logístico (não entram no cálculo geral de dispositivos de rede e saúde operacional).</p>
-      </Card>
-
-      <Card>
-        <h2 className="text-lg md:text-xl font-semibold mb-6">Distribuição por modelo e status</h2>
-        {/* 🚀 GRID DE MODELOS COM STATUS VISUAL ATUALIZADO */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {Object.entries(modelosAgrupados).map(([modelo, totais]: any) => (
-            <div key={modelo} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between shadow-lg">
-              
-              <div className="flex items-start justify-between gap-3 mb-4 border-b border-slate-800 pb-4">
-                
-                {/* 🚀 LADO ESQUERDO: IMAGEM, TÍTULO E ANO */}
-                <div className="flex items-start gap-3 flex-1">
-                  {totais.imagem_url ? (
-                    <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-white rounded-xl p-1.5 border border-slate-200 shadow-inner flex items-center justify-center overflow-hidden">
-                      <img
-                        src={totais.imagem_url}
-                        alt={modelo}
-                        className="w-full h-full object-contain"
-                      />
-                    </div>
-                  ) : (
-                    <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-slate-800/50 border border-slate-700 rounded-xl flex items-center justify-center">
-                      <span className="text-[8px] sm:text-[9px] text-slate-500 uppercase font-bold text-center px-1">Sem<br/>Imagem</span>
-                    </div>
-                  )}
-                  <div className="flex-1">
-                    <p className="text-sm font-bold text-white leading-snug">
-                      {modelo}
-                    </p>
-                    {totais.ano_recebimento && (
-                      <span className="inline-block mt-1 bg-blue-500/10 border border-blue-500/30 text-blue-400 text-[9px] uppercase font-black px-1.5 py-0.5 rounded-md tracking-wider">
-                        ANO DE RECEBIMENTO: {totais.ano_recebimento}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* 🚀 LADO DIREITO: TOTAL RECEBIDO */}
-                <div className="text-right shrink-0">
-                  <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-0.5">Total Recebido</p>
-                  <p className="text-2xl font-black text-white leading-none">{totais.recebido}</p>
-                </div>
-              </div>
-
-              {totais.respondido > 0 ? (
-                <div className="grid grid-cols-2 gap-2 mt-2">
-                  <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-2">
-                    <p className="text-[10px] text-green-500 uppercase tracking-wider font-semibold">Funcionando</p>
-                    <p className="text-lg font-bold text-green-400">{totais.funcionando}</p>
-                  </div>
-                  
-                  <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-2">
-                    <p className="text-[10px] text-yellow-500 uppercase tracking-wider font-semibold">Em Garantia</p>
-                    <p className="text-lg font-bold text-yellow-400">{totais.garantia}</p>
-                  </div>
-                  
-                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-2">
-                    <p className="text-[10px] text-red-500 uppercase tracking-wider font-semibold">Danificados</p>
-                    <p className="text-lg font-bold text-red-400">{totais.danificados}</p>
-                  </div>
-                  
-                  <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-2">
-                    <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Não Localizado</p>
-                    <p className="text-lg font-bold text-slate-300">{totais.nao_localizado}</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-6 bg-slate-900/50 rounded-lg border border-dashed border-slate-700 mt-2">
-                   <p className="text-xs text-slate-500 uppercase font-semibold tracking-wider">Aguardando Inventário</p>
-                </div>
-              )}
-              
+        <div className="lg:col-span-1 h-full">
+          <Card className="h-full flex flex-col justify-between">
+            <div>
+               <h2 className="text-sm md:text-base font-semibold mb-1 flex items-center gap-2 text-slate-300">
+                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+                 Gargalo de Garantia
+               </h2>
+               <div className="flex items-end gap-2 mt-4">
+                  <span className="text-4xl font-black text-white">{totalGarantiaGeral}</span>
+                  <span className="text-sm text-slate-400 mb-1">equipamentos parados ({percentualGarantia}%)</span>
+               </div>
             </div>
-          ))}
+            
+            <div className="mt-auto pt-4">
+               {alertaGarantia ? (
+                 <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+                    <p className="text-xs text-red-400 font-medium">⚠️ Alto volume de capital travado. Recomenda-se acionar SLAs das empresas contratadas.</p>
+                 </div>
+               ) : (
+                 <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+                    <p className="text-xs text-green-400 font-medium">✔️ Volume de equipamentos parados dentro do tolerável.</p>
+                 </div>
+               )}
+            </div>
+          </Card>
         </div>
-      </Card>
 
-      <Card>
-        <h2 className="text-lg md:text-xl font-semibold mb-4">Ranking de escolas com mais equipamentos</h2>
-        <div className="space-y-2">
-          {rankingOrdenado.map(([escola, total]: any, i: number) => (
-            <div key={escola} className="flex justify-between bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 gap-2 items-center">
-              <p className="text-slate-300 text-sm">{i + 1}º {escola}</p>
-              <p className="text-white font-semibold">{total}</p>
+        <div className="lg:col-span-2 h-full">
+          <Card className="h-full flex flex-col">
+            <div className="flex justify-between items-end mb-4 shrink-0">
+              <h2 className="text-sm md:text-base font-semibold text-slate-300">Mapa de Calor: Saúde por UE</h2>
+              <p className="text-[10px] text-slate-500 uppercase tracking-widest hidden sm:block">Melhor para Pior</p>
             </div>
-          ))}
-        </div>
-      </Card>
+            
+            <div className="flex flex-wrap gap-2 h-36 overflow-y-auto pr-2 content-start min-h-0 w-full">
+               {heatmapArray.map(item => {
+                  let colorClass = "bg-green-500/10 text-green-400 border-green-500/30";
+                  if (item.saude < 50) colorClass = "bg-red-500/10 text-red-400 border-red-500/30";
+                  else if (item.saude < 80) colorClass = "bg-yellow-500/10 text-yellow-400 border-yellow-500/30";
 
-      <Card>
-        <h2 className="text-lg md:text-xl font-semibold mb-4">Status Inventários</h2>
-        <p className="text-sm text-slate-400 mb-2">{totalEnviados} / {totalEscolas} escolas enviaram inventário</p>
-        <div className="w-full bg-slate-800 rounded-full h-4 mb-6">
-          <div className="bg-green-500 h-4 rounded-full transition-all duration-1000" style={{ width: `${progressoInventario}%` }} />
-        </div>
-        <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
-          {escolasEnviadas.map((escola: any, i: number) => (
-            <div key={`env-${i}`} className="flex justify-between bg-slate-900 border border-green-800/30 rounded-xl px-4 py-2 gap-2 items-center">
-              <p className="text-green-300 text-sm truncate">{escola}</p>
-              <p className="text-green-400 font-semibold text-xs sm:text-sm uppercase tracking-wide">Enviado</p>
+                  return (
+                     <div key={item.escola} className={`px-2 py-1.5 rounded-lg border flex flex-col justify-center items-center cursor-help shrink-0 w-20 sm:w-24 h-16 sm:h-20 transition-colors hover:brightness-125 ${colorClass}`} title={`${item.escola}: ${item.saude}% (${item.recebido} recebidos)`}>
+                        <span className="text-[9px] sm:text-[10px] uppercase font-bold truncate w-full text-center leading-tight">{item.escola}</span>
+                        <span className="text-sm sm:text-base font-black mt-0.5">{item.saude}%</span>
+                     </div>
+                  )
+               })}
+               {heatmapArray.length === 0 && (
+                  <p className="text-sm text-slate-500 w-full text-center py-4 flex-1">Aguardando dados das escolas para gerar mapa.</p>
+               )}
             </div>
-          ))}
-          {escolasPendentes.map((escola: any, i: number) => (
-            <div key={`pend-${i}`} className="flex justify-between bg-slate-900 border border-red-900/30 rounded-xl px-4 py-2 gap-2 items-center">
-              <p className="text-red-300 text-sm truncate">{escola}</p>
-              <p className="text-red-400 font-semibold text-xs sm:text-sm uppercase tracking-wide">Pendente</p>
-            </div>
-          ))}
+          </Card>
         </div>
-      </Card>
+
+      </div>
+
     </div>
   )
 }

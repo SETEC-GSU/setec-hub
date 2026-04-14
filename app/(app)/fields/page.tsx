@@ -58,10 +58,17 @@ const SafeTooltip = ({ active, payload, label }: any) => {
 export default function FieldsPage() {
   const supabase = createClient()
 
+  // Estados Globais
   const [visitas, setVisitas] = useState<any[]>([])
   const [avaliacoes, setAvaliacoes] = useState<any[]>([])
   const [tecnicoFiltro, setTecnicoFiltro] = useState("Todos")
   const [loading, setLoading] = useState(true)
+
+  // 🚀 NOVOS ESTADOS: Filtros exclusivos da Tabela
+  const [buscaChamado, setBuscaChamado] = useState("")
+  const [filtroMesTabela, setFiltroMesTabela] = useState("Todos")
+  const [filtroEscolaTabela, setFiltroEscolaTabela] = useState("Todas")
+  const [filtroTecnicoTabela, setFiltroTecnicoTabela] = useState("Todos")
 
   useEffect(() => {
     async function carregar() {
@@ -74,8 +81,8 @@ export default function FieldsPage() {
     carregar()
   }, [])
 
+  // CÁLCULOS GLOBAIS (Não afetam os filtros da tabela para não quebrar os KPIs)
   const stats = useMemo(() => {
-    // Filtragem e Ordenação Decrescente por Código
     const filtradas = (tecnicoFiltro === "Todos" ? visitas : visitas.filter(v => v.tecnico === tecnicoFiltro))
       .sort((a, b) => {
         const codA = String(a.chamado || "");
@@ -105,7 +112,7 @@ export default function FieldsPage() {
         if (v.escola) acc[v.escola] = (acc[v.escola] || 0) + 1
         return acc
       }, {})
-    ).sort((a: any, b: any) => b[1] - a[1]).slice(0, 10)
+    ).sort((a: any, b: any) => b[1] - a[1])
 
     const mesesMap: any = {}
     filtradas.forEach(v => {
@@ -118,6 +125,15 @@ export default function FieldsPage() {
     })
     const graficoMes = Object.entries(mesesMap).map(([name, value]) => ({ name, value }))
 
+    const coberturaEscolas = new Set(
+      filtradas
+        .map(v => v.escola)
+        .filter(escola => {
+          if (!escola) return false;
+          return !escola.toUpperCase().includes("URE GUARULHOS SUL");
+        })
+    ).size
+
     return {
       filtradas,
       totalVisitas: filtradas.length,
@@ -127,9 +143,35 @@ export default function FieldsPage() {
       rankingTecnicos,
       rankingEscolas,
       graficoMes,
-      coberturaEscolas: new Set(filtradas.map(v => v.escola)).size
+      coberturaEscolas 
     }
   }, [visitas, avaliacoes, tecnicoFiltro])
+
+  // 🚀 LÓGICA DE FILTRAGEM EXCLUSIVA DA TABELA
+  const chamadosTabela = useMemo(() => {
+    return stats.filtradas.filter(v => {
+      const matchEscola = filtroEscolaTabela === "Todas" || v.escola === filtroEscolaTabela;
+      const matchTecnico = filtroTecnicoTabela === "Todos" || v.tecnico === filtroTecnicoTabela;
+      const matchBusca = buscaChamado === "" || String(v.chamado || "").toLowerCase().includes(buscaChamado.toLowerCase());
+      
+      let matchMes = true;
+      if (filtroMesTabela !== "Todos") {
+        if (!v.data_visita) {
+          matchMes = false;
+        } else {
+          const data = parseDateLocal(v.data_visita);
+          if (data) {
+            const mesAno = data.toLocaleDateString('pt-BR', { month: 'short' }).toUpperCase();
+            matchMes = mesAno === filtroMesTabela;
+          } else {
+            matchMes = false;
+          }
+        }
+      }
+
+      return matchEscola && matchTecnico && matchBusca && matchMes;
+    });
+  }, [stats.filtradas, filtroEscolaTabela, filtroTecnicoTabela, filtroMesTabela, buscaChamado]);
 
   if (loading) return (
     <div className="flex items-center justify-center h-full bg-[#0B1120]">
@@ -210,11 +252,11 @@ export default function FieldsPage() {
         </Glass>
 
         <Glass title="🚩 Escolas com Maior Demanda">
-          <div className="divide-y divide-slate-800/50 mt-2">
-            {stats.rankingEscolas.slice(0, 5).map((e: any) => (
-              <div key={String(e[0])} className="flex items-center justify-between py-5 px-4">
+          <div className="divide-y divide-slate-800/50 mt-2 max-h-[380px] overflow-y-auto pr-2 custom-scrollbar">
+            {stats.rankingEscolas.map((e: any) => (
+              <div key={String(e[0])} className="flex items-center justify-between py-4 px-4 hover:bg-slate-800/20 rounded-xl transition-colors">
                 <span className="text-slate-200 font-bold truncate max-w-[280px]">{e[0]}</span>
-                <span className="bg-red-500/10 text-red-400 px-4 py-1.5 rounded-full text-[11px] font-bold border border-red-500/20">
+                <span className="bg-red-500/10 text-red-400 px-4 py-1.5 rounded-full text-[11px] font-bold border border-red-500/20 shrink-0">
                   {e[1]} CHAMADOS
                 </span>
               </div>
@@ -225,6 +267,56 @@ export default function FieldsPage() {
 
       {/* TABELA DE CHAMADOS */}
       <Glass title="📋 Lista de Chamados Atendidos (Decrescente)">
+        
+        {/* 🚀 BARRA DE FILTROS DA TABELA */}
+        <div className="flex flex-col md:flex-row flex-wrap gap-3 mb-6 mt-2">
+          {/* Busca por Código */}
+          <div className="flex-1 min-w-[200px] relative">
+            <span className="absolute inset-y-0 left-4 flex items-center text-slate-500">🔍</span>
+            <input 
+              type="text" 
+              placeholder="Buscar chamado (ex: STI-26...)" 
+              value={buscaChamado}
+              onChange={(e) => setBuscaChamado(e.target.value)}
+              className="w-full bg-slate-900/80 border border-slate-800 text-white rounded-xl pl-10 pr-4 py-3 outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all text-xs font-bold placeholder:text-slate-600"
+            />
+          </div>
+
+          {/* Filtro Mês */}
+          <select 
+            value={filtroMesTabela} 
+            onChange={(e) => setFiltroMesTabela(e.target.value)}
+            className="bg-slate-900/80 border border-slate-800 text-slate-300 rounded-xl px-4 py-3 outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all text-xs font-bold min-w-[150px] cursor-pointer"
+          >
+            <option value="Todos">📅 Todos os Meses</option>
+            {stats.graficoMes.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
+          </select>
+
+          {/* Filtro Escola */}
+          <select 
+            value={filtroEscolaTabela} 
+            onChange={(e) => setFiltroEscolaTabela(e.target.value)}
+            className="bg-slate-900/80 border border-slate-800 text-slate-300 rounded-xl px-4 py-3 outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all text-xs font-bold w-full md:flex-1 max-w-[300px] truncate cursor-pointer"
+          >
+            <option value="Todas">🏫 Todas as Escolas</option>
+            {[...new Set(stats.filtradas.map(v => v.escola))].filter(Boolean).sort().map(e => (
+              <option key={String(e)} value={String(e)}>{String(e)}</option>
+            ))}
+          </select>
+
+          {/* Filtro Técnico */}
+          <select 
+            value={filtroTecnicoTabela} 
+            onChange={(e) => setFiltroTecnicoTabela(e.target.value)}
+            className="bg-slate-900/80 border border-slate-800 text-slate-300 rounded-xl px-4 py-3 outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all text-xs font-bold min-w-[180px] cursor-pointer"
+          >
+            <option value="Todos">👨‍🔧 Todos os Técnicos</option>
+            {[...new Set(stats.filtradas.map(v => v.tecnico))].filter(Boolean).sort().map(t => (
+              <option key={String(t)} value={String(t)}>{String(t)}</option>
+            ))}
+          </select>
+        </div>
+
         <div className="overflow-x-auto mt-4">
           <table className="w-full text-left border-collapse">
             <thead>
@@ -239,43 +331,52 @@ export default function FieldsPage() {
               </tr>
             </thead>
             <tbody className="text-sm divide-y divide-slate-800/50">
-              {stats.filtradas.slice(0, 100).map((v: any) => {
-                const statusNormalizado = (v.status || "").toLowerCase().trim();
-                const isVerde = statusNormalizado === 'realizada' || statusNormalizado === 'finalizado';
-                const isAmarelo = statusNormalizado === 'pendente';
+              {/* 🚀 AGORA USA chamadosTabela. Mapeia apenas o resultado filtrado. */}
+              {chamadosTabela.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-8 text-center text-slate-500 text-xs font-bold uppercase tracking-widest">
+                    Nenhum chamado encontrado com estes filtros.
+                  </td>
+                </tr>
+              ) : (
+                chamadosTabela.slice(0, 100).map((v: any) => {
+                  const statusNormalizado = (v.status || "").toLowerCase().trim();
+                  const isVerde = statusNormalizado === 'realizada' || statusNormalizado === 'finalizado';
+                  const isAmarelo = statusNormalizado === 'pendente';
 
-                return (
-                  <tr key={v.id} className="hover:bg-slate-800/20 transition-colors">
-                    <td className="py-4 px-4 text-blue-400 text-xs font-bold">{v.chamado || "N/A"}</td>
-                    <td className="py-4 px-4 text-slate-200 font-bold">{v.escola}</td>
-                    <td className="py-4 px-4">
-                      <span className={`px-2 py-1 rounded-md text-[10px] font-bold border ${
-                        isVerde 
-                          ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' 
-                          : isAmarelo
-                          ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
-                          : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
-                      }`}>
-                        {v.status || "Pendente"}
-                      </span>
-                    </td>
-                    <td className="py-4 px-4 text-slate-400">
-                      <div className="flex flex-col">
-                        <span className="font-bold text-slate-300">{v.categoria}</span>
-                        <span className="text-[10px] opacity-60 italic">{v.subcategoria}</span>
-                      </div>
-                    </td>
-                    <td className="py-4 px-4 text-slate-400 max-w-[300px]">
-                      <div className="flex flex-col gap-1">
-                        <span className="truncate text-xs italic">" {v.descricao} "</span>
-                        <span className="text-[10px] text-blue-500/80 truncate font-bold">R: {v.resolucao}</span>
-                      </div>
-                    </td>
-                    <td className="py-4 px-4 text-slate-200 font-bold">{v.tecnico}</td>
-                    <td className="py-4 px-4 text-slate-500 text-xs">{v.abertura_por}</td>
-                  </tr>
-                );
-              })}
+                  return (
+                    <tr key={v.id} className="hover:bg-slate-800/20 transition-colors">
+                      <td className="py-4 px-4 text-blue-400 text-xs font-bold">{v.chamado || "N/A"}</td>
+                      <td className="py-4 px-4 text-slate-200 font-bold">{v.escola}</td>
+                      <td className="py-4 px-4">
+                        <span className={`px-2 py-1 rounded-md text-[10px] font-bold border ${
+                          isVerde 
+                            ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' 
+                            : isAmarelo
+                            ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                            : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
+                        }`}>
+                          {v.status || "Pendente"}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4 text-slate-400">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-slate-300">{v.categoria}</span>
+                          <span className="text-[10px] opacity-60 italic">{v.subcategoria}</span>
+                        </div>
+                      </td>
+                      <td className="py-4 px-4 text-slate-400 max-w-[300px]">
+                        <div className="flex flex-col gap-1">
+                          <span className="truncate text-xs italic">" {v.descricao} "</span>
+                          <span className="text-[10px] text-blue-500/80 truncate font-bold">R: {v.resolucao}</span>
+                        </div>
+                      </td>
+                      <td className="py-4 px-4 text-slate-200 font-bold">{v.tecnico}</td>
+                      <td className="py-4 px-4 text-slate-500 text-xs">{v.abertura_por}</td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>

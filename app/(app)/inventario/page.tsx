@@ -209,7 +209,7 @@ export default async function InventarioPage() {
                       Garantia: {status.aguardando_garantia}
                     </p>
                     <p className="text-red-400">
-                      Danificados: {status.danificados_mau_uso}
+                      Danificados (SEM USO): {status.danificados_mau_uso}
                     </p>
                     <p className="text-gray-400">
                       Não localizados: {status.nao_localizado}

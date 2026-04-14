@@ -202,10 +202,10 @@ export default function GestaoChamadosCommandCenter() {
         
         {/* Título */}
         <div className="space-y-2">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 text-blue-400 text-xs font-bold uppercase tracking-widest border border-blue-500/20 mb-2">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-green-500/10 text-green-400 text-xs font-bold uppercase tracking-widest border border-blue-500/20 mb-2">
             <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
             </span>
             Live Updates
           </div>
@@ -235,7 +235,7 @@ export default function GestaoChamadosCommandCenter() {
              {stats.atrasados > 0 && <div className="absolute top-0 left-0 w-full h-1 bg-red-500 animate-pulse"></div>}
             <div className="absolute -right-4 -top-4 w-16 h-16 bg-red-500/10 rounded-full blur-2xl group-hover:bg-red-500/20 transition-all"></div>
             <span className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-2">
-              🔥 SLA Atrasado
+              🚨 SLA Atrasado
             </span>
             <span className={`text-4xl font-black ${stats.atrasados > 0 ? 'text-red-500' : 'text-slate-300'}`}>{stats.atrasados}</span>
           </div>

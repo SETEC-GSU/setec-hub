@@ -36,7 +36,6 @@ function calcMetrics(e: any) {
   }
 }
 
-// ⭐ 1. Mudamos o nome da função principal para DashboardContent
 function DashboardContent() {
   const supabase = createClient()
   const router = useRouter()
@@ -72,7 +71,11 @@ function DashboardContent() {
     router.push(`?${params.toString()}`)
   }
 
-  if (loading) return <p className="text-white p-10">Carregando panorama tecnológico...</p>
+  if (loading) return (
+    <div className="flex items-center justify-center h-[500px]">
+      <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-blue-500"></div>
+    </div>
+  )
 
   const totalEscolas = escolasFiltradas.length
   const totalAlunos = escolasFiltradas.reduce((acc, e) => acc + e.alunos, 0)
@@ -102,24 +105,28 @@ function DashboardContent() {
   const rankingMauUso = [...escolasFiltradas].sort((a, b) => b.equipInativos - a.equipInativos).slice(0, 10)
 
   return (
-    <div className="space-y-8 pb-10">
+    <div className="space-y-10 pb-12 max-w-[1600px] mx-auto">
       
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      {/* 🚀 HEADER PREMIUM */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
-          <h1 className="text-3xl font-bold text-white">Dashboard Escolar</h1>
-          <p className="text-slate-400 text-sm">
-            {escolaFiltro ? `Análise individual: ${escolaFiltro}` : "Panorama tecnológico das Escolas da URE"}
+          <h1 className="text-4xl font-bold text-white tracking-tight flex items-center gap-3">
+             <span className="text-cyan-500">●</span> Dashboard Escolar de Tecnologia
+          </h1>
+          <p className="text-slate-400 mt-2 text-sm max-w-xl leading-relaxed">
+            {escolaFiltro 
+              ? `Análise individual de infraestrutura tecnológica: ${escolaFiltro}` 
+              : "Panorama estratégico da infraestrutura tecnológica e conectividade das Escolas da URE Guarulhos Sul."}
           </p>
         </div>
 
         <div className="flex items-center gap-3">
-          <label className="text-xs font-semibold text-slate-500 uppercase">Filtrar Unidade:</label>
           <select 
             value={escolaFiltro}
             onChange={(e) => handleFiltro(e.target.value)}
-            className="bg-slate-900 border border-slate-800 text-white text-sm rounded-xl px-4 py-2.5 outline-none focus:border-cyan-500 transition-all min-w-[250px]"
+            className="bg-[#020617] border border-slate-800 text-white font-bold rounded-xl px-5 py-3.5 outline-none focus:ring-2 focus:ring-cyan-500/50 transition-all min-w-[280px] shadow-lg cursor-pointer"
           >
-            <option value="">Todas as Escolas</option>
+            <option value="">🏫 Visão Global (Todas as Escolas)</option>
             {listaNomesEscolas.map(nome => (
               <option key={nome} value={nome}>{nome}</option>
             ))}
@@ -127,102 +134,210 @@ function DashboardContent() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-        <Card title="Escolas" value={totalEscolas} />
-        <Card title="Alunos" value={totalAlunos.toLocaleString()} />
-        <Card title="Equipamentos ativos" value={totalEquipFuncionando} />
-        <Card title="Score médio" value={`${(scoreMedio * 100).toFixed(0)}%`} />
-        <Card title="Déficit equipamentos" value={deficitEquipTotal} />
-        <Card title="Salas por AP" value={salasPorAP.toFixed(1)} />
-      </div>
+      {/* 🚀 CARDS GIGANTES DE STATUS (CRITICIDADE) */}
+      {!escolaFiltro && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <StatusCard title="Saúde Crítica" value={criticas} subtitle="Abaixo de 50%" color="red" icon="🚨" />
+          <StatusCard title="Atenção" value={atencao} subtitle="Entre 50% e 80%" color="yellow" icon="⚠️" />
+          <StatusCard title="Saudáveis" value={saudavel} subtitle="Acima de 80%" color="emerald" icon="✅" />
+        </div>
+      )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card title="Cobertura equipamentos" value={`${(coberturaEquip * 100).toFixed(0)}%`} />
-        <Card title="Cobertura Wi-Fi" value={`${(coberturaWifi * 100).toFixed(0)}%`} />
-        <Card title="Equipamentos inativos" value={equipamentosParados} />
-        <Card title="Alunos por equipamento" value={alunosPorEquip.toFixed(1)} />
-      </div>
+      {/* 🚀 BLOCO 1: INFRAESTRUTURA BÁSICA */}
+      <Glass title="📊 Infraestrutura e Alcance">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-4">
+          <KpiCard title="Escolas" value={totalEscolas} subtitle="Unidades" color="slate" />
+          <KpiCard title="Alunos" value={totalAlunos.toLocaleString('pt-BR')} subtitle="Impactados" color="blue" />
+          <KpiCard title="Equip. Ativos" value={totalEquipFuncionando.toLocaleString('pt-BR')} subtitle="Operacionais" color="emerald" />
+          <KpiCard title="Déficit Máquinas" value={deficitEquipTotal.toLocaleString('pt-BR')} subtitle="Para meta 3:1" color="red" />
+        </div>
+      </Glass>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatusCard title="Escolas críticas" value={criticas} color="red" />
-        <StatusCard title="Escolas atenção" value={atencao} color="yellow" />
-        <StatusCard title="Escolas saudáveis" value={saudavel} color="green" />
-      </div>
+      {/* 🚀 BLOCO 2: MÉTRICAS DE EFICIÊNCIA */}
+      <Glass title="⚡ Métricas de Eficiência e Cobertura">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-4">
+          <KpiCard title="Score Geral" value={`${(scoreMedio * 100).toFixed(0)}%`} subtitle="Saúde da Rede" color={scoreMedio > 0.8 ? "emerald" : scoreMedio > 0.5 ? "yellow" : "red"} />
+          <KpiCard title="Cob. Dispositivos" value={`${(coberturaEquip * 100).toFixed(0)}%`} subtitle="Ativos vs Ideal" color="blue" />
+          <KpiCard title="Cob. Wi-Fi" value={`${(coberturaWifi * 100).toFixed(0)}%`} subtitle="APs vs Ideal" color="purple" />
+          <KpiCard title="Equip. Parados" value={equipamentosParados} subtitle="Inativos/Quebrados" color="red" />
+        </div>
+      </Glass>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div className="xl:col-span-2 bg-[#020617] border border-slate-800 rounded-2xl h-[600px] overflow-hidden">
-          <MapEscolas escolas={escolasFiltradas} />
+      {/* 🚀 BLOCO 3: MAPA E RANKING */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+        {/* Mapa (Sem padding interno para o mapa encostar na borda) */}
+        <div className="xl:col-span-2 bg-[#020617] border border-slate-800 rounded-[2.5rem] h-[650px] overflow-hidden shadow-2xl relative">
+            <div className="absolute top-6 left-8 z-10 bg-[#020617]/80 backdrop-blur-md px-4 py-2 rounded-xl border border-slate-800">
+                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">🗺️ Geolocalização</h3>
+            </div>
+            <MapEscolas escolas={escolasFiltradas} />
         </div>
 
-        <div className="bg-[#020617] border border-slate-800 rounded-2xl p-5 overflow-auto h-[600px]">
-          <h3 className="text-lg font-semibold mb-4 text-white">
-            {escolaFiltro ? "Score da Unidade" : "Escolas mais críticas"}
-          </h3>
-          <div className="space-y-3">
-            {rankingScore.map((e) => (
-              <div key={e.id} className="p-3 rounded-xl border border-slate-800 bg-slate-900/40">
-                <p className="font-semibold text-white">{e.nome_escola}</p>
-                <p className="text-xs text-slate-400">Score {(e.score * 100).toFixed(0)}%</p>
+        {/* Ranking Crítico */}
+        <Glass title={escolaFiltro ? "📋 Detalhes do Score" : "🚨 Top 10 - Escolas Críticas"}>
+          <div className="space-y-4 mt-2 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+            {rankingScore.map((e, index) => {
+              const perc = (e.score * 100).toFixed(0);
+              const colorClass = e.score < 0.5 ? 'bg-red-500/10 text-red-500 border-red-500/20' : 
+                                 e.score < 0.8 ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20' : 
+                                 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
+
+              return (
+                <div key={e.id} className="flex items-center justify-between p-4 rounded-2xl border border-slate-800/60 bg-slate-800/20 hover:bg-slate-800/40 transition-colors">
+                  <div className="flex items-center gap-4">
+                    {!escolaFiltro && (
+                      <span className="text-slate-600 font-black text-sm w-4">{index + 1}.</span>
+                    )}
+                    <p className="font-bold text-slate-200 text-sm max-w-[160px] md:max-w-[200px] truncate" title={e.nome_escola}>
+                      {e.nome_escola}
+                    </p>
+                  </div>
+                  <span className={`px-3 py-1 rounded-lg text-xs font-black border ${colorClass}`}>
+                    {perc}%
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </Glass>
+      </div>
+
+      {/* 🚀 BLOCO 4: MAU USO E INSIGHTS */}
+      <div className="grid lg:grid-cols-2 gap-8">
+        
+        <Glass title={escolaFiltro ? "🔧 Estado de Conservação" : "📉 Top 10 - Equipamentos Inativos"}>
+          <div className="space-y-3 mt-2">
+            {rankingMauUso.map((e, index) => (
+              <div key={e.id} className="flex items-center justify-between p-4 rounded-2xl border border-slate-800/60 bg-slate-800/20">
+                 <div className="flex items-center gap-4">
+                    {!escolaFiltro && (
+                      <span className="text-slate-600 font-black text-sm w-4">{index + 1}.</span>
+                    )}
+                    <p className="font-bold text-slate-200 text-sm max-w-[200px] truncate">{e.nome_escola}</p>
+                 </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 font-medium">Inativos:</span>
+                  <span className="bg-red-500/10 text-red-400 font-black px-3 py-1 rounded-lg border border-red-500/20">
+                    {e.equipInativos}
+                  </span>
+                </div>
               </div>
             ))}
           </div>
-        </div>
-      </div>
+        </Glass>
 
-      <div className="bg-[#020617] border border-slate-800 rounded-2xl p-6">
-        <h3 className="text-lg font-semibold mb-4 text-white">
-          {escolaFiltro ? "Estado de conservação" : "Escolas com maior taxa de mau uso de equipamentos"}
-        </h3>
-        <div className="grid md:grid-cols-2 gap-3">
-          {rankingMauUso.map((e) => (
-            <div key={e.id} className="p-3 rounded-xl border border-slate-800 bg-slate-900/40">
-              <p className="font-semibold text-white">{e.nome_escola}</p>
-              <p className="text-xs text-slate-400">{e.equipInativos} equipamentos não operacionais</p>
+        <Glass title="💡 Inteligência Analítica">
+          <div className="flex flex-col justify-center h-full space-y-6">
+            
+            <div className="bg-slate-800/30 border border-slate-700/50 p-6 rounded-3xl flex items-start gap-5">
+              <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center shrink-0 border border-blue-500/20">
+                <span className="text-blue-400 text-xl">💻</span>
+              </div>
+              <div>
+                <h4 className="text-white font-bold mb-1">Déficit Estrutural</h4>
+                <p className="text-sm text-slate-400 leading-relaxed">
+                  A {escolaFiltro || "Rede URE Guarulhos Sul"} possui um déficit estimado de <strong className="text-blue-400">{deficitEquipTotal.toLocaleString('pt-BR')} equipamentos</strong> para atingir a meta ideal do EduMonitor (3 alunos por dispositivo).
+                </p>
+              </div>
             </div>
-          ))}
-        </div>
-      </div>
 
-      <div className="bg-[#020617] border border-slate-800 rounded-2xl p-6 space-y-2">
-        <h3 className="font-semibold text-white">Insights automáticos</h3>
-        <p className="text-sm text-slate-400">
-          A {escolaFiltro || "URE"} possui déficit estimado de <b>{deficitEquipTotal} equipamentos</b> considerando a proporção ideal.
-        </p>
-        <p className="text-sm text-slate-400">
-          Existem atualmente <b>{equipamentosParados}</b> equipamentos instalados mas não operacionais.
-        </p>
+            <div className="bg-slate-800/30 border border-slate-700/50 p-6 rounded-3xl flex items-start gap-5">
+              <div className="w-12 h-12 bg-red-500/10 rounded-2xl flex items-center justify-center shrink-0 border border-red-500/20">
+                <span className="text-red-400 text-xl">🔧</span>
+              </div>
+              <div>
+                <h4 className="text-white font-bold mb-1">Ociosidade de Hardware</h4>
+                <p className="text-sm text-slate-400 leading-relaxed">
+                  Existem atualmente <strong className="text-red-400">{equipamentosParados} dispositivos</strong> registrados na base que não estão operacionais. A manutenção deste parque tecnológico aumentaria o Score em até {(equipamentosParados / (totalEquipIdeal||1) * 60).toFixed(1)}%.
+                </p>
+              </div>
+            </div>
+
+          </div>
+        </Glass>
+
       </div>
     </div>
   )
 }
 
-function Card({ title, value }: any) {
+/* -------------------------------------------------------------------------- */
+/* UI COMPONENTS                                                              */
+/* -------------------------------------------------------------------------- */
+
+function Glass({ children, title, className = "" }: any) {
   return (
-    <div className="bg-[#020617] border border-slate-800 rounded-2xl p-4">
-      <p className="text-xs text-slate-400 mb-1">{title}</p>
-      <p className="text-2xl font-bold text-white">{value}</p>
+    <div className={`bg-[#020617] border border-slate-800 rounded-[2.5rem] p-8 md:p-10 shadow-xl relative overflow-hidden h-full ${className}`}>
+      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-slate-800 to-transparent opacity-50"></div>
+      {title && <h3 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.2em] mb-8">{title}</h3>}
+      {children}
     </div>
   )
 }
 
-function StatusCard({ title, value, color }: any) {
-  const colors: any = {
-    red: "bg-red-500/10 border-red-500/30 text-red-400",
-    yellow: "bg-yellow-500/10 border-yellow-500/30 text-yellow-400",
-    green: "bg-green-500/10 border-green-500/30 text-green-400",
+function KpiCard({ title, value, subtitle, color }: any) {
+  const gradients: any = {
+    slate: "from-slate-600/20 to-transparent border-slate-500/30",
+    blue: "from-blue-600/20 to-transparent border-blue-500/30",
+    purple: "from-purple-600/20 to-transparent border-purple-500/30",
+    yellow: "from-yellow-600/20 to-transparent border-yellow-500/30",
+    emerald: "from-emerald-600/20 to-transparent border-emerald-500/30",
+    red: "from-red-600/20 to-transparent border-red-500/30",
   }
+
+  const textColors: any = {
+    slate: "text-slate-300",
+    blue: "text-blue-400",
+    purple: "text-purple-400",
+    yellow: "text-yellow-400",
+    emerald: "text-emerald-400",
+    red: "text-red-400",
+  }
+
   return (
-    <div className={`p-5 rounded-2xl border ${colors[color]}`}>
-      <p className="text-sm mb-1">{title}</p>
-      <p className="text-3xl font-bold">{value}</p>
+    <div className={`bg-[#020617] border rounded-[2rem] p-6 shadow-2xl relative overflow-hidden transition-all hover:scale-[1.02] ${gradients[color]}`}>
+      <div className={`absolute top-0 left-0 h-full w-1 bg-gradient-to-b ${color === 'slate' ? 'from-slate-500' : color === 'blue' ? 'from-blue-500' : color === 'purple' ? 'from-purple-500' : color === 'yellow' ? 'from-yellow-500' : color === 'emerald' ? 'from-emerald-500' : 'from-red-500'} to-transparent opacity-70`}></div>
+      <p className="text-slate-500 text-[10px] uppercase font-bold tracking-[0.15em] mb-3">{title}</p>
+      <p className={`text-3xl lg:text-4xl font-black mb-2 tracking-tighter ${textColors[color]}`}>
+        {value}
+      </p>
+      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-600">
+        {subtitle}
+      </p>
     </div>
   )
 }
 
-// ⭐ 2. Essa é a página real que o Next.js vai renderizar, protegida pelo Suspense!
+function StatusCard({ title, value, subtitle, color, icon }: any) {
+  const bgColors: any = {
+    red: "bg-gradient-to-br from-[#020617] to-red-950/20 border-red-900/50 hover:border-red-500/50",
+    yellow: "bg-gradient-to-br from-[#020617] to-yellow-950/20 border-yellow-900/50 hover:border-yellow-500/50",
+    emerald: "bg-gradient-to-br from-[#020617] to-emerald-950/20 border-emerald-900/50 hover:border-emerald-500/50",
+  }
+
+  const textColors: any = {
+    red: "text-red-500",
+    yellow: "text-yellow-500",
+    emerald: "text-emerald-500",
+  }
+
+  return (
+    <div className={`p-8 rounded-[2.5rem] border ${bgColors[color]} flex items-center justify-between transition-all duration-300 group`}>
+      <div>
+        <p className={`text-xs font-black uppercase tracking-[0.2em] mb-2 ${textColors[color]} opacity-80`}>{title}</p>
+        <p className="text-5xl font-black text-white tracking-tighter mb-2">{value}</p>
+        <p className="text-[10px] uppercase font-bold text-slate-500 tracking-widest">{subtitle}</p>
+      </div>
+      <div className={`w-16 h-16 rounded-full flex items-center justify-center text-3xl opacity-50 group-hover:opacity-100 group-hover:scale-110 transition-all ${color === 'red' ? 'bg-red-500/10' : color === 'yellow' ? 'bg-yellow-500/10' : 'bg-emerald-500/10'}`}>
+        {icon}
+      </div>
+    </div>
+  )
+}
+
 export default function DashboardPage() {
   return (
-    <Suspense fallback={<p className="text-white p-10">Carregando panorama tecnológico...</p>}>
+    <Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-cyan-500"></div></div>}>
       <DashboardContent />
     </Suspense>
   )

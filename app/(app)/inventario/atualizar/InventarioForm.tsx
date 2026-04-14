@@ -144,7 +144,7 @@ export default function InventarioForm({ equipamentos, salvarInventario }: any) 
                 </div>
                 <div>
                   <label className="text-sm text-red-400 font-medium mb-1 block">
-                    Danificados
+                    Danificados (SEM USO)
                   </label>
                   <input
                     type="number"

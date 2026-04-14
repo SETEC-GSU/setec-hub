@@ -154,6 +154,7 @@ export default async function Sidebar() {
 
               <details key={section.title} className="group">
 
+                {/* 👇 MANTIDO 100% INTACTO CONFORME SEU CÓDIGO */}
                 <summary className="flex items-center gap-3 px-3 mb-3 cursor-pointer list-none group-has-[:checked]/sidebar:justify-center group-has-[:checked]/sidebar:px-0" title={titleText}>
                   <p className="text-sm text-slate-300 uppercase tracking-wide font-semibold flex items-center gap-2">
                     <span className="text-lg">{emoji}</span>
@@ -165,7 +166,8 @@ export default async function Sidebar() {
                   </span>
                 </summary>
 
-                <div className="space-y-2">
+                {/* 👇 SUBCATEGORIAS COM VISUAL PREMIUM */}
+                <div className="space-y-1"> 
 
                   {filteredItems.map(item => (
 
@@ -173,9 +175,9 @@ export default async function Sidebar() {
                       key={item.href}
                       href={item.href}
                       title={item.label}
-                      className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-300 transition-all hover:bg-slate-800 hover:text-white hover:translate-x-1 group-has-[:checked]/sidebar:justify-center group-has-[:checked]/sidebar:px-0 group-has-[:checked]/sidebar:hover:translate-x-0"
+                      className="group/link flex items-center gap-3 px-4 py-2.5 rounded-xl text-slate-400 text-[13px] font-medium transition-all hover:bg-slate-800/60 hover:text-white hover:translate-x-1 group-has-[:checked]/sidebar:justify-center group-has-[:checked]/sidebar:px-0 group-has-[:checked]/sidebar:hover:translate-x-0"
                     >
-                      <span className="text-lg">{item.icon}</span>
+                      <span className="text-base opacity-70 group-hover/link:opacity-100 group-hover/link:scale-110 transition-all duration-300 drop-shadow-sm">{item.icon}</span>
                       <span className="group-has-[:checked]/sidebar:hidden truncate">{item.label}</span>
                     </Link>
 
