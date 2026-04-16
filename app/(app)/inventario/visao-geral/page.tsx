@@ -5,7 +5,7 @@ import FiltroVisaoGeral from "@/components/ui/FiltroVisaoGeral"
 export default async function DiretoriaPage({ 
   searchParams 
 }: { 
-  searchParams: Promise<{ escola?: string, ano?: string }> 
+  searchParams: Promise<{ escola?: string, ano?: string, modelo?: string, status?: string }> 
 }) {
 
   const supabase = await createServerSupabase()
@@ -13,6 +13,8 @@ export default async function DiretoriaPage({
   const filters = await searchParams
   const escolaSelecionada = filters?.escola || ""
   const anoSelecionado = filters?.ano || "" 
+  const modeloSelecionado = filters?.modelo || ""
+  const statusSelecionado = filters?.status || ""
 
   const { data: equipamentos } = await supabase
     .from("equipamentos_recebidos")
@@ -61,11 +63,13 @@ export default async function DiretoriaPage({
 
   const listaAnos = [...new Set(equipamentos?.map((e: any) => e.equipamentos_modelos?.ano_recebimento).filter(Boolean))].sort()
   const listaEscolas = [...new Set(equipamentos?.map((e: any) => e.escola_nome))].sort()
+  const listaModelos = [...new Set(equipamentos?.map((e: any) => e.equipamentos_modelos?.equipamento).filter(Boolean))].sort()
 
   const equipamentosFiltrados = equipamentos?.filter((e: any) => {
     const matchEscola = escolaSelecionada ? e.escola_nome === escolaSelecionada : true;
     const matchAno = anoSelecionado ? String(e.equipamentos_modelos?.ano_recebimento) === anoSelecionado : true;
-    return matchEscola && matchAno;
+    const matchModelo = modeloSelecionado ? e.equipamentos_modelos?.equipamento === modeloSelecionado : true;
+    return matchEscola && matchAno && matchModelo;
   })
 
   const respostasFiltradas = escolaSelecionada
@@ -90,11 +94,24 @@ export default async function DiretoriaPage({
       const finalidadeLimpa = equipamentoBanco?.finalidade ? String(equipamentoBanco.finalidade).toLowerCase() : ""
       
       if (anoSelecionado && String(equipamentoBanco?.ano) !== anoSelecionado) return;
+      if (modeloSelecionado && equipamentoBanco?.nome !== modeloSelecionado) return;
+
+      let func = item.funcionando || 0;
+      let gar = item.aguardando_garantia || 0;
+      let dan = item.danificados_mau_uso || 0;
+      let nloc = item.nao_localizado || 0;
+
+      if (statusSelecionado) {
+         if (statusSelecionado !== 'funcionando') func = 0;
+         if (statusSelecionado !== 'aguardando_garantia') gar = 0;
+         if (statusSelecionado !== 'danificados_mau_uso') dan = 0;
+         if (statusSelecionado !== 'nao_localizado') nloc = 0;
+      }
 
       if (finalidadeLimpa.includes("carregamento")) {
-        totalPlataformasRespondidas += (item.funcionando || 0) + (item.aguardando_garantia || 0) + (item.danificados_mau_uso || 0) + (item.nao_localizado || 0)
+        totalPlataformasRespondidas += func + gar + dan + nloc
       } else {
-        totalGarantiaGeral += (item.aguardando_garantia || 0);
+        totalGarantiaGeral += gar;
       }
     })
   })
@@ -155,19 +172,28 @@ export default async function DiretoriaPage({
       const nomeModelo = equipamentoBanco?.nome
       
       if (anoSelecionado && String(equipamentoBanco?.ano) !== anoSelecionado) return;
+      if (modeloSelecionado && nomeModelo !== modeloSelecionado) return;
+
+      let func = item.funcionando || 0
+      let gar = item.aguardando_garantia || 0
+      let dan = item.danificados_mau_uso || 0
+      let nloc = item.nao_localizado || 0
+
+      if (statusSelecionado) {
+         if (statusSelecionado !== 'funcionando') func = 0;
+         if (statusSelecionado !== 'aguardando_garantia') gar = 0;
+         if (statusSelecionado !== 'danificados_mau_uso') dan = 0;
+         if (statusSelecionado !== 'nao_localizado') nloc = 0;
+      }
 
       const finalidadeLimpa = equipamentoBanco?.finalidade ? String(equipamentoBanco.finalidade).toLowerCase() : ""
-      if (!finalidadeLimpa.includes("carregamento") && item.funcionando > 0) {
+      if (!finalidadeLimpa.includes("carregamento") && func > 0) {
          if (saudeEscolasData[resposta.escola_nome]) {
-             saudeEscolasData[resposta.escola_nome].funcionando += item.funcionando;
+             saudeEscolasData[resposta.escola_nome].funcionando += func;
          }
       }
 
       if (nomeModelo && modelosAgrupados[nomeModelo]) {
-        const func = item.funcionando || 0
-        const gar = item.aguardando_garantia || 0
-        const dan = item.danificados_mau_uso || 0
-        const nloc = item.nao_localizado || 0
         const somaRespondida = func + gar + dan + nloc
         
         modelosAgrupados[nomeModelo].respondido += somaRespondida
@@ -227,7 +253,7 @@ export default async function DiretoriaPage({
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <h1 className="text-2xl md:text-3xl font-bold text-white">Visão Executiva da Rede</h1>
         
-        <form method="GET" className="flex flex-col sm:flex-row items-center gap-2 w-full md:w-auto">
+        <form method="GET" className="flex flex-col sm:flex-row flex-wrap items-center gap-2 w-full lg:w-auto justify-end">
           <select name="ano" defaultValue={anoSelecionado} className="w-full sm:w-auto bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:border-blue-500">
             <option value="">Todo o Histórico (Anos)</option>
             {listaAnos.map((ano: any) => (<option key={ano} value={ano}>Lote {ano}</option>))}
@@ -236,6 +262,19 @@ export default async function DiretoriaPage({
             <option value="">Todas as UEs</option>
             {listaEscolas.map((escola: any) => (<option key={escola} value={escola}>{escola}</option>))}
           </select>
+          {/* NOVOS FILTROS INSERIDOS AQUI */}
+          <select name="modelo" defaultValue={modeloSelecionado} className="w-full sm:w-auto bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:border-blue-500 max-w-[200px] truncate">
+            <option value="">Todos os Modelos</option>
+            {listaModelos.map((modelo: any) => (<option key={modelo} value={modelo}>{modelo}</option>))}
+          </select>
+          <select name="status" defaultValue={statusSelecionado} className="w-full sm:w-auto bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:border-blue-500">
+            <option value="">Todos os Status</option>
+            <option value="funcionando">Funcionando</option>
+            <option value="aguardando_garantia">Garantia</option>
+            <option value="danificados_mau_uso">Mau Uso</option>
+            <option value="nao_localizado">Não Localizado</option>
+          </select>
+          {/* FIM DOS NOVOS FILTROS */}
           <button type="submit" className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors">Filtrar</button>
         </form>
       </div>
@@ -279,7 +318,6 @@ export default async function DiretoriaPage({
         <div className="h-full">
           <Card className="h-full flex flex-col">
             <h2 className="text-lg md:text-xl font-semibold mb-4 shrink-0">Ranking de escolas com mais equipamentos</h2>
-            {/* 🚀 O H-96 com min-h-0 garante a mesma altura nos dois blocos E restaura o scroll */}
             <div className="space-y-3 h-96 overflow-y-auto pr-2 min-h-0 w-full">
               {rankingOrdenado.map(([escola, total]: any, i: number) => {
                 const widthPercent = (total / maiorValorRanking) * 100;
@@ -309,7 +347,6 @@ export default async function DiretoriaPage({
                  <div className="bg-green-500 h-4 rounded-full transition-all duration-1000" style={{ width: `${progressoInventario}%` }} />
                </div>
             </div>
-            {/* 🚀 Usando min-h-0 e uma altura adaptada que empata perfeitamente com o vizinho */}
             <div className="space-y-2 h-[20.5rem] overflow-y-auto pr-2 min-h-0 w-full">
               {escolasAtivas.map((escola: any, i: number) => (
                 <div key={`env-${i}`} className="flex justify-between bg-slate-900 border border-green-800/30 rounded-xl px-4 py-2 gap-2 items-center shrink-0">
