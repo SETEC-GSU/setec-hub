@@ -78,7 +78,7 @@ export default function AgendaFields() {
           title: v.escola,
           start: parseDateLocal(dataStr),
           end: parseDateLocal(dataStr),
-          allDay: true
+          allDay: true 
         }
       })
       .filter(Boolean)
@@ -92,25 +92,33 @@ export default function AgendaFields() {
       {/* HEADER & FILTROS */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
-          <h2 className="text-3xl text-white font-bold">Agenda Operacional</h2>
-          <p className="text-slate-400">Fluxo de chamados SETEC</p>
+          <h2 className="text-3xl text-white font-bold tracking-tight">
+            <span className="text-blue-500">●</span> Agenda Operacional
+          </h2>
+          <p className="text-slate-400 mt-1">Visões detalhadas de chamados e alocação</p>
         </div>
 
-        <div className="flex gap-3">
+        <div className="flex flex-col sm:flex-row gap-3 items-center">
+          <div className="flex gap-2 mr-4 bg-[#020617] border border-slate-800 px-4 py-2.5 rounded-xl">
+             <span className="flex items-center gap-1.5 text-[10px] text-slate-300 font-bold uppercase"><div className="w-2.5 h-2.5 rounded-full bg-yellow-400"></div> Pendente</span>
+             <span className="flex items-center gap-1.5 text-[10px] text-slate-300 font-bold uppercase ml-2"><div className="w-2.5 h-2.5 rounded-full bg-green-500"></div> Concluído</span>
+             <span className="flex items-center gap-1.5 text-[10px] text-slate-300 font-bold uppercase ml-2"><div className="w-2.5 h-2.5 rounded-full bg-red-500"></div> Cancelado</span>
+          </div>
+
           <select
             value={tecnicoFiltro}
             onChange={(e) => setTecnicoFiltro(e.target.value)}
-            className="bg-[#020617] border border-slate-800 text-white rounded-xl px-4 py-2 outline-none focus:ring-2 focus:ring-blue-500/50 transition-all text-sm font-bold"
+            className="bg-[#020617] border border-slate-800 text-white rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-500/50 transition-all text-sm font-bold min-w-[200px]"
           >
-            {tecnicos.map(t => <option key={t} value={t}>{t === "Todos" ? "👨‍🔧 Todos Técnicos" : t}</option>)}
+            {tecnicos.map(t => <option key={t} value={t}>{t === "Todos" ? "👨‍🔧 Todos os Técnicos" : t}</option>)}
           </select>
 
           <select
             value={statusFiltro}
             onChange={(e) => setStatusFiltro(e.target.value)}
-            className="bg-[#020617] border border-slate-800 text-white rounded-xl px-4 py-2 outline-none focus:ring-2 focus:ring-blue-500/50 transition-all text-sm font-bold"
+            className="bg-[#020617] border border-slate-800 text-white rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-500/50 transition-all text-sm font-bold min-w-[160px]"
           >
-            <option value="Todos">📊 Todos Status</option>
+            <option value="Todos">📊 Todos os Status</option>
             <option value="Pendente">Pendente</option>
             <option value="Agendado">Agendado</option>
             <option value="Realizada">Realizada</option>
@@ -121,14 +129,17 @@ export default function AgendaFields() {
       </div>
 
       {/* CALENDARIO */}
-      <div className="bg-[#020617] border border-slate-800 rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden">
-        <div style={{ height: 1200 }}> 
+      <div className="bg-[#020617] border border-slate-800 rounded-[2.5rem] p-8 shadow-2xl relative">
+        <div style={{ height: 850 }}> 
           <Calendar
             localizer={localizer}
             events={eventos}
             culture="pt-BR"
+            defaultView="month"
+            views={["month", "week", "day", "agenda"]} // 🚀 REATIVADO: Mês, Semana, Dia e Agenda
             onSelectEvent={(event) => setSelectedEvent(event)}
             popup={false} 
+            showAllEvents={true}
             formats={{
               timeGutterFormat: () => "",
               eventTimeRangeFormat: () => "",
@@ -139,32 +150,48 @@ export default function AgendaFields() {
               today: "Hoje",
               month: "Mês",
               week: "Semana",
-              day: "Dia"
+              day: "Dia",
+              agenda: "Agenda"
             }}
             eventPropGetter={(event: any) => {
               const status = (event.status || "").toLowerCase()
               let bgColor = "#22c55e" 
-              if (status.includes("pendente") || status.includes("agendado")) bgColor = "#facc15"
-              if (status.includes("cancelado")) bgColor = "#ef4444"
+              let borderColor = "#166534"
+              let textColor = "#ffffff"
+
+              if (status.includes("pendente") || status.includes("agendado")) {
+                 bgColor = "#facc15"
+                 borderColor = "#854d0e"
+                 textColor = "#000000"
+              }
+              if (status.includes("cancelado")) {
+                 bgColor = "#ef4444"
+                 borderColor = "#7f1d1d"
+              }
 
               return {
-                className: "border-none shadow-sm",
+                className: "custom-event transition-all hover:scale-[1.02]",
                 style: {
                   backgroundColor: bgColor,
-                  color: "#000",
-                  borderRadius: '6px',
-                  padding: '4px 8px',
+                  color: textColor,
+                  border: `1px solid ${borderColor}`,
+                  borderRadius: '8px',
+                  padding: '6px 8px',
                   fontSize: '11px',
                   fontWeight: 'bold',
-                  marginBottom: '2px'
+                  marginBottom: '4px',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
                 }
               }
             }}
             components={{
               event: ({ event }: any) => (
-                <div className="flex flex-col leading-tight overflow-hidden">
+                <div className="flex flex-col leading-tight overflow-hidden gap-1">
                   <span className="truncate">🏫 {event.escola}</span>
-                  <span className="text-[9px] opacity-80">👨‍🔧 {event.tecnico}</span>
+                  <span className="text-[10px] opacity-80 flex items-center gap-1">
+                     <span>👨‍🔧</span> 
+                     <span className="truncate">{event.tecnico}</span>
+                  </span>
                 </div>
               )
             }}
@@ -176,7 +203,7 @@ export default function AgendaFields() {
       {/* MODAL DE DETALHES */}
       {selectedEvent && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/95 backdrop-blur-md">
-          <div className="bg-[#020617] border border-slate-800 rounded-[2.5rem] w-full max-w-lg p-10 shadow-2xl">
+          <div className="bg-[#020617] border border-slate-800 rounded-[2.5rem] w-full max-w-lg p-10 shadow-2xl relative">
             <div className="flex justify-between items-start mb-8">
               <div>
                 <span className={`px-4 py-1 rounded-full text-[10px] uppercase border font-bold ${
@@ -188,9 +215,9 @@ export default function AgendaFields() {
                 }`}>
                   {selectedEvent.status}
                 </span>
-                <h3 className="text-2xl text-white mt-4 font-bold leading-tight">{selectedEvent.escola}</h3>
+                <h3 className="text-2xl text-white mt-4 font-bold leading-tight pr-8">{selectedEvent.escola}</h3>
               </div>
-              <button onClick={() => setSelectedEvent(null)} className="text-slate-400 hover:text-white transition-colors text-3xl font-light px-2">
+              <button onClick={() => setSelectedEvent(null)} className="absolute top-8 right-8 text-slate-500 hover:text-white transition-colors text-3xl font-light">
                 ✕
               </button>
             </div>
@@ -202,12 +229,12 @@ export default function AgendaFields() {
               <DetailItem emoji="👤" label="Aberto por" value={selectedEvent.abertura_por} />
               
               <div className="mt-8 pt-8 border-t border-slate-800">
-                <div className="bg-blue-600/10 border border-blue-500/20 rounded-3xl p-6 flex items-center gap-5">
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 flex items-center gap-5">
                   <div className="text-3xl">⏱️</div>
                   <div>
-                    <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Tempo de Atendimento (SLA)</p>
-                    <p className="text-2xl text-blue-400 font-bold">
-                      {calcBusinessDays(selectedEvent.data_realizacao || selectedEvent.data_visita, selectedEvent.data_finalizacao)} dias úteis
+                    <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-1">Tempo de Atendimento (SLA)</p>
+                    <p className="text-2xl text-white font-bold">
+                      {calcBusinessDays(selectedEvent.data_realizacao || selectedEvent.data_visita, selectedEvent.data_finalizacao)} <span className="text-sm font-medium text-slate-400">dias úteis</span>
                     </p>
                   </div>
                 </div>
@@ -217,51 +244,65 @@ export default function AgendaFields() {
         </div>
       )}
 
+      {/* 🚀 CSS GLOBAL PARA TODAS AS VIEWS */}
       <style jsx global>{`
-        .rbc-calendar, .rbc-calendar * { font-family: inherit !important; }
+        .rbc-calendar { font-family: inherit !important; }
 
-        /* MATA AS HORAS EM TODAS AS VIEWS (SEMANA/DIA) */
-        .rbc-time-view .rbc-time-content,
-        .rbc-time-view .rbc-time-gutter,
-        .rbc-time-view .rbc-label,
-        .rbc-time-view .rbc-timeslot-group,
-        .rbc-event-label { 
-          display: none !important; 
+        /* TOOLBAR - REATIVADO E ESTILIZADO */
+        .rbc-toolbar { margin-bottom: 24px !important; }
+        .rbc-toolbar button { 
+            background: #0f172a !important; 
+            color: #94a3b8 !important; 
+            border: 1px solid #1e293b !important; 
+            border-radius: 10px !important; 
+            padding: 8px 18px !important; 
+            font-weight: 800 !important; 
+            text-transform: uppercase;
+            font-size: 11px;
+            letter-spacing: 0.05em;
+            transition: all 0.2s;
         }
-        
-        .rbc-time-view { border: none !important; }
-        .rbc-time-header-content { border-left: none !important; }
+        .rbc-toolbar button:hover { color: #fff !important; border-color: #3b82f6 !important; }
+        .rbc-toolbar button.rbc-active { background: #3b82f6 !important; border-color: #3b82f6 !important; color: #fff !important; }
+        .rbc-toolbar-label { font-size: 20px !important; font-weight: 900 !important; color: #fff !important; }
 
-        /* ROLAGEM DOS EVENTOS DENTRO DA CÉLULA DO MÊS */
-        .rbc-month-view { border: none !important; }
-        .rbc-month-row { 
-          flex: 1 0 280px !important; /* Aumentado para forçar a renderização de mais eventos */
-          overflow: visible !important; 
+        /* GRADE GERAL */
+        .rbc-month-view, .rbc-time-view, .rbc-agenda-view { 
+            border: 1px solid #1e293b !important; 
+            border-radius: 20px !important;
+            overflow: hidden !important;
+            background: #020617 !important;
         }
-        
-        .rbc-row-content { 
-          position: relative !important;
-          max-height: 100% !important; 
-          overflow-y: auto !important; 
-          scrollbar-width: none; 
-          z-index: 2;
+
+        /* AGENDA VIEW (MODERNIZADA) */
+        .rbc-agenda-view table.rbc-agenda-table { border: none !important; }
+        .rbc-agenda-view table.rbc-agenda-table thead > tr > th { 
+            background: #0f172a !important; color: #64748b !important; border-bottom: 1px solid #1e293b !important; padding: 15px !important; 
         }
-        .rbc-row-content::-webkit-scrollbar { display: none; }
-        
-        .rbc-date-cell { padding: 12px !important; color: #94a3b8 !important; font-weight: bold; }
-        .rbc-header { padding: 15px !important; color: #64748b !important; text-transform: uppercase; font-size: 11px; font-weight: bold; border-bottom: 1px solid #1e293b !important; }
+        .rbc-agenda-date-cell, .rbc-agenda-time-cell { 
+            background: #020617 !important; color: #94a3b8 !important; font-weight: bold !important; border-bottom: 1px solid #1e293b !important; padding: 15px !important; 
+        }
+        .rbc-agenda-event-cell { 
+            background: #020617 !important; color: #fff !important; border-bottom: 1px solid #1e293b !important; padding: 15px !important; 
+        }
+        .rbc-agenda-empty { color: #475569 !important; padding: 40px !important; text-align: center; }
+
+        /* MONTH VIEW */
+        .rbc-header { padding: 15px !important; color: #64748b !important; text-transform: uppercase; font-size: 11px; font-weight: 900; border-bottom: 1px solid #1e293b !important; border-left: 1px solid #1e293b !important; background: rgba(15, 23, 42, 0.4) !important; }
         .rbc-day-bg { border-left: 1px solid #1e293b !important; border-bottom: 1px solid #1e293b !important; }
         .rbc-today { background: rgba(59, 130, 246, 0.05) !important; }
-        .rbc-off-range-bg { background: transparent !important; opacity: 0.1; }
+        .rbc-off-range-bg { background: #000000 !important; opacity: 0.4; }
+        .rbc-date-cell { padding: 12px !important; color: #94a3b8 !important; font-weight: bold; }
 
-        .rbc-toolbar button { background: #0f172a !important; color: white !important; border: 1px solid #1e293b !important; border-radius: 12px !important; padding: 8px 16px !important; font-weight: bold !important; }
-        .rbc-toolbar button.rbc-active { background: #3b82f6 !important; border-color: #3b82f6 !important; }
-        
-        .rbc-event { 
-          min-height: 48px !important; 
-          margin-bottom: 4px !important; 
-          position: relative !important;
-        }
+        /* TIME VIEW (WEEK/DAY) - REMOVE A GRADE DE HORAS */
+        .rbc-time-header { border-bottom: 1px solid #1e293b !important; }
+        .rbc-time-content { display: none !important; } /* Esconde a grade de horários vazia */
+        .rbc-time-view .rbc-allday-cell { min-height: 500px !important; overflow-y: auto !important; }
+        .rbc-time-view .rbc-time-gutter { display: none !important; }
+
+        /* SCROLL NAS CÉLULAS DO MÊS */
+        .rbc-month-row { min-height: 140px; }
+        .rbc-row-content { position: relative !important; height: 100% !important; z-index: 2; }
         .rbc-show-more { display: none !important; } 
       `}</style>
     </div>
@@ -271,10 +312,10 @@ export default function AgendaFields() {
 function DetailItem({ emoji, label, value }: any) {
   return (
     <div className="flex items-center gap-5">
-      <div className="text-2xl w-8 text-center">{emoji}</div>
+      <div className="text-2xl w-8 text-center bg-slate-800/50 h-12 rounded-xl flex items-center justify-center shrink-0 border border-slate-700/50">{emoji}</div>
       <div>
-        <p className="text-[10px] text-slate-500 uppercase font-bold tracking-tighter">{label}</p>
-        <p className="text-slate-100 font-semibold">{value || "---"}</p>
+        <p className="text-[10px] text-slate-500 uppercase font-bold tracking-tighter mb-0.5">{label}</p>
+        <p className="text-slate-100 font-semibold text-sm">{value || "---"}</p>
       </div>
     </div>
   )
