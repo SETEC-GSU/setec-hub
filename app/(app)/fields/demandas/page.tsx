@@ -143,7 +143,7 @@ export default function GestaoDemandasFields() {
              <span className="text-cyan-500">●</span> Cadastro e controle de demandas - FIELD
           </h1>
           <p className="text-slate-400 mt-2 text-sm font-medium">
-            Abertura, triagem e resolução de demandas técnicas por Unidade Escolar.
+            Abertura, triagem e resolução de demandas técnicas por Unidade Escolar e por Técnico Field.
           </p>
         </div>
         
