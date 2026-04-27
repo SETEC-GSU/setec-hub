@@ -55,6 +55,10 @@ export default async function Sidebar() {
         { href: "/fields", label: "Atendimento", icon: "🧑‍🔧", permission: "fields.view" },
         { href: "/fields/agenda-field", label: "Agenda", icon: "📅", permission: "agenda.field" },
         { href: "/fields/avaliacoes", label: "Avaliações", icon: "⭐", permission: "avaliacoes.field" },
+        { href: "/fields/mapa-field", label: "Mapa", icon: "🗺️", permission: "fields.mapa" },
+        { href: "/fields/painel-setorizacao", label: "Painel - Setorização", icon: "🚗", permission: "fields.mapa" },
+        { href: "/fields/demandas", label: "Cadastro de Demandas", icon: "✅", permission: "fields.demandas" },
+
       ]
     },
 
@@ -75,6 +79,7 @@ export default async function Sidebar() {
         { href: "/usuarios", label: "Gestão de Usuários", icon: "👥", permission: "usuarios.view" },
         { href: "/gestao-chamados", label: "Gestão de Chamados", icon: "🛠️", permission: "gestaoChamados.view" },
         { href: "/gestao-equipamentos", label: "Gestão de Equipamentos", icon: "💻", permission: "gestao.equipamentos" }, // 🚀 ADICIONADO AQUI
+        { href: "/fields/setorizacao", label: "Setorização - FIELD", icon: "📋", permission: "fields.setorizacao" },
         { href: "/avisos", label: "Gestão de Avisos", icon: "⚠️", permission: "avisos.view" },
       ]
     },

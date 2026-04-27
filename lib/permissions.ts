@@ -30,6 +30,10 @@ export type Permission =
   | "segundo.link"
   | "avaliacoes.field"
   | "gestao.equipamentos"
+  | "fields.demandas"
+  | "fields.setorizacao"
+  | "fields.mapa"
+  | "fields.painel"
 
 
 
@@ -66,7 +70,11 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "edu.monitor",
     "segundo.link",
     "avaliacoes.field",
-    "gestao.equipamentos"
+    "gestao.equipamentos",
+    "fields.demandas",
+    "fields.setorizacao",
+    "fields.mapa",
+    "fields.painel"
 
   ],
 
@@ -94,7 +102,10 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "toners.saida",
     "toners.historico",
     "edu.monitor",
-    "segundo.link"
+    "segundo.link",
+    "fields.demandas",
+    "fields.mapa",
+    "fields.painel"
   ],
 
   chefia_ure: [
@@ -109,7 +120,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "painel.chamados",
     "toners.historico",
     "edu.monitor",
-    "segundo.link"
+    "segundo.link",
+    "fields.painel",
+    "fields.mapa"
   ],
 
   gestao_escolas: [
@@ -121,7 +134,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "inventario.view",
     "apoio.usuario",
     "painel.chamados",
-    "segundo.link"
+    "segundo.link",
+    "fields.painel",
+    "fields.mapa"
   ],
 
   dirigente: [
@@ -144,7 +159,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "toners.historico",
     "edu.monitor",
     "segundo.link",
-    "avaliacoes.field"
+    "avaliacoes.field",
+    "fields.painel",
+    "fields.mapa"
   
   ],
 
@@ -174,7 +191,11 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "edu.monitor",
     "segundo.link",
     "avaliacoes.field",
-    "gestao.equipamentos"
+    "gestao.equipamentos",
+    "fields.demandas",
+    "fields.mapa",
+    "fields.painel"
+
   ],
 }
 

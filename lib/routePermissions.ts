@@ -27,5 +27,9 @@ export const routePermissions: Record<string, Permission> = {
   "/edumonitor":"edu.monitor",
   "/segundo-link":"segundo.link",
   "/fields/avaliacoes":"avaliacoes.field",
-  "/gestao-equipamentos":"gestao.equipamentos"
+  "/gestao-equipamentos":"gestao.equipamentos",
+  "/fields/demandas":"fields.demandas",
+  "/fields/setorizacao":"fields.setorizacao",
+  "/fields/painel-setorizacao":"fields.painel",
+  "/fields/mapa-field":"fields.mapa"
 }
