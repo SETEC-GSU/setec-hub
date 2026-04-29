@@ -24,7 +24,7 @@ function calcMetrics(e: any) {
   const score = (indiceEquip * 0.6) + (indiceAP * 0.4)
 
   let criticidade = "saudavel"
-  if (score < 0.5) criticidade = "critica"
+  if (score < 0.6) criticidade = "critica"
   else if (score < 0.8) criticidade = "atencao"
 
   const deficitEquip = Math.max(equipIdeal - equipFuncionando, 0)
@@ -137,8 +137,8 @@ function DashboardContent() {
       {/* 🚀 CARDS GIGANTES DE STATUS (CRITICIDADE) */}
       {!escolaFiltro && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <StatusCard title="Saúde Crítica" value={criticas} subtitle="Abaixo de 50%" color="red" icon="🚨" />
-          <StatusCard title="Atenção" value={atencao} subtitle="Entre 50% e 80%" color="yellow" icon="⚠️" />
+          <StatusCard title="Saúde Crítica" value={criticas} subtitle="Abaixo de 60%" color="red" icon="🚨" />
+          <StatusCard title="Atenção" value={atencao} subtitle="Entre 60% e 80%" color="yellow" icon="⚠️" />
           <StatusCard title="Saudáveis" value={saudavel} subtitle="Acima de 80%" color="emerald" icon="✅" />
         </div>
       )}

@@ -31,12 +31,12 @@ export default function GestaoEquipamentosPage() {
   const [formModeloId, setFormModeloId] = useState("")
   const [formQuantidade, setFormQuantidade] = useState<number | "">("")
 
-  // 🚀 ESTADOS DO NOVO MODELO (AGORA COMPLETOS)
+  // ESTADOS DO NOVO MODELO
   const [novoModeloNome, setNovoModeloNome] = useState("")
   const [novoModeloFinalidade, setNovoModeloFinalidade] = useState("")
   const [novoModeloAno, setNovoModeloAno] = useState("")
-  const [novoModeloUso, setNovoModeloUso] = useState("") // NOVO
-  const [novoModeloTipo, setNovoModeloTipo] = useState("") // NOVO
+  const [novoModeloUso, setNovoModeloUso] = useState("") 
+  const [novoModeloTipo, setNovoModeloTipo] = useState("") 
   const [novoModeloImagem, setNovoModeloImagem] = useState("")
 
   useEffect(() => {
@@ -47,11 +47,15 @@ export default function GestaoEquipamentosPage() {
         .order("equipamento")
       if (modelosData) setModelos(modelosData)
 
-      const { data: escolasData } = await supabase
-        .from("equipamentos_recebidos")
+      // 🚀 Busca de escolas com aviso caso o RLS do Supabase esteja bloqueando
+      const { data: escolasData, error } = await supabase
+        .from("equipamentos_recebidos") 
         .select("escola_nome")
       
-      if (escolasData) {
+      if (error) {
+        console.error("Bloqueio no banco:", error)
+        alert(`Erro ao buscar escolas: ${error.message}\n(Verifique se o RLS permite SELECT).`)
+      } else if (escolasData) {
         const unicas = Array.from(new Set(escolasData.map(e => e.escola_nome))).sort()
         setEscolas(unicas)
       }
@@ -87,7 +91,9 @@ export default function GestaoEquipamentosPage() {
         .eq("escola_nome", escolaSelecionada)
         .order("id", { ascending: false })
 
-      if (!error && data) {
+      if (error) {
+        console.error("Erro ao buscar equipamentos:", error)
+      } else if (data) {
         setEquipamentosRecebidos(data)
       }
       setLoading(false)
@@ -104,7 +110,6 @@ export default function GestaoEquipamentosPage() {
     return acc + (item.quantidade_recebida || 0)
   }, 0)
 
-  // 🚀 INSERÇÃO DE MODELO ATUALIZADA COM USO E TIPO
   const handleSalvarNovoModelo = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!novoModeloNome.trim()) return alert("Digite o nome do novo equipamento.")
@@ -115,8 +120,8 @@ export default function GestaoEquipamentosPage() {
         equipamento: novoModeloNome.trim(),
         finalidade: novoModeloFinalidade.trim() || null,
         ano_recebimento: novoModeloAno.trim() || null,
-        uso: novoModeloUso.trim() || null, // ADICIONADO
-        tipo: novoModeloTipo.trim() || null, // ADICIONADO
+        uso: novoModeloUso.trim() || null, 
+        tipo: novoModeloTipo.trim() || null, 
         imagem_url: novoModeloImagem.trim() || null
       })
       .select("*")
@@ -127,7 +132,7 @@ export default function GestaoEquipamentosPage() {
     }
 
     setModelos(prev => [...prev, modeloData].sort((a, b) => a.equipamento.localeCompare(b.equipamento)))
-    alert("Modelo cadastrado com sucesso! Agora você pode vinculá-lo a uma escola.")
+    alert("Modelo cadastrado com sucesso!")
     fecharModais()
   }
 
@@ -219,29 +224,36 @@ export default function GestaoEquipamentosPage() {
     }
   }
 
+  // 🚀 LÓGICA DE EXCLUSÃO BLINDADA (Captura bloqueios de segurança do banco)
   const handleDeletar = async () => {
     if (!itemSelecionado) return
 
-    const { error } = await supabase
-      .from("equipamentos_recebidos")
-      .delete()
-      .eq("id", itemSelecionado.id)
+    try {
+      const { data, error } = await supabase
+        .from("equipamentos_recebidos") 
+        .delete()
+        .eq("id", itemSelecionado.id)
+        .select() // O select forca o supabase a devolver o que foi deletado
 
-    if (error) {
-      alert("Erro ao deletar: " + error.message)
-    } else {
-      setEquipamentosRecebidos(prev => prev.filter(item => item.id !== itemSelecionado.id))
-      fecharModais()
+      if (error) {
+        alert("Erro fatal do banco: " + error.message)
+      } else if (!data || data.length === 0) {
+        alert("⚠️ BLOQUEIO DO BANCO: O registro não foi excluído! O Supabase está bloqueando o comando DELETE. Vá no painel do Supabase > Authentication > Policies e crie uma política liberando a exclusão para a tabela equipamentos_recebidos.")
+      } else {
+        setEquipamentosRecebidos(prev => prev.filter(item => item.id !== itemSelecionado.id))
+        fecharModais()
+      }
+    } catch (err: any) {
+      alert("Erro na conexão com o banco: " + err.message)
     }
   }
 
-  // 🚀 RESET DOS NOVOS CAMPOS
   const abrirModalNovoModelo = () => {
     setNovoModeloNome("")
     setNovoModeloFinalidade("")
     setNovoModeloAno("")
-    setNovoModeloUso("") // RESET
-    setNovoModeloTipo("") // RESET
+    setNovoModeloUso("") 
+    setNovoModeloTipo("") 
     setNovoModeloImagem("")
     setModalNovoModeloOpen(true)
   }
@@ -430,7 +442,7 @@ export default function GestaoEquipamentosPage() {
       )}
 
       {/* ========================================================= */}
-      {/* 🚀 MODAL: NOVO MODELO BASE NO BANCO DE DADOS (ATUALIZADO) */}
+      {/* 🚀 MODAL: NOVO MODELO BASE NO BANCO DE DADOS */}
       {/* ========================================================= */}
       {modalNovoModeloOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
@@ -463,7 +475,6 @@ export default function GestaoEquipamentosPage() {
                 </div>
               </div>
 
-              {/* 🚀 NOVOS CAMPOS ADICIONADOS AQUI */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-semibold text-slate-300 block mb-1">Uso</label>
