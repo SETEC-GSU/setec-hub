@@ -69,10 +69,10 @@ export default function EscolaDetalhePage() {
   const criticidadeAtual = badgeConfig(metrics.criticidade)
 
   return (
-    // AQUI ESTÁ O SEGREDO: max-w-[1600px] para a tela abrir mais e os cards ficarem largos
+    // max-w-[1600px] para a tela abrir mais e os cards ficarem largos
     <div className="space-y-8 max-w-[1600px] mx-auto pb-12 px-4 sm:px-6">
 
-      {/* HEADER EXECUTIVO COM CIE GIGANTE */}
+      {/* HEADER EXECUTIVO COM CIE GIGANTE E TÉCNICO */}
       <div className="bg-gradient-to-br from-[#020617] to-slate-900/50 border border-slate-800 rounded-3xl p-8 lg:p-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 shadow-xl relative overflow-hidden">
         <div className={`absolute -right-20 -top-20 w-80 h-80 rounded-full blur-3xl opacity-20 ${metrics.criticidade === 'Crítica' ? 'bg-red-500' : metrics.criticidade === 'Atenção' ? 'bg-yellow-500' : 'bg-emerald-500'}`}></div>
         
@@ -93,6 +93,13 @@ export default function EscolaDetalhePage() {
           <p className="text-slate-400 text-lg mt-3 flex items-center gap-2">
             📍 {escola.endereco || "Endereço não informado"}
           </p>
+          
+          {/* 🚀 DESTAQUE DO TÉCNICO NO CABEÇALHO */}
+          <div className="mt-5 flex items-center">
+            <span className="bg-blue-500/10 border border-blue-500/20 text-blue-400 px-4 py-2.5 rounded-xl text-sm font-black tracking-wide flex items-center gap-2 shadow-sm">
+              👨‍🔧 Técnico Atribuído: <span className="text-blue-200 ml-1">{escola.tecnico_atribuido || "Não atribuído"}</span>
+            </span>
+          </div>
         </div>
 
         <div className="relative z-10 shrink-0 mt-4 md:mt-0">
@@ -233,6 +240,11 @@ export default function EscolaDetalhePage() {
         <div className="bg-[#020617] border border-slate-800 rounded-3xl p-8">
           <h4 className="text-xl font-bold text-white mb-6 flex items-center gap-3"><span className="text-slate-500 text-3xl">⏰</span> Operação</h4>
           <div className="space-y-5">
+            {/* 🚀 TÉCNICO INCLUÍDO AQUI TAMBÉM */}
+            <div className="flex items-center justify-between gap-4 border-b border-slate-800/50 pb-3">
+              <span className="text-base text-slate-500 whitespace-nowrap">Técnico Field</span>
+              <span className="text-base font-bold text-blue-400 text-right">{escola.tecnico_atribuido || "-"}</span>
+            </div>
             <div className="flex items-center justify-between gap-4 border-b border-slate-800/50 pb-3"><span className="text-base text-slate-500 whitespace-nowrap">Abertura</span><span className="text-base font-medium text-slate-300 text-right">{escola.horario_abertura || "-"}</span></div>
             <div className="flex items-center justify-between gap-4"><span className="text-base text-slate-500 whitespace-nowrap">Fechamento</span><span className="text-base font-medium text-slate-300 text-right">{escola.horario_fechamento || "-"}</span></div>
           </div>

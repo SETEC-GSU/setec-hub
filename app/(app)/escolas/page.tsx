@@ -5,7 +5,15 @@ import { createClient } from "@/lib/supabase"
 import dynamic from "next/dynamic"
 import Link from "next/link"
 
-const MapEscolas = dynamic(() => import("./MapEscolas"), { ssr: false })
+// 🚀 FIX: Adicionado loading explícito para evitar que o Leaflet tente carregar antes da DOM estar pronta
+const MapEscolas = dynamic(() => import("./MapEscolas"), { 
+  ssr: false,
+  loading: () => (
+    <div className="h-full w-full flex items-center justify-center bg-[#020617]">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-500"></div>
+    </div>
+  )
+})
 
 // LÓGICA DE CÁLCULO INTACTA
 function calcScore(e: any) {
@@ -41,6 +49,9 @@ export default function EscolasGridViewModerno() {
   const [busca, setBusca] = useState("")
   const [criticidadeFiltro, setCriticidadeFiltro] = useState("todas")
   const [selected, setSelected] = useState<any>(null)
+  
+  // 🚀 FIX: Trava de montagem para o Leaflet não quebrar no Strict Mode do Next.js
+  const [isMounted, setIsMounted] = useState(false)
 
   // CARREGAMENTO INTACTO
   async function carregar() {
@@ -51,7 +62,10 @@ export default function EscolasGridViewModerno() {
     setFiltrado(enriched)
   }
 
-  useEffect(() => { carregar() }, [])
+  useEffect(() => { 
+    carregar()
+    setIsMounted(true) // 🚀 Libera a renderização do mapa apenas no Client-Side!
+  }, [])
 
   // FILTROS INTACTOS
   useEffect(() => {
@@ -62,7 +76,7 @@ export default function EscolasGridViewModerno() {
     setFiltrado(f)
   }, [busca, criticidadeFiltro, escolas])
 
-  // Função para estilizar os badges e textos de criticidade sem quebrar a lógica
+  // Função para estilizar os badges e textos de criticidade
   function getCriticidadeVisual(c: string) {
     if (c === "critica") return { label: "Estado Crítico", color: "text-red-500", bg: "bg-red-500/10", border: "border-red-500/30", shadow: "shadow-[0_0_15px_rgba(239,68,68,0.1)]" }
     if (c === "atencao") return { label: "Atenção", color: "text-yellow-500", bg: "bg-yellow-500/10", border: "border-yellow-500/30", shadow: "shadow-[0_0_15px_rgba(234,179,8,0.1)]" }
@@ -112,7 +126,7 @@ export default function EscolasGridViewModerno() {
         </div>
       </div>
 
-      {/* MAPA PANORÂMICO (Design Achatado para não roubar tanto espaço) */}
+      {/* MAPA PANORÂMICO */}
       <div className="bg-[#020617] border border-slate-800 rounded-3xl h-[350px] lg:h-[450px] overflow-hidden shadow-2xl relative">
         <div className="absolute top-4 left-4 z-10 flex gap-2">
            <span className="bg-slate-900/90 backdrop-blur px-4 py-2 rounded-xl border border-slate-700/50 shadow-lg text-xs font-bold text-white flex items-center gap-2">
@@ -123,10 +137,11 @@ export default function EscolasGridViewModerno() {
              {filtrado.length} UEs no mapa
            </span>
         </div>
-        <MapEscolas escolas={filtrado} selected={selected} onSelect={setSelected} />
+        {/* 🚀 FIX: Renderiza o mapa APENAS quando montado no Client-Side */}
+        {isMounted && <MapEscolas escolas={filtrado} selected={selected} onSelect={setSelected} />}
       </div>
 
-      {/* GRID DE CARDS DAS ESCOLAS (Mais espaçoso: gap-8 e xl:grid-cols-3) */}
+      {/* GRID DE CARDS DAS ESCOLAS */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8 pt-4">
         {filtrado.length === 0 ? (
            <div className="col-span-full py-24 text-center flex flex-col items-center justify-center bg-[#020617]/50 rounded-3xl border border-slate-800 border-dashed">
@@ -164,14 +179,31 @@ export default function EscolasGridViewModerno() {
 
                 {/* Informações da Escola */}
                 <div className="flex-1 mb-8">
-                  <h3 className={`text-xl font-bold leading-tight mb-3 transition-colors ${isSelected ? 'text-cyan-400' : 'text-slate-100 group-hover:text-white'}`}>
+                  {/* TAG CIE */}
+                  <div className="mb-2">
+                    <span className="inline-block px-2.5 py-1 bg-slate-800/50 border border-slate-700 text-cyan-400 text-[10px] font-black tracking-widest rounded-md">
+                      CIE: {e.cie || "N/A"}
+                    </span>
+                  </div>
+                  
+                  <h3 className={`text-xl font-bold leading-tight mb-4 transition-colors ${isSelected ? 'text-cyan-400' : 'text-slate-100 group-hover:text-white'}`}>
                     {e.nome_escola}
                   </h3>
-                  <div className="flex items-start gap-2 text-slate-500">
-                    <span className="mt-0.5">📍</span>
-                    <p className="text-sm font-medium line-clamp-2 leading-relaxed">
-                      {e.endereco || "Endereço não cadastrado"}
-                    </p>
+                  
+                  <div className="flex flex-col gap-2.5">
+                    <div className="flex items-start gap-2 text-slate-500">
+                      <span className="mt-0.5">📍</span>
+                      <p className="text-sm font-medium line-clamp-2 leading-relaxed">
+                        {e.endereco || "Endereço não cadastrado"}
+                      </p>
+                    </div>
+                    {/* INFORMAÇÃO DO TÉCNICO */}
+                    <div className="flex items-center gap-2 text-blue-400/80">
+                      <span className="">👨‍🔧</span>
+                      <p className="text-xs font-bold line-clamp-1 uppercase tracking-wider">
+                        {e.tecnico_atribuido || "Sem técnico atribuído"}
+                      </p>
+                    </div>
                   </div>
                 </div>
 

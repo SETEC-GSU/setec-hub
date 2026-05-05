@@ -35,7 +35,8 @@ export default function GestaoDemandasFields() {
   const [busca, setBusca] = useState("")
   const [filtroEscola, setFiltroEscola] = useState("Todos")
   const [filtroTecnico, setFiltroTecnico] = useState("Todos")
-  const [filtroStatus, setFiltroStatus] = useState("Todos") // NOVO FILTRO
+  const [filtroStatus, setFiltroStatus] = useState("Todos")
+  const [filtroTipo, setFiltroTipo] = useState("Todos")
 
   // Estado do Formulário
   const [escolaSelecionada, setEscolaSelecionada] = useState("")
@@ -81,7 +82,7 @@ export default function GestaoDemandasFields() {
     return Array.from(nomes).sort()
   }, [escolas])
 
-  // 🚀 LÓGICA DE FILTROS BLINDADA + ORDENAÇÃO INTELIGENTE
+  // LÓGICA DE FILTROS BLINDADA + ORDENAÇÃO INTELIGENTE
   const demandasFiltradas = useMemo(() => {
     // 1. Filtragem
     const filtradas = demandas.filter(d => {
@@ -97,8 +98,9 @@ export default function GestaoDemandasFields() {
       const matchEscola = filtroEscola === "Todos" ? true : String(d.escola_id) === String(filtroEscola);
       const matchTecnico = filtroTecnico === "Todos" ? true : tecnico === filtroTecnico;
       const matchStatus = filtroStatus === "Todos" ? true : d.status === filtroStatus;
+      const matchTipo = filtroTipo === "Todos" ? true : d.tipo === filtroTipo;
       
-      return matchBusca && matchEscola && matchTecnico && matchStatus;
+      return matchBusca && matchEscola && matchTecnico && matchStatus && matchTipo;
     });
 
     // 2. Ordenação (1º Pendentes vs Concluídas | 2º Urgência | 3º Data mais recente)
@@ -121,7 +123,7 @@ export default function GestaoDemandasFields() {
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
 
-  }, [demandas, busca, filtroEscola, filtroTecnico, filtroStatus, escolas])
+  }, [demandas, busca, filtroEscola, filtroTecnico, filtroStatus, filtroTipo, escolas])
 
   // DADOS PARA OS DASHBOARDS
   const chartCategoria = useMemo(() => {
@@ -192,6 +194,13 @@ export default function GestaoDemandasFields() {
     carregarDados()
   }
 
+  // NOVA LÓGICA: REABRIR DEMANDA
+  async function handleReabrir(id: string) {
+    if(!window.confirm("Deseja reabrir esta demanda para atendimento?")) return;
+    await supabase.from("demandas_fields").update({ status: "Pendente Atendimento", concluido_em: null }).eq("id", id)
+    carregarDados()
+  }
+
   if (loading) return (
     <div className="flex items-center justify-center h-screen bg-[#0B1120]"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-cyan-500"></div></div>
   )
@@ -237,7 +246,6 @@ export default function GestaoDemandasFields() {
               <form onSubmit={handleSalvar} className="space-y-6">
                 <div>
                   <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 block">Unidade Escolar *</label>
-                  {/* 🚀 NOVO: Input com datalist (Permite digitar e buscar) */}
                   <input 
                     required 
                     list="escolas-list"
@@ -308,19 +316,26 @@ export default function GestaoDemandasFields() {
         <div className="xl:col-span-8 h-[800px] flex flex-col">
           <Glass title="📋 Fila de Atendimentos" className="flex-1">
             
-            {/* Filtros da Fila */}
-            <div className="flex flex-col lg:flex-row gap-3 mb-6 bg-slate-900/50 p-4 rounded-2xl border border-slate-800">
-               <input type="text" placeholder="Buscar texto..." value={busca} onChange={e => setBusca(e.target.value)} className="flex-1 bg-[#020617] border border-slate-700 text-white rounded-xl px-4 py-3 text-sm outline-none focus:border-cyan-500" />
-               <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} className="bg-[#020617] border border-slate-700 text-slate-300 rounded-xl px-4 py-3 text-sm outline-none focus:border-cyan-500 max-w-[160px]">
+            {/* 🚀 Filtros da Fila Ajustados (flex-1 para esticar sem deixar buracos) */}
+            <div className="flex flex-wrap gap-3 mb-6 bg-slate-900/50 p-4 rounded-2xl border border-slate-800">
+               <input type="text" placeholder="Buscar texto..." value={busca} onChange={e => setBusca(e.target.value)} className="flex-[100%] md:flex-[2] min-w-[200px] bg-[#020617] border border-slate-700 text-white rounded-xl px-4 py-3 text-sm outline-none focus:border-cyan-500" />
+               <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} className="flex-1 min-w-[150px] bg-[#020617] border border-slate-700 text-slate-300 rounded-xl px-4 py-3 text-sm outline-none focus:border-cyan-500">
                  <option value="Todos">Todos os Status</option>
                  <option value="Pendente Atendimento">Pendentes</option>
                  <option value="Concluída">Concluídas</option>
                </select>
-               <select value={filtroEscola} onChange={e => setFiltroEscola(e.target.value)} className="bg-[#020617] border border-slate-700 text-slate-300 rounded-xl px-4 py-3 text-sm outline-none focus:border-cyan-500 max-w-[160px]">
+               <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)} className="flex-1 min-w-[150px] bg-[#020617] border border-slate-700 text-slate-300 rounded-xl px-4 py-3 text-sm outline-none focus:border-cyan-500">
+                 <option value="Todos">Todos os Tipos</option>
+                 <option value="Equipamentos">Equipamentos</option>
+                 <option value="Rede/Conectividade">Rede/Conectividade</option>
+                 <option value="Suporte">Suporte</option>
+                 <option value="URE">URE</option>
+               </select>
+               <select value={filtroEscola} onChange={e => setFiltroEscola(e.target.value)} className="flex-1 min-w-[150px] bg-[#020617] border border-slate-700 text-slate-300 rounded-xl px-4 py-3 text-sm outline-none focus:border-cyan-500">
                  <option value="Todos">Todas Escolas</option>
                  {escolas.map(e => <option key={e.id} value={e.id}>{e.nome_escola}</option>)}
                </select>
-               <select value={filtroTecnico} onChange={e => setFiltroTecnico(e.target.value)} className="bg-[#020617] border border-slate-700 text-slate-300 rounded-xl px-4 py-3 text-sm outline-none focus:border-cyan-500 max-w-[160px]">
+               <select value={filtroTecnico} onChange={e => setFiltroTecnico(e.target.value)} className="flex-1 min-w-[150px] bg-[#020617] border border-slate-700 text-slate-300 rounded-xl px-4 py-3 text-sm outline-none focus:border-cyan-500">
                  <option value="Todos">Todos Técnicos</option>
                  {listaTecnicosFiltro.map(t => <option key={String(t)} value={String(t)}>{String(t)}</option>)}
                </select>
@@ -338,7 +353,7 @@ export default function GestaoDemandasFields() {
                   const isSendoEditada = editandoId === demanda.id;
 
                   return (
-                    <div key={demanda.id} className={`w-full grid grid-cols-1 md:grid-cols-[100px_1fr_160px_100px] gap-4 p-4 rounded-2xl border items-center transition-all ${isSendoEditada ? 'border-blue-500 bg-blue-900/10 shadow-[0_0_15px_rgba(59,130,246,0.15)]' : isConcluida ? 'bg-emerald-900/5 border-emerald-900/30 opacity-60' : 'bg-[#0f172a] border-slate-800 hover:border-slate-700'}`}>
+                    <div key={demanda.id} className={`w-full grid grid-cols-1 md:grid-cols-[100px_1fr_160px_100px] gap-4 p-4 rounded-2xl border items-center transition-all ${isSendoEditada ? 'border-blue-500 bg-blue-900/10 shadow-[0_0_15px_rgba(59,130,246,0.15)]' : isConcluida ? 'bg-emerald-900/5 border-emerald-900/30 opacity-60 hover:opacity-100' : 'bg-[#0f172a] border-slate-800 hover:border-slate-700'}`}>
                       
                       {/* Coluna 1: Status */}
                       <div className="flex flex-col gap-2">
@@ -384,9 +399,13 @@ export default function GestaoDemandasFields() {
                             <button onClick={() => handleConcluir(demanda.id)} disabled={isSendoEditada} className="w-full bg-emerald-500/10 hover:bg-emerald-500 disabled:opacity-30 text-emerald-500 hover:text-white border border-emerald-500/30 py-2 rounded-lg text-[11px] font-black uppercase transition-all">Concluir</button>
                           </>
                         ) : (
-                          <div className="text-right flex flex-col justify-center h-full">
-                            <span className="text-emerald-500 font-black text-3xl leading-none">✓</span>
-                            <div className="text-[10px] text-slate-500 font-bold mt-1">{format(new Date(demanda.concluido_em), 'dd/MM')}</div>
+                          // BOTÃO DE REABRIR DEMANDA
+                          <div className="flex flex-col h-full justify-center gap-1">
+                            <button onClick={() => handleReabrir(demanda.id)} className="w-full bg-slate-800/80 hover:bg-yellow-500/20 text-slate-400 hover:text-yellow-400 border border-slate-700 hover:border-yellow-500/30 py-2 rounded-lg text-[11px] font-black uppercase transition-all group">
+                              <span className="group-hover:hidden">Concluído</span>
+                              <span className="hidden group-hover:inline">🔄 Reabrir</span>
+                            </button>
+                            <div className="text-[9px] text-slate-500 font-bold text-center uppercase tracking-widest">{format(new Date(demanda.concluido_em), 'dd/MM/yyyy')}</div>
                           </div>
                         )}
                       </div>

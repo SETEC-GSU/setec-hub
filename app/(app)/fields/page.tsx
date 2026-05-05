@@ -39,6 +39,14 @@ function calcBusinessDays(startStr: string | null, endStr: string | null): numbe
   return count
 }
 
+// Formatador seguro para as datas do Modal
+function formatarDataBR(dateStr: string | null) {
+  if (!dateStr) return "N/A"
+  const d = parseDateLocal(dateStr)
+  if (!d) return "N/A"
+  return d.toLocaleDateString('pt-BR', { timeZone: 'UTC' }) // Evita desvio de fuso
+}
+
 const SafeTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload || !payload.length) return null
   const nome = typeof label === 'object' ? (payload[0]?.name || "Item") : String(label || "Item")
@@ -61,27 +69,34 @@ export default function FieldsPage() {
   // Estados Globais
   const [visitas, setVisitas] = useState<any[]>([])
   const [avaliacoes, setAvaliacoes] = useState<any[]>([])
+  const [todasEscolas, setTodasEscolas] = useState<any[]>([]) // 🚀 NOVO ESTADO: Lista oficial de escolas
   const [tecnicoFiltro, setTecnicoFiltro] = useState("Todos")
   const [loading, setLoading] = useState(true)
 
-  // 🚀 NOVOS ESTADOS: Filtros exclusivos da Tabela
+  // Filtros exclusivos da Tabela
   const [buscaChamado, setBuscaChamado] = useState("")
   const [filtroMesTabela, setFiltroMesTabela] = useState("Todos")
   const [filtroEscolaTabela, setFiltroEscolaTabela] = useState("Todas")
   const [filtroTecnicoTabela, setFiltroTecnicoTabela] = useState("Todos")
 
+  // Controla a Splash Page (Modal)
+  const [chamadoSelecionado, setChamadoSelecionado] = useState<any | null>(null)
+
   useEffect(() => {
     async function carregar() {
       const { data: vData } = await supabase.from("fields_visitas").select("*")
       const { data: aData } = await supabase.from("fields_avaliacoes").select("*")
+      const { data: eData } = await supabase.from("escolas").select("nome_escola") // 🚀 Trazendo nomes das escolas
+
       setVisitas(vData || [])
       setAvaliacoes(aData || [])
+      setTodasEscolas(eData || [])
       setLoading(false)
     }
     carregar()
   }, [])
 
-  // CÁLCULOS GLOBAIS (Não afetam os filtros da tabela para não quebrar os KPIs)
+  // CÁLCULOS GLOBAIS
   const stats = useMemo(() => {
     const filtradas = (tecnicoFiltro === "Todos" ? visitas : visitas.filter(v => v.tecnico === tecnicoFiltro))
       .sort((a, b) => {
@@ -125,14 +140,25 @@ export default function FieldsPage() {
     })
     const graficoMes = Object.entries(mesesMap).map(([name, value]) => ({ name, value }))
 
-    const coberturaEscolas = new Set(
+    // 🚀 LÓGICA DE COBERTURA E ESCOLAS NÃO CONTEMPLADAS
+    const escolasAtendidasSet = new Set(
       filtradas
         .map(v => v.escola)
         .filter(escola => {
           if (!escola) return false;
           return !escola.toUpperCase().includes("URE GUARULHOS SUL");
         })
-    ).size
+    )
+    
+    const coberturaEscolas = escolasAtendidasSet.size
+
+    const escolasValidasRede = todasEscolas.filter(e => e.nome_escola && !e.nome_escola.toUpperCase().includes("URE GUARULHOS SUL"))
+    const totalEscolasRede = escolasValidasRede.length > 0 ? escolasValidasRede.length : 82 // Fallback para 82 se a query falhar
+
+    const escolasNaoAtendidas = escolasValidasRede
+      .filter(e => !escolasAtendidasSet.has(e.nome_escola))
+      .map(e => e.nome_escola)
+      .sort((a, b) => a.localeCompare(b))
 
     return {
       filtradas,
@@ -143,11 +169,13 @@ export default function FieldsPage() {
       rankingTecnicos,
       rankingEscolas,
       graficoMes,
-      coberturaEscolas 
+      coberturaEscolas,
+      totalEscolasRede,
+      escolasNaoAtendidas // 🚀 Exposto para uso na UI
     }
-  }, [visitas, avaliacoes, tecnicoFiltro])
+  }, [visitas, avaliacoes, tecnicoFiltro, todasEscolas])
 
-  // 🚀 LÓGICA DE FILTRAGEM EXCLUSIVA DA TABELA
+  // LÓGICA DE FILTRAGEM EXCLUSIVA DA TABELA
   const chamadosTabela = useMemo(() => {
     return stats.filtradas.filter(v => {
       const matchEscola = filtroEscolaTabela === "Todas" || v.escola === filtroEscolaTabela;
@@ -194,7 +222,7 @@ export default function FieldsPage() {
         <select
           value={tecnicoFiltro}
           onChange={(e) => setTecnicoFiltro(e.target.value)}
-          className="bg-[#020617] border border-slate-800 text-white rounded-xl px-5 py-3 outline-none focus:ring-2 focus:ring-blue-500/50 transition-all min-w-[260px] font-bold"
+          className="bg-[#020617] border border-slate-800 text-white rounded-xl px-5 py-3 outline-none focus:ring-2 focus:ring-blue-500/50 transition-all min-w-[260px] font-bold cursor-pointer"
         >
           <option value="Todos">👨‍🔧 Todos os Técnicos</option>
           {stats.rankingTecnicos.map(t => (
@@ -209,7 +237,8 @@ export default function FieldsPage() {
         <KpiCard title="Técnicos" value={stats.tecnicosAtivos} subtitle="Equipe campo" color="purple" />
         <KpiCard title="SLA Útil" value={stats.slaMedio + "d"} subtitle="Média conclusão" color="yellow" />
         <KpiCard title="Média Aval." value={stats.mediaAval + " ⭐"} subtitle="Feedback escolas" color="emerald" />
-        <KpiCard title="Escolas" value={stats.coberturaEscolas + "/82"} subtitle="Atendidas" color="blue" />
+        {/* 🚀 KPI AGORA USA O TOTAL REAL DINÂMICO DA BASE DE DADOS */}
+        <KpiCard title="Escolas" value={`${stats.coberturaEscolas}/${stats.totalEscolasRede}`} subtitle="Atendidas" color="blue" />
       </div>
 
       {/* GRÁFICO MENSAL */}
@@ -227,24 +256,26 @@ export default function FieldsPage() {
         </div>
       </Glass>
 
-      <div className="grid xl:grid-cols-2 gap-8">
+      {/* 🚀 MUDAMOS PARA xl:grid-cols-3 PARA ACOMODAR O NOVO CARD */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
+        
         <Glass title="🏆 Performance por Técnico">
-          <div className="divide-y divide-slate-800/50 mt-2">
-            {stats.rankingTecnicos.slice(0, 5).map((t, i) => (
+          <div className="divide-y divide-slate-800/50 mt-2 max-h-[380px] overflow-y-auto pr-2 custom-scrollbar">
+            {stats.rankingTecnicos.map((t, i) => (
               <Link 
                 href={`/fields/tecnico/${encodeURIComponent(t.nome)}`}
                 key={t.nome} 
                 className="flex items-center justify-between py-5 hover:bg-slate-800/30 px-4 rounded-2xl transition group"
               >
                 <div className="flex items-center gap-5">
-                  <span className={`w-8 h-8 flex items-center justify-center rounded-xl text-xs font-bold ${i === 0 ? 'bg-yellow-500/20 text-yellow-500 border border-yellow-500/30' : 'bg-slate-800 text-slate-400'}`}>
+                  <span className={`w-8 h-8 flex items-center justify-center rounded-xl text-xs font-bold shrink-0 ${i === 0 ? 'bg-yellow-500/20 text-yellow-500 border border-yellow-500/30' : i === 1 ? 'bg-slate-300/20 text-slate-300 border border-slate-300/30' : i === 2 ? 'bg-amber-700/20 text-amber-600 border border-amber-700/30' : 'bg-slate-800 text-slate-400'}`}>
                     {i + 1}
                   </span>
-                  <span className="text-slate-100 group-hover:text-blue-400 font-bold transition-colors text-lg">{t.nome}</span>
+                  <span className="text-slate-100 group-hover:text-blue-400 font-bold transition-colors text-base sm:text-lg truncate">{t.nome}</span>
                 </div>
-                <div className="text-right">
+                <div className="text-right shrink-0 ml-2">
                   <p className="text-blue-400 text-xl font-bold">{t.media}</p>
-                  <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">{t.total} VISITAS</p>
+                  <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">{t.total} CHAMADOS</p>
                 </div>
               </Link>
             ))}
@@ -263,12 +294,38 @@ export default function FieldsPage() {
             ))}
           </div>
         </Glass>
+
+        {/* 🚀 NOVO CARD: ESCOLAS NÃO CONTEMPLADAS */}
+        <Glass title="🎯 Pendentes (Não Contempladas)">
+          <div className="divide-y divide-slate-800/50 mt-2 max-h-[380px] overflow-y-auto pr-2 custom-scrollbar">
+            {stats.escolasNaoAtendidas.length === 0 ? (
+               <div className="py-12 text-center flex flex-col items-center justify-center">
+                 <span className="text-4xl mb-3">🎉</span>
+                 <p className="text-emerald-500 text-sm font-bold uppercase tracking-widest">
+                   Cobertura de 100%!
+                 </p>
+                 <p className="text-slate-500 text-xs mt-1">Todas as escolas foram visitadas.</p>
+               </div>
+            ) : (
+              stats.escolasNaoAtendidas.map((escola: string) => (
+                <div key={escola} className="flex items-center py-4 px-4 hover:bg-slate-800/20 rounded-xl transition-colors">
+                  <span className="w-2 h-2 rounded-full bg-green-700 mr-4 shrink-0 relative">
+                    {/* Efeito visual de pulsar para indicar "pendência" */}
+                    <span className="animate-ping absolute -inset-1 rounded-full bg-green-500 opacity-20"></span>
+                  </span>
+                  <span className="text-slate-300 font-medium truncate text-sm">{escola}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </Glass>
+
       </div>
 
       {/* TABELA DE CHAMADOS */}
-      <Glass title="📋 Lista de Chamados Atendidos (Decrescente)">
+      <Glass title="📋 Lista de Chamados Atendidos">
         
-        {/* 🚀 BARRA DE FILTROS DA TABELA */}
+        {/* BARRA DE FILTROS DA TABELA */}
         <div className="flex flex-col md:flex-row flex-wrap gap-3 mb-6 mt-2">
           {/* Busca por Código */}
           <div className="flex-1 min-w-[200px] relative">
@@ -331,7 +388,6 @@ export default function FieldsPage() {
               </tr>
             </thead>
             <tbody className="text-sm divide-y divide-slate-800/50">
-              {/* 🚀 AGORA USA chamadosTabela. Mapeia apenas o resultado filtrado. */}
               {chamadosTabela.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-8 text-center text-slate-500 text-xs font-bold uppercase tracking-widest">
@@ -346,7 +402,15 @@ export default function FieldsPage() {
 
                   return (
                     <tr key={v.id} className="hover:bg-slate-800/20 transition-colors">
-                      <td className="py-4 px-4 text-blue-400 text-xs font-bold">{v.chamado || "N/A"}</td>
+                      <td className="py-4 px-4 text-blue-400 text-xs font-bold">
+                        <button 
+                          onClick={() => setChamadoSelecionado(v)}
+                          className="hover:underline hover:text-cyan-400 transition-colors cursor-pointer"
+                          title="Ver detalhes completos"
+                        >
+                          {v.chamado || "N/A"}
+                        </button>
+                      </td>
                       <td className="py-4 px-4 text-slate-200 font-bold">{v.escola}</td>
                       <td className="py-4 px-4">
                         <span className={`px-2 py-1 rounded-md text-[10px] font-bold border ${
@@ -381,6 +445,104 @@ export default function FieldsPage() {
           </table>
         </div>
       </Glass>
+
+      {/* MODAL SPLASH PAGE DE DETALHES DO CHAMADO */}
+      {chamadoSelecionado && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#020617]/90 backdrop-blur-md p-4 animate-fade-in">
+          <div className="bg-[#0f172a] border border-slate-700 rounded-[2rem] shadow-2xl w-full max-w-4xl overflow-hidden relative flex flex-col max-h-[90vh]">
+            
+            {/* Header Modal */}
+            <div className="bg-slate-900/80 border-b border-slate-800 p-6 sm:p-8 flex justify-between items-start">
+               <div>
+                 <div className="flex flex-wrap gap-2 mb-3">
+                    <span className="px-3 py-1 rounded bg-slate-800 text-slate-300 text-xs font-black uppercase tracking-widest">{chamadoSelecionado.categoria || "Geral"}</span>
+                    <span className={`px-3 py-1 rounded text-xs font-black uppercase tracking-widest ${
+                        (chamadoSelecionado.status || '').toLowerCase() === 'realizada' || (chamadoSelecionado.status || '').toLowerCase() === 'finalizado' 
+                        ? 'bg-emerald-500/20 text-emerald-400' 
+                        : (chamadoSelecionado.status || '').toLowerCase() === 'pendente' 
+                        ? 'bg-amber-500/20 text-amber-500' 
+                        : 'bg-slate-500/20 text-slate-400'
+                    }`}>
+                      {chamadoSelecionado.status || "Pendente"}
+                    </span>
+                 </div>
+                 <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight leading-tight">
+                    <span className="text-blue-500">{chamadoSelecionado.chamado || "N/A"}</span> • {chamadoSelecionado.escola}
+                 </h2>
+                 <p className="text-slate-500 font-mono text-xs sm:text-sm mt-2">
+                    Técnico Atribuído: <span className="text-slate-300">{chamadoSelecionado.tecnico}</span> | Aberto por: <span className="text-slate-300">{chamadoSelecionado.abertura_por}</span>
+                 </p>
+               </div>
+               <button onClick={() => setChamadoSelecionado(null)} className="bg-slate-800 hover:bg-red-500/20 hover:text-red-400 text-slate-400 w-12 h-12 rounded-full flex items-center justify-center font-bold transition-all text-xl shrink-0">X</button>
+            </div>
+
+            {/* Corpo do Modal */}
+            <div className="p-6 sm:p-8 overflow-y-auto custom-scrollbar flex-col gap-6 flex">
+               
+               {/* Grade de Datas */}
+               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                 <div className="bg-[#020617] border border-slate-800 p-4 rounded-2xl flex flex-col justify-center">
+                    <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest mb-1">Data Abertura</p>
+                    <p className="text-base sm:text-lg font-bold text-white">{formatarDataBR(chamadoSelecionado.data_abertura)}</p>
+                 </div>
+                 <div className="bg-[#020617] border border-slate-800 p-4 rounded-2xl flex flex-col justify-center">
+                    <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest mb-1">Data Prevista</p>
+                    <p className="text-base sm:text-lg font-bold text-slate-300">{formatarDataBR(chamadoSelecionado.data_prevista)}</p>
+                 </div>
+                 <div className="bg-[#020617] border border-slate-800 p-4 rounded-2xl flex flex-col justify-center">
+                    <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest mb-1">Data Visita</p>
+                    <p className="text-base sm:text-lg font-bold text-blue-400">{formatarDataBR(chamadoSelecionado.data_visita)}</p>
+                 </div>
+                 <div className="bg-[#020617] border border-slate-800 p-4 rounded-2xl flex flex-col justify-center">
+                    <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest mb-1">Data Finalização</p>
+                    <p className="text-base sm:text-lg font-bold text-emerald-400">{formatarDataBR(chamadoSelecionado.data_finalizacao)}</p>
+                 </div>
+               </div>
+
+               {/* Infos Extras */}
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <div className="bg-[#020617] border border-slate-800 p-5 rounded-2xl">
+                      <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest mb-1">Urgência / Impacto</p>
+                      <p className="text-lg font-bold text-white">
+                         {chamadoSelecionado.urgencia || 'N/A'} <span className="text-slate-600 font-light mx-1">/</span> {chamadoSelecionado.impacto || 'N/A'}
+                      </p>
+                   </div>
+                   <div className="bg-[#020617] border border-slate-800 p-5 rounded-2xl">
+                      <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest mb-1">Subcategoria</p>
+                      <p className="text-lg font-bold text-white">{chamadoSelecionado.subcategoria || 'N/A'}</p>
+                   </div>
+               </div>
+
+               {/* Textos Longos */}
+               <div className="bg-[#020617] border border-slate-800 p-6 rounded-2xl">
+                  <p className="text-xs text-slate-500 uppercase font-black tracking-widest mb-3 flex items-center gap-2"><span className="text-lg">📝</span> Descrição do Problema</p>
+                  <p className="text-slate-300 leading-relaxed whitespace-pre-wrap text-sm">{chamadoSelecionado.descricao || 'Sem descrição detalhada registrada.'}</p>
+               </div>
+
+               <div className="bg-[#020617] border border-blue-900/30 p-6 rounded-2xl">
+                  <p className="text-xs text-blue-400 uppercase font-black tracking-widest mb-3 flex items-center gap-2"><span className="text-lg">🛠️</span> Resolução Aplicada</p>
+                  <p className="text-blue-100/80 leading-relaxed whitespace-pre-wrap text-sm font-medium">{chamadoSelecionado.resolucao || 'Sem resolução registrada para este chamado ainda.'}</p>
+               </div>
+
+            </div>
+
+            {/* Rodapé Modal */}
+            <div className="bg-slate-900 border-t border-slate-800 p-4 flex justify-end">
+               <button onClick={() => setChamadoSelecionado(null)} className="bg-slate-800 hover:bg-slate-700 text-white px-8 py-3 rounded-xl text-sm font-black uppercase tracking-widest transition-all">Fechar Detalhes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GARANTIA DE ESTILOS CSS PARA O SCROLL E ANIMAÇÃO */}
+      <style jsx global>{`
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.3); border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+        .animate-fade-in { animation: fadeIn 0.2s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
+      `}</style>
     </div>
   )
 }
