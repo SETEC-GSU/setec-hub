@@ -115,11 +115,13 @@ export default function GestaoChamadoDetalhePage() {
     carregar()
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Se apertou Enter SEM o Shift, ele envia a mensagem.
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       enviarMensagem()
     }
+    // Se apertar Shift + Enter, o comportamento natural do textarea vai pular a linha
   }
 
   if (!chamado) return <div className="p-20 text-center text-blue-400 font-bold animate-pulse tracking-widest">PROCESSANDO DADOS DO CHAMADO...</div>
@@ -155,7 +157,6 @@ export default function GestaoChamadoDetalhePage() {
             </div>
             <div className="space-y-3">
               <p className="text-slate-400 font-medium"><span className="text-slate-500 text-[10px] block uppercase mb-0.5">Categoria</span> {chamado.categoria}</p>
-              <p className="text-slate-400 font-medium"><span className="text-slate-500 text-[10px] block uppercase mb-0.5">Subcategoria</span> {chamado.subcategoria || "-"}</p>
             </div>
             <div className="space-y-3">
               <p className="text-slate-400 font-medium"><span className="text-slate-500 text-[10px] block uppercase mb-0.5">Prioridade</span> 
@@ -169,6 +170,20 @@ export default function GestaoChamadoDetalhePage() {
             <p className="text-[10px] font-black text-slate-500 uppercase mb-3 tracking-widest">Relato da Ocorrência</p>
             <p className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap">{chamado.descricao}</p>
           </div>
+
+          {/* 🚀 LÓGICA DO RETORNO DEVOLUTIVO INSERIDA AQUI SEM QUEBRAR O LAYOUT */}
+          {(chamado.status === 'resolvido' || chamado.status === 'encerrado') && chamado.retorno_devolutivo && (
+            <div className="bg-emerald-950/20 p-6 rounded-2xl border border-emerald-500/30 relative overflow-hidden animate-fade-in shadow-lg shadow-emerald-900/10">
+              <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-xl">✅</span>
+                <p className="text-xs font-black text-emerald-400 uppercase tracking-widest">Parecer Técnico Final (Resolução)</p>
+              </div>
+              <p className="text-emerald-50/90 text-sm leading-relaxed whitespace-pre-wrap pl-8">
+                {chamado.retorno_devolutivo}
+              </p>
+            </div>
+          )}
 
           {anexos.length > 0 && (
             <div className="space-y-3">
@@ -216,7 +231,8 @@ export default function GestaoChamadoDetalhePage() {
                     {isUre && <span className="bg-blue-500/10 text-blue-400 text-[8px] font-black px-1.5 py-0.5 rounded border border-blue-500/20 uppercase">EQUIPE TÉCNICA</span>}
                   </div>
                   
-                  <div className={`p-4 rounded-2xl text-sm leading-relaxed shadow-lg ${
+                  {/* 🚀 CLASSE whitespace-pre-wrap ADICIONADA AQUI PARA MANTER A FORMATAÇÃO */}
+                  <div className={`p-4 rounded-2xl text-sm leading-relaxed shadow-lg whitespace-pre-wrap ${
                     isMe 
                       ? "bg-blue-600 text-white rounded-tr-none font-medium" 
                       : "bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700"
@@ -234,22 +250,24 @@ export default function GestaoChamadoDetalhePage() {
         {chamado.status !== "encerrado" ? (
           <div className="p-6 bg-slate-900/40 border-t border-slate-800">
             <div className="flex gap-3 items-center bg-[#0B1120] border border-slate-700 rounded-2xl p-2.5 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500/50 transition-all shadow-inner">
-              <input
+              {/* 🚀 TROCADO INPUT POR TEXTAREA PARA SUPORTAR QUEBRA DE LINHA */}
+              <textarea
                 value={novaMsg}
                 onChange={(e) => setNovaMsg(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="Digite sua resposta técnica..."
-                className="flex-1 bg-transparent border-none px-4 py-2 text-white text-sm outline-none placeholder:text-slate-700"
+                rows={1}
+                className="flex-1 bg-transparent border-none px-4 py-2 text-white text-sm outline-none placeholder:text-slate-700 custom-scrollbar resize-none max-h-32 min-h-[40px]"
               />
               <button 
                 onClick={enviarMensagem} 
-                className="bg-blue-600 hover:bg-blue-500 text-white px-7 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all active:scale-95 shadow-lg shadow-blue-500/20"
+                className="bg-blue-600 hover:bg-blue-500 text-white px-7 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all active:scale-95 shadow-lg shadow-blue-500/20 self-end"
               >
                 Responder
               </button>
             </div>
             <div className="flex justify-between mt-3 px-2">
-                <p className="text-[9px] text-slate-600 font-bold uppercase italic">Pressione Enter para enviar</p>
+                <p className="text-[9px] text-slate-600 font-bold uppercase italic">Enter para enviar | Shift + Enter para nova linha</p>
                 <p className="text-[9px] text-slate-600 font-bold uppercase italic">Setec Hub Management</p>
             </div>
           </div>

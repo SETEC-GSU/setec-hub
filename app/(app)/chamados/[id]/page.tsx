@@ -117,13 +117,15 @@ export default function ChamadoDetalhePage() {
     carregar()
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Se apertou Enter SEM o Shift, ele envia a mensagem.
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       enviarMensagem()
     }
   }
 
+  // 🚀 Loading mantido para evitar crashes
   if (!chamado) return <div className="p-20 text-center text-blue-400 font-bold animate-pulse">Carregando detalhes...</div>
 
   return (
@@ -156,8 +158,22 @@ export default function ChamadoDetalhePage() {
 
           <div className="bg-slate-900/50 p-4 rounded-2xl border border-slate-800/50">
             <p className="text-xs font-bold text-slate-500 uppercase mb-2">Descrição</p>
-            <p className="text-slate-300 text-sm leading-relaxed">{chamado.descricao}</p>
+            <p className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap">{chamado.descricao}</p>
           </div>
+
+          {/* 🚀 DESTAQUE DO PARECER TÉCNICO (RETORNO DEVOLUTIVO) */}
+          {(chamado.status === 'resolvido' || chamado.status === 'encerrado') && chamado.retorno_devolutivo && (
+            <div className="bg-emerald-950/20 p-5 rounded-2xl border border-emerald-500/30 relative overflow-hidden shadow-lg shadow-emerald-900/10 mt-4">
+              <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-lg">✅</span>
+                <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Solução Técnica</p>
+              </div>
+              <p className="text-emerald-50/90 text-sm leading-relaxed whitespace-pre-wrap pl-7">
+                {chamado.retorno_devolutivo}
+              </p>
+            </div>
+          )}
 
           {anexos.length > 0 && (
             <div className="flex flex-wrap gap-2 pt-2">
@@ -190,9 +206,12 @@ export default function ChamadoDetalhePage() {
                     <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{m.usuarios?.nome}</span>
                     {isUre && <span className="bg-blue-500/20 text-blue-400 text-[8px] font-black px-1.5 py-0.5 rounded uppercase">Suporte</span>}
                   </div>
-                  <div className={`p-4 rounded-2xl text-sm ${isMe ? "bg-blue-600 text-white rounded-tr-none" : "bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700"}`}>
+                  
+                  {/* 🚀 CLASSE whitespace-pre-wrap ADICIONADA AQUI */}
+                  <div className={`p-4 rounded-2xl text-sm whitespace-pre-wrap ${isMe ? "bg-blue-600 text-white rounded-tr-none" : "bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700"}`}>
                     {m.mensagem}
                   </div>
+                  
                   <span className="text-[9px] text-slate-600 mt-1.5">{formatarData(m.created_at)}</span>
                 </div>
               </div>
@@ -203,16 +222,23 @@ export default function ChamadoDetalhePage() {
         {chamado.status !== "encerrado" ? (
           <div className="p-4 bg-slate-900/40 border-t border-slate-800">
             <div className="flex gap-2 items-center bg-[#0B1120] border border-slate-700 rounded-2xl p-2 focus-within:border-blue-500 transition-all">
-              <input
+              
+              {/* 🚀 TROCADO PARA TEXTAREA E ADICIONADO onKeyDown */}
+              <textarea
                 value={novaMsg}
                 onChange={(e) => setNovaMsg(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Escreva sua mensagem..."
-                className="flex-1 bg-transparent border-none px-3 py-2 text-white text-sm outline-none"
+                placeholder="Escreva sua mensagem (Shift+Enter para nova linha)..."
+                rows={1}
+                className="flex-1 bg-transparent border-none px-3 py-2 text-white text-sm outline-none resize-none custom-scrollbar max-h-32 min-h-[40px]"
               />
-              <button onClick={enviarMensagem} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-95">
+              
+              <button onClick={enviarMensagem} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-95 self-end">
                 Enviar
               </button>
+            </div>
+            <div className="flex justify-between mt-2 px-2">
+                <p className="text-[9px] text-slate-600 font-bold uppercase italic">Enter para enviar</p>
             </div>
           </div>
         ) : (

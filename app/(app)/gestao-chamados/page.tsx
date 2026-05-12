@@ -11,13 +11,15 @@ const slaMap: Record<string, number> = {
 }
 
 export default function GestaoChamadosCommandCenter() {
-  // =========================================================================
-  // 1. LÓGICA 100% INTACTA - NENHUMA VÍRGULA ALTERADA
-  // =========================================================================
   const supabase = createClient()
   const [chamados, setChamados] = useState<any[]>([])
   const [filtroStatus, setFiltroStatus] = useState("todos")
   const [filtroOrigem, setFiltroOrigem] = useState("todos")
+
+  // 🚀 NOVOS ESTADOS PARA O MODAL BONITÃO DE RESOLUÇÃO
+  const [modalResolucao, setModalResolucao] = useState<{ id: string | null }>({ id: null })
+  const [parecerTecnico, setParecerTecnico] = useState("")
+  const [salvandoResolucao, setSalvandoResolucao] = useState(false)
 
   async function carregarChamados() {
     const { data: chamadosData, error } = await supabase
@@ -102,7 +104,16 @@ export default function GestaoChamadosCommandCenter() {
     }
   }, [])
 
+  // 🚀 LÓGICA ATUALIZADA: Intercepta o clique em "Resolver" para abrir o Modal
   async function atualizarStatus(id: string, status: string) {
+    // Se o técnico clicou em "Resolver", não faz o update agora. Abre o modal lindo!
+    if (status === "resolvido") {
+      setModalResolucao({ id })
+      setParecerTecnico("") // Limpa caso tivesse algo antes
+      return
+    }
+
+    // Se for outra ação (assumir, reabrir, etc), segue o fluxo normal sem modal
     const payload: any = { 
       status, 
       visualizado_pelo_usuario: false 
@@ -112,15 +123,40 @@ export default function GestaoChamadosCommandCenter() {
 
     if (status === "assumido") payload.analista_responsavel = user?.id
     if (status === "em_atendimento") payload.started_at = new Date()
-    if (status === "resolvido") payload.resolved_at = new Date()
 
     if (status === "aberto") {
       payload.started_at = null
       payload.resolved_at = null
       payload.analista_responsavel = null
+      payload.retorno_devolutivo = null // Limpa o retorno se reabrir
     }
 
     await supabase.from("chamados").update(payload).eq("id", id)
+    carregarChamados()
+  }
+
+  // 🚀 NOVA FUNÇÃO: Disparada quando o técnico clica em "Finalizar Chamado" DENTRO do Modal
+  async function confirmarResolucao() {
+    if (!modalResolucao.id) return
+    if (!parecerTecnico.trim()) {
+      alert("⚠️ O parecer técnico é obrigatório para resolver o chamado.")
+      return
+    }
+
+    setSalvandoResolucao(true)
+
+    const payload = {
+      status: "resolvido",
+      resolved_at: new Date(),
+      retorno_devolutivo: parecerTecnico,
+      visualizado_pelo_usuario: false
+    }
+
+    await supabase.from("chamados").update(payload).eq("id", modalResolucao.id)
+    
+    setModalResolucao({ id: null })
+    setParecerTecnico("")
+    setSalvandoResolucao(false)
     carregarChamados()
   }
 
@@ -183,10 +219,6 @@ export default function GestaoChamadosCommandCenter() {
     return true
   })
 
-  // =========================================================================
-  // 2. DESIGN PREMIUM APRIMORADO (DASHBOARD ANALÍTICO)
-  // =========================================================================
-
   const stats = {
     abertos: chamadosFiltrados.filter(c => c.status === "aberto").length,
     emAndamento: chamadosFiltrados.filter(c => c.status === "assumido" || c.status === "em_atendimento").length,
@@ -194,105 +226,108 @@ export default function GestaoChamadosCommandCenter() {
     resolvidos: chamadosFiltrados.filter(c => c.status === "resolvido").length,
   }
 
+  const FilterPill = ({ label, value, currentFilter, setter }: any) => (
+    <button
+      onClick={() => setter(value)}
+      className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest transition-all ${
+        currentFilter === value 
+          ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50 shadow-[0_0_15px_rgba(6,182,212,0.15)]' 
+          : 'bg-[#020617] text-slate-400 border border-slate-800 hover:border-slate-600 hover:text-slate-300'
+      }`}
+    >
+      {label}
+    </button>
+  );
+
   return (
-    <div className="space-y-8 max-w-[1600px] mx-auto pb-12">
+    <div className="space-y-10 max-w-[1600px] mx-auto pb-12">
       
-      {/* CABEÇALHO E ESTATÍSTICAS */}
+      {/* ================= HEADER & ESTATÍSTICAS ================= */}
       <div className="flex flex-col xl:flex-row gap-8 justify-between items-start">
         
-        {/* Título */}
-        <div className="space-y-2">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-green-500/10 text-green-400 text-xs font-bold uppercase tracking-widest border border-blue-500/20 mb-2">
+        <div className="space-y-2 shrink-0">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-green-500/10 text-green-400 text-[10px] font-black uppercase tracking-widest border border-green-500/20 mb-2">
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
             </span>
-            Live Updates
+            Live Connection
           </div>
-          <h1 className="text-3xl md:text-4xl font-bold text-white tracking-tight">Central de Chamados</h1>
-          <p className="text-slate-400 text-sm">Gestão operacional de tickets e SLA da rede SETEC.</p>
+          <h1 className="text-3xl md:text-5xl font-black text-white tracking-tighter">SETEC <span className="text-cyan-500">Ticket</span></h1>
+          <p className="text-slate-400 text-sm font-medium">Gestão operacional de tickets e SLA da rede SETEC.</p>
         </div>
 
-        {/* Cards de Estatísticas Rápidas (Agora com visual de "Glow" sutil) */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 w-full xl:w-auto">
-          <div className="bg-gradient-to-b from-[#020617] to-slate-900/50 border border-slate-800 p-5 rounded-2xl flex flex-col justify-center relative overflow-hidden group hover:border-blue-500/50 transition-colors">
-            <div className="absolute -right-4 -top-4 w-16 h-16 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-all"></div>
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-2">
-              📥 Aguardando
+          <div className="bg-[#020617] border border-slate-800 p-6 rounded-3xl flex flex-col justify-center relative overflow-hidden group hover:border-blue-500/50 transition-colors shadow-lg">
+            <div className="absolute -right-4 -top-4 w-20 h-20 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-all"></div>
+            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-blue-500"></div> Abertos
             </span>
-            <span className="text-4xl font-black text-white">{stats.abertos}</span>
+            <span className="text-5xl font-black text-white">{stats.abertos}</span>
           </div>
 
-          <div className="bg-gradient-to-b from-[#020617] to-slate-900/50 border border-slate-800 p-5 rounded-2xl flex flex-col justify-center relative overflow-hidden group hover:border-yellow-500/50 transition-colors">
-            <div className="absolute -right-4 -top-4 w-16 h-16 bg-yellow-500/10 rounded-full blur-2xl group-hover:bg-yellow-500/20 transition-all"></div>
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-2">
-              ⚡ Em Progresso
+          <div className="bg-[#020617] border border-slate-800 p-6 rounded-3xl flex flex-col justify-center relative overflow-hidden group hover:border-yellow-500/50 transition-colors shadow-lg">
+            <div className="absolute -right-4 -top-4 w-20 h-20 bg-yellow-500/10 rounded-full blur-2xl group-hover:bg-yellow-500/20 transition-all"></div>
+            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 flex items-center gap-2">
+               <div className="w-2 h-2 rounded-full bg-yellow-500"></div> Em Progresso
             </span>
-            <span className="text-4xl font-black text-white">{stats.emAndamento}</span>
+            <span className="text-5xl font-black text-white">{stats.emAndamento}</span>
           </div>
 
-          <div className="bg-gradient-to-b from-[#020617] to-slate-900/50 border border-slate-800 p-5 rounded-2xl flex flex-col justify-center relative overflow-hidden group hover:border-red-500/50 transition-colors">
+          <div className="bg-[#020617] border border-slate-800 p-6 rounded-3xl flex flex-col justify-center relative overflow-hidden group hover:border-red-500/50 transition-colors shadow-lg">
              {stats.atrasados > 0 && <div className="absolute top-0 left-0 w-full h-1 bg-red-500 animate-pulse"></div>}
-            <div className="absolute -right-4 -top-4 w-16 h-16 bg-red-500/10 rounded-full blur-2xl group-hover:bg-red-500/20 transition-all"></div>
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-2">
-              🚨 SLA Atrasado
+            <div className="absolute -right-4 -top-4 w-20 h-20 bg-red-500/10 rounded-full blur-2xl group-hover:bg-red-500/20 transition-all"></div>
+            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 flex items-center gap-2">
+               <div className={`w-2 h-2 rounded-full ${stats.atrasados > 0 ? 'bg-red-500 animate-pulse' : 'bg-red-600'}`}></div> SLA Atrasado
             </span>
-            <span className={`text-4xl font-black ${stats.atrasados > 0 ? 'text-red-500' : 'text-slate-300'}`}>{stats.atrasados}</span>
+            <span className={`text-5xl font-black ${stats.atrasados > 0 ? 'text-red-500' : 'text-slate-300'}`}>{stats.atrasados}</span>
           </div>
 
-          <div className="bg-gradient-to-b from-[#020617] to-slate-900/50 border border-slate-800 p-5 rounded-2xl flex flex-col justify-center relative overflow-hidden group hover:border-emerald-500/50 transition-colors">
-            <div className="absolute -right-4 -top-4 w-16 h-16 bg-emerald-500/10 rounded-full blur-2xl group-hover:bg-emerald-500/20 transition-all"></div>
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-2">
-              ✅ Resolvidos
+          <div className="bg-[#020617] border border-slate-800 p-6 rounded-3xl flex flex-col justify-center relative overflow-hidden group hover:border-emerald-500/50 transition-colors shadow-lg">
+            <div className="absolute -right-4 -top-4 w-20 h-20 bg-emerald-500/10 rounded-full blur-2xl group-hover:bg-emerald-500/20 transition-all"></div>
+            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 flex items-center gap-2">
+               <div className="w-2 h-2 rounded-full bg-emerald-500"></div> Resolvidos
             </span>
-            <span className="text-4xl font-black text-white">{stats.resolvidos}</span>
+            <span className="text-5xl font-black text-white">{stats.resolvidos}</span>
           </div>
         </div>
       </div>
 
-      {/* BARRA DE FILTROS MODERNIZADA */}
-      <div className="flex flex-col sm:flex-row gap-4 bg-[#020617]/50 backdrop-blur-sm border border-slate-800 p-4 rounded-2xl items-center shadow-lg">
-        <div className="flex items-center gap-3 text-slate-400 px-2 w-full sm:w-auto shrink-0">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" /></svg>
-          <span className="text-sm font-bold uppercase tracking-widest">Filtros Ativos</span>
+      {/* ================= BARRA DE FILTROS ================= */}
+      <div className="flex flex-col xl:flex-row gap-6 bg-slate-900/30 border border-slate-800 p-6 rounded-[2rem] items-start xl:items-center shadow-inner">
+        <div className="flex items-center gap-3 text-slate-400 shrink-0">
+          <span className="text-xl">🎛️</span>
+          <span className="text-xs font-black uppercase tracking-widest">Painel de Triagem</span>
         </div>
         
-        <div className="w-px h-8 bg-slate-800 hidden sm:block"></div>
+        <div className="w-full xl:w-px h-px xl:h-10 bg-slate-800"></div>
         
-        <div className="flex w-full sm:w-auto gap-4">
-          <div className="relative w-full sm:w-48">
-            <select
-              value={filtroStatus}
-              onChange={(e)=>setFiltroStatus(e.target.value)}
-              className="appearance-none bg-slate-900 border border-slate-700 text-white px-4 py-2.5 pr-10 rounded-xl outline-none text-sm w-full focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all cursor-pointer shadow-sm">
-              <option value="todos">Todos os Status</option>
-              <option value="aberto">Abertos</option>
-              <option value="assumido">Assumidos</option>
-              <option value="em_atendimento">Em atendimento</option>
-              <option value="resolvido">Resolvidos</option>
-            </select>
-            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-400">
-               <svg className="h-4 w-4 fill-current" viewBox="0 0 20 20"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" fillRule="evenodd"></path></svg>
-            </div>
-          </div>
+        <div className="flex flex-col sm:flex-row gap-6 w-full">
+           <div className="flex flex-col gap-2">
+             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Status do Chamado</span>
+             <div className="flex flex-wrap gap-2">
+               <FilterPill label="Todos" value="todos" currentFilter={filtroStatus} setter={setFiltroStatus} />
+               <FilterPill label="Abertos" value="aberto" currentFilter={filtroStatus} setter={setFiltroStatus} />
+               <FilterPill label="Assumidos" value="assumido" currentFilter={filtroStatus} setter={setFiltroStatus} />
+               <FilterPill label="Em Atendimento" value="em_atendimento" currentFilter={filtroStatus} setter={setFiltroStatus} />
+               <FilterPill label="Resolvidos" value="resolvido" currentFilter={filtroStatus} setter={setFiltroStatus} />
+             </div>
+           </div>
 
-          <div className="relative w-full sm:w-48">
-            <select
-              value={filtroOrigem}
-              onChange={(e)=>setFiltroOrigem(e.target.value)}
-              className="appearance-none bg-slate-900 border border-slate-700 text-white px-4 py-2.5 pr-10 rounded-xl outline-none text-sm w-full focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all cursor-pointer shadow-sm">
-              <option value="todos">Todas Origens</option>
-              <option value="ure">Diretoria (URE)</option>
-              <option value="escola">Escola</option>
-            </select>
-            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-400">
-               <svg className="h-4 w-4 fill-current" viewBox="0 0 20 20"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" fillRule="evenodd"></path></svg>
-            </div>
-          </div>
+           <div className="w-full sm:w-px h-px sm:h-12 bg-slate-800 hidden sm:block"></div>
+
+           <div className="flex flex-col gap-2">
+             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Origem</span>
+             <div className="flex flex-wrap gap-2">
+               <FilterPill label="Todas" value="todos" currentFilter={filtroOrigem} setter={setFiltroOrigem} />
+               <FilterPill label="URE" value="ure" currentFilter={filtroOrigem} setter={setFiltroOrigem} />
+               <FilterPill label="Escola" value="escola" currentFilter={filtroOrigem} setter={setFiltroOrigem} />
+             </div>
+           </div>
         </div>
       </div>
 
-      {/* LISTA DE CHAMADOS - MODO APRIMORADO */}
+      {/* ================= LISTA DE CHAMADOS ================= */}
       <div className="space-y-4">
         {chamadosFiltrados.length === 0 ? (
            <div className="bg-[#020617]/50 border border-slate-800 border-dashed rounded-3xl p-16 text-center flex flex-col items-center justify-center">
@@ -308,73 +343,69 @@ export default function GestaoChamadosCommandCenter() {
             const isAtrasado = sla === "ATRASADO" && c.status !== 'resolvido'
 
             return (
-              <div key={c.id} className={`group bg-gradient-to-r from-[#020617] to-slate-900/40 border rounded-2xl p-5 flex flex-col lg:flex-row gap-6 items-start lg:items-center transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] ${isAtrasado ? 'border-red-900/50 hover:border-red-500/50 bg-red-950/5' : 'border-slate-800 hover:border-slate-600'}`}>
+              <div key={c.id} className={`group bg-[#020617] border rounded-[2rem] p-6 flex flex-col lg:flex-row gap-6 items-start lg:items-center transition-all duration-300 hover:shadow-xl ${isAtrasado ? 'border-red-900/50 hover:border-red-500/50 bg-red-950/5' : 'border-slate-800 hover:border-slate-600'}`}>
                 
-                {/* 1. BLOCO IDENTIFICAÇÃO (ID + STATUS + PRIORIDADE) */}
                 <div className="flex flex-row lg:flex-col gap-3 lg:gap-2 items-center lg:items-start w-full lg:w-36 shrink-0">
                   <span className="text-sm font-black text-slate-500 tracking-wider">#{c.codigo}</span>
                   <div className="flex flex-wrap gap-2">
-                    <span className={`px-2.5 py-1 rounded border text-[10px] font-bold uppercase tracking-wider ${prioridadeColor(c.prioridade)}`}>{c.prioridade}</span>
-                    <span className={`px-2.5 py-1 rounded border text-[10px] font-bold uppercase tracking-wider ${statusColor(c.status)}`}>{c.status}</span>
+                    <span className={`px-2.5 py-1 rounded-lg border text-[10px] font-black uppercase tracking-widest ${prioridadeColor(c.prioridade)}`}>{c.prioridade}</span>
+                    <span className={`px-2.5 py-1 rounded-lg border text-[10px] font-black uppercase tracking-widest ${statusColor(c.status)}`}>{c.status}</span>
                   </div>
                 </div>
 
-                {/* 2. BLOCO INFORMAÇÕES PRINCIPAIS (Com Avatar Refinado) */}
                 <div className="flex-1 min-w-0 space-y-3 w-full border-l-0 lg:border-l border-slate-800 lg:pl-6">
-                  <a href={`/gestao-chamados/${c.id}`} className="block text-lg font-bold text-white hover:text-cyan-400 transition-colors truncate pr-4">
+                  <a href={`/gestao-chamados/${c.id}`} className="block text-xl font-black text-white hover:text-cyan-400 transition-colors truncate pr-4">
                     {c.titulo}
                   </a>
                   
                   <div className="flex flex-wrap items-center gap-y-2 gap-x-4 text-xs text-slate-400">
-                    <div className="flex items-center gap-2 bg-slate-900/50 py-1 px-2 rounded-lg border border-slate-800/50">
-                      <div className="w-5 h-5 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center font-bold text-[10px] shadow-sm">
+                    <div className="flex items-center gap-2 bg-slate-900/80 py-1.5 px-3 rounded-xl border border-slate-800 text-slate-300">
+                      <div className="w-5 h-5 rounded-full bg-gradient-to-br from-cyan-600 to-blue-600 text-white flex items-center justify-center font-black text-[10px] shadow-sm">
                         {c.nome_dono_seguro.charAt(0).toUpperCase()}
                       </div>
-                      <span className="truncate font-medium text-slate-300">{c.nome_dono_seguro}</span>
+                      <span className="truncate font-bold max-w-[150px]">{c.nome_dono_seguro}</span>
                     </div>
                     
                     <div className="flex items-center gap-1.5 text-slate-500">
-                      <span>🏢</span>
-                      <span className="uppercase tracking-widest font-bold text-[10px]">{c.origem}</span>
+                      <span className="text-base">🏢</span>
+                      <span className="uppercase tracking-widest font-black text-[10px]">{c.origem}</span>
                     </div>
 
                     <div className="flex items-center gap-1.5 text-slate-500">
-                      <span>🕒</span>
-                      <span className="font-medium">{formatarData(c.created_at)}</span>
+                      <span className="text-base">🕒</span>
+                      <span className="font-bold">{formatarData(c.created_at)}</span>
                     </div>
                   </div>
                 </div>
 
-                {/* 3. BLOCO SLA E RESPONSÁVEL */}
-                <div className="flex flex-row lg:flex-col justify-between lg:justify-center items-center lg:items-end w-full lg:w-40 shrink-0 bg-slate-900/30 lg:bg-transparent p-3 lg:p-0 rounded-xl lg:rounded-none">
-                  <div className={`text-sm font-black flex items-center gap-2 ${isAtrasado ? 'text-red-500 animate-pulse bg-red-500/10 px-3 py-1 rounded-lg border border-red-500/20' : 'text-slate-300'}`}>
-                    <span>⏱️</span> {sla}
+                <div className="flex flex-row lg:flex-col justify-between lg:justify-center items-center lg:items-end w-full lg:w-48 shrink-0 bg-slate-900/30 lg:bg-transparent p-4 lg:p-0 rounded-2xl lg:rounded-none">
+                  <div className={`text-sm font-black flex items-center gap-2 ${isAtrasado ? 'text-red-500 animate-pulse bg-red-500/10 px-3 py-1 rounded-lg border border-red-500/20' : 'text-green-400'}`}>
+                    <span>⏱️</span> SLA: {sla}
                   </div>
-                  <div className="text-xs text-slate-500 mt-2 font-medium flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-slate-600"></span>
-                    <span className="truncate max-w-[120px]" title={c.nome_analista_seguro}>Resp: {c.nome_analista_seguro}</span>
+                  <div className="text-xs text-slate-400 mt-2 font-medium flex items-center gap-1.5">
+                    <span className="text-base">👨‍💻</span>
+                    <span className="truncate max-w-[120px] font-bold" title={c.nome_analista_seguro}>{c.nome_analista_seguro}</span>
                   </div>
                 </div>
 
-                {/* 4. BLOCO AÇÕES (Botões Elevados) */}
-                <div className="flex flex-wrap lg:flex-col justify-center gap-2 w-full lg:w-32 shrink-0 border-t lg:border-t-0 border-slate-800 pt-4 lg:pt-0 lg:pl-4">
+                <div className="flex flex-wrap lg:flex-col justify-center gap-2 w-full lg:w-36 shrink-0 border-t lg:border-t-0 border-slate-800 pt-5 lg:pt-0 lg:pl-6">
                   {c.status === "aberto" && (
-                    <button onClick={() => atualizarStatus(c.id, "assumido")} className="flex-1 lg:flex-none w-full px-4 py-2.5 rounded-xl bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-600/30 text-xs font-bold transition-all">
+                    <button onClick={() => atualizarStatus(c.id, "assumido")} className="flex-1 lg:flex-none w-full px-4 py-3 rounded-xl bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-600/30 text-[11px] font-black uppercase tracking-widest transition-all">
                       Assumir
                     </button>
                   )}
                   {(c.status === "aberto" || c.status === "assumido") && (
-                    <button onClick={() => atenderChamado(c.id)} className="flex-1 lg:flex-none w-full px-4 py-2.5 rounded-xl bg-gradient-to-r from-yellow-600 to-yellow-500 hover:from-yellow-500 hover:to-yellow-400 text-yellow-950 shadow-[0_0_15px_rgba(234,179,8,0.2)] text-xs font-black uppercase tracking-wider transition-all hover:scale-[1.02]">
+                    <button onClick={() => atenderChamado(c.id)} className="flex-1 lg:flex-none w-full px-4 py-3 rounded-xl bg-gradient-to-r from-yellow-500 to-amber-500 hover:from-yellow-400 hover:to-amber-400 text-yellow-950 shadow-[0_0_20px_rgba(245,158,11,0.2)] text-[11px] font-black uppercase tracking-widest transition-all hover:scale-105">
                       Atender
                     </button>
                   )}
                   {c.status !== "resolvido" && (
-                    <button onClick={() => atualizarStatus(c.id, "resolvido")} className="flex-1 lg:flex-none w-full px-4 py-2.5 rounded-xl bg-[#020617] hover:bg-emerald-500/10 text-emerald-500 hover:text-emerald-400 border border-emerald-500/30 text-xs font-bold transition-all">
+                    <button onClick={() => atualizarStatus(c.id, "resolvido")} className="flex-1 lg:flex-none w-full px-4 py-3 rounded-xl bg-slate-900 hover:bg-emerald-500/10 text-emerald-500 hover:text-emerald-400 border border-emerald-500/30 text-[11px] font-black uppercase tracking-widest transition-all">
                       Resolver
                     </button>
                   )}
                   {c.status === "resolvido" && (
-                    <button onClick={() => atualizarStatus(c.id, "aberto")} className="flex-1 lg:flex-none w-full px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-bold transition-all">
+                    <button onClick={() => atualizarStatus(c.id, "aberto")} className="flex-1 lg:flex-none w-full px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[11px] font-black uppercase tracking-widest transition-all">
                       Reabrir
                     </button>
                   )}
@@ -385,6 +416,60 @@ export default function GestaoChamadosCommandCenter() {
           })
         )}
       </div>
+
+      {/* 🚀 MODAL BONITÃO DE RESOLUÇÃO */}
+      {modalResolucao.id && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#020617]/90 backdrop-blur-md p-4 animate-fade-in">
+          <div className="bg-[#0f172a] border border-slate-700 rounded-[2rem] shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col">
+            
+            <div className="p-8 border-b border-slate-800 bg-emerald-500/10 relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-1 bg-emerald-500"></div>
+              <h3 className="text-3xl font-black text-white flex items-center gap-3">
+                <span className="text-4xl">✅</span> Concluir Chamado
+              </h3>
+              <p className="text-emerald-400/80 mt-2 text-sm font-medium">Forneça o Parecer Técnico Final (Retorno Devolutivo) para encerrar oficialmente este protocolo. O usuário será notificado.</p>
+            </div>
+            
+            <div className="p-8 bg-[#020617]">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 block">Descrição da Solução Aplicada *</label>
+              <textarea
+                value={parecerTecnico}
+                onChange={(e) => setParecerTecnico(e.target.value)}
+                placeholder="Ex: Foi realizada a substituição do cabo de rede defeituoso e a porta do switch reconfigurada. Equipamento validado e operando normalmente..."
+                className="w-full bg-slate-900/50 border border-slate-700 rounded-2xl p-5 text-white text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/50 resize-none h-40 custom-scrollbar leading-relaxed"
+              ></textarea>
+            </div>
+            
+            <div className="p-6 bg-slate-900 border-t border-slate-800 flex justify-end gap-3">
+              <button 
+                disabled={salvandoResolucao} 
+                onClick={() => setModalResolucao({id: null})} 
+                className="px-6 py-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs uppercase tracking-widest transition-all"
+              >
+                Cancelar
+              </button>
+              <button 
+                disabled={salvandoResolucao} 
+                onClick={confirmarResolucao} 
+                className="px-8 py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase tracking-widest text-xs transition-all shadow-lg shadow-emerald-900/20 flex items-center gap-2"
+              >
+                {salvandoResolucao ? "Registrando..." : "Finalizar Chamado"}
+              </button>
+            </div>
+            
+          </div>
+        </div>
+      )}
+
+      <style jsx global>{`
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.3); border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+        .animate-fade-in { animation: fadeIn 0.2s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+      `}</style>
+
     </div>
   )
 }

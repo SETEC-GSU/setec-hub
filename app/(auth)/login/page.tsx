@@ -11,24 +11,62 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  function getLoginErrorMessage(err: unknown) {
+    const message =
+      err instanceof Error
+        ? err.message.toLowerCase()
+        : String(err || '').toLowerCase()
+
+    if (
+      message.includes('failed to fetch') ||
+      message.includes('fetch') ||
+      message.includes('network') ||
+      message.includes('certificate') ||
+      message.includes('cert') ||
+      message.includes('err_cert_authority_invalid') ||
+      message.includes('err_connection') ||
+      message.includes('err_name') ||
+      message.includes('timeout') ||
+      message.includes('cors')
+    ) {
+      return 'Falha de conexão segura com o serviço de autenticação. A rede atual pode estar bloqueando ou interceptando o acesso ao Supabase.'
+    }
+
+    return 'Email ou senha inválidos'
+  }
+
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
+
     setError('')
     setLoading(true)
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
 
-    setLoading(false)
+      if (error) {
+        console.error('Erro retornado pelo Supabase Auth:', error)
 
-    if (error) {
-      setError('Email ou senha inválidos')
-      return
+        setError(getLoginErrorMessage(error))
+        return
+      }
+
+      if (!data.session || !data.user) {
+        setError('Não foi possível iniciar a sessão. Tente novamente.')
+        return
+      }
+
+      window.location.href = '/'
+    } catch (err) {
+      console.error('Erro inesperado ao realizar login:', err)
+
+      setError(getLoginErrorMessage(err))
+    } finally {
+      setLoading(false)
     }
-
-    window.location.href = '/'
   }
 
   return (
@@ -116,6 +154,7 @@ export default function LoginPage() {
             text-sm
             rounded-lg
             py-2
+            px-3
             text-center
           ">
             {error}

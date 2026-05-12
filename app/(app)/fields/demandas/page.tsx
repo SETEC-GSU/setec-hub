@@ -27,6 +27,9 @@ export default function GestaoDemandasFields() {
   const supabase = createClient()
   const [loading, setLoading] = useState(true)
   
+  // Estado para armazenar quem está logado (agora vai guardar o NOME)
+  const [usuarioLogado, setUsuarioLogado] = useState<string>("Desconhecido")
+  
   // Dados do Banco
   const [escolas, setEscolas] = useState<any[]>([])
   const [demandas, setDemandas] = useState<any[]>([])
@@ -50,8 +53,30 @@ export default function GestaoDemandasFields() {
   // ESTADO DO MODAL (Splash Page)
   const [demandaModal, setDemandaModal] = useState<any | null>(null)
 
-  // Carrega os dados
+  // Carrega os dados e o usuário logado
   async function carregarDados() {
+    // 1. Busca o usuário logado no Auth
+    const { data: { user } } = await supabase.auth.getUser()
+    
+    if (user && user.email) {
+      let nomeFinal = user.email; // Fallback inicial é o email
+
+      // 🚀 2. Busca o NOME real na tabela 'usuarios' usando o email como ponte
+      const { data: userData } = await supabase
+        .from("usuarios")
+        .select("nome")
+        .eq("email", user.email)
+        .limit(1)
+
+      // Se achou o usuário na tabela e ele tem nome, substitui o email pelo nome!
+      if (userData && userData.length > 0 && userData[0].nome) {
+        nomeFinal = userData[0].nome;
+      }
+
+      setUsuarioLogado(nomeFinal)
+    }
+
+    // 3. Carrega o resto dos dados normalmente
     const { data: dataEscolas } = await supabase.from("escolas").select("id, nome_escola, cie, tecnico_atribuido").order("nome_escola")
     const { data: dataDemandas } = await supabase.from("demandas_fields").select("*").order("created_at", { ascending: false })
     
@@ -169,6 +194,7 @@ export default function GestaoDemandasFields() {
       if (!error) { handleLimparFormulario(); carregarDados(); } else alert(`Erro: ${error.message}`);
     } else {
       payload.status = "Pendente Atendimento";
+      payload.criado_por = usuarioLogado; // 🚀 INJETA O NOME AQUI NA CRIAÇÃO
       const { error } = await supabase.from("demandas_fields").insert([payload])
       if (!error) { handleLimparFormulario(); carregarDados(); } else alert(`Erro: ${error.message}`);
     }
@@ -177,7 +203,7 @@ export default function GestaoDemandasFields() {
 
   function handleEditarClick(demanda: any) {
     setEditandoId(demanda.id); 
-    setEscolaSelecionada(demanda.escola_nome); // O Datalist usa o nome agora
+    setEscolaSelecionada(demanda.escola_nome);
     setTipo(demanda.tipo);
     setUrgencia(demanda.urgencia); 
     setDataPrevista(demanda.data_prevista || ""); 
@@ -194,7 +220,7 @@ export default function GestaoDemandasFields() {
     carregarDados()
   }
 
-  // NOVA LÓGICA: REABRIR DEMANDA
+  // LÓGICA: REABRIR DEMANDA
   async function handleReabrir(id: string) {
     if(!window.confirm("Deseja reabrir esta demanda para atendimento?")) return;
     await supabase.from("demandas_fields").update({ status: "Pendente Atendimento", concluido_em: null }).eq("id", id)
@@ -208,7 +234,7 @@ export default function GestaoDemandasFields() {
   return (
     <div className="space-y-8 pb-12 max-w-[1700px] mx-auto min-h-screen px-4 xl:px-0">
       
-      {/* HEADER & KPIs MANTIDOS */}
+      {/* HEADER & KPIs */}
       <div className="flex flex-col gap-6 border-b border-slate-800/50 pb-8 pt-6">
         <div>
           <h1 className="text-4xl font-black text-white tracking-tight flex items-center gap-3">
@@ -316,7 +342,6 @@ export default function GestaoDemandasFields() {
         <div className="xl:col-span-8 h-[800px] flex flex-col">
           <Glass title="📋 Fila de Atendimentos" className="flex-1">
             
-            {/* 🚀 Filtros da Fila Ajustados (flex-1 para esticar sem deixar buracos) */}
             <div className="flex flex-wrap gap-3 mb-6 bg-slate-900/50 p-4 rounded-2xl border border-slate-800">
                <input type="text" placeholder="Buscar texto..." value={busca} onChange={e => setBusca(e.target.value)} className="flex-[100%] md:flex-[2] min-w-[200px] bg-[#020617] border border-slate-700 text-white rounded-xl px-4 py-3 text-sm outline-none focus:border-cyan-500" />
                <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} className="flex-1 min-w-[150px] bg-[#020617] border border-slate-700 text-slate-300 rounded-xl px-4 py-3 text-sm outline-none focus:border-cyan-500">
@@ -341,7 +366,6 @@ export default function GestaoDemandasFields() {
                </select>
             </div>
 
-            {/* A LISTA COM GRID CSS ESTRITO E ORDENADA */}
             <div className="space-y-3 overflow-y-auto pr-3 custom-scrollbar flex-1 pb-4">
               {demandasFiltradas.length === 0 ? (
                 <div className="text-center py-20 text-slate-500"><span className="text-5xl mb-4 block opacity-30">📭</span><p className="font-bold uppercase tracking-widest text-sm">Nenhuma demanda encontrada</p></div>
@@ -377,6 +401,11 @@ export default function GestaoDemandasFields() {
                           <span className="text-[10px] shrink-0 font-bold text-slate-400 bg-[#020617] border border-slate-800 px-2 py-1 rounded-md">{demanda.tipo}</span>
                         </div>
                         <p className={`text-xs line-clamp-1 ${isConcluida ? 'text-slate-600' : 'text-slate-400'}`} title={demanda.descricao}>{demanda.descricao}</p>
+                        
+                        {/* 🚀 Aparece o NOME de quem cadastrou na lista */}
+                        <p className="text-[10px] text-slate-500 mt-1.5 font-bold tracking-wide">
+                          👤 Registrado por: <span className="text-slate-400">{demanda.criado_por || "Sistema/Desconhecido"}</span>
+                        </p>
                       </div>
 
                       {/* Coluna 3: Técnico e Data */}
@@ -399,7 +428,6 @@ export default function GestaoDemandasFields() {
                             <button onClick={() => handleConcluir(demanda.id)} disabled={isSendoEditada} className="w-full bg-emerald-500/10 hover:bg-emerald-500 disabled:opacity-30 text-emerald-500 hover:text-white border border-emerald-500/30 py-2 rounded-lg text-[11px] font-black uppercase transition-all">Concluir</button>
                           </>
                         ) : (
-                          // BOTÃO DE REABRIR DEMANDA
                           <div className="flex flex-col h-full justify-center gap-1">
                             <button onClick={() => handleReabrir(demanda.id)} className="w-full bg-slate-800/80 hover:bg-yellow-500/20 text-slate-400 hover:text-yellow-400 border border-slate-700 hover:border-yellow-500/30 py-2 rounded-lg text-[11px] font-black uppercase transition-all group">
                               <span className="group-hover:hidden">Concluído</span>
@@ -506,10 +534,10 @@ export default function GestaoDemandasFields() {
 
             <div className="p-8 overflow-y-auto custom-scrollbar">
                
-               <div className="grid grid-cols-2 gap-6 mb-8">
+               <div className="grid grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
                  <div className="bg-[#020617] border border-slate-800 p-5 rounded-2xl">
                     <p className="text-xs text-slate-500 uppercase font-black tracking-widest mb-1">Técnico Responsável</p>
-                    <p className="text-xl font-bold text-blue-400 flex items-center gap-2">👨‍🔧 {demandaModal.tecnicoAtual}</p>
+                    <p className="text-xl font-bold text-blue-400 flex items-center gap-2">👨‍🔧 <span className="truncate" title={demandaModal.tecnicoAtual}>{demandaModal.tecnicoAtual}</span></p>
                  </div>
                  <div className="bg-[#020617] border border-slate-800 p-5 rounded-2xl">
                     <p className="text-xs text-slate-500 uppercase font-black tracking-widest mb-1">Nível de Urgência</p>
@@ -518,10 +546,14 @@ export default function GestaoDemandasFields() {
                     </p>
                  </div>
                  <div className="bg-[#020617] border border-slate-800 p-5 rounded-2xl">
+                    <p className="text-xs text-slate-500 uppercase font-black tracking-widest mb-1">Registrado por</p>
+                    <p className="text-lg font-bold text-slate-300 flex items-center gap-2 truncate" title={demandaModal.criado_por || 'N/A'}>👤 {demandaModal.criado_por || 'N/A'}</p>
+                 </div>
+                 <div className="bg-[#020617] border border-slate-800 p-5 rounded-2xl">
                     <p className="text-xs text-slate-500 uppercase font-black tracking-widest mb-1">Criada em</p>
                     <p className="text-xl font-bold text-white">{format(new Date(demandaModal.created_at), 'dd/MM/yyyy HH:mm')}</p>
                  </div>
-                 <div className="bg-[#020617] border border-slate-800 p-5 rounded-2xl">
+                 <div className="bg-[#020617] border border-slate-800 p-5 rounded-2xl lg:col-span-2">
                     <p className="text-xs text-slate-500 uppercase font-black tracking-widest mb-1">Previsão / Conclusão</p>
                     <p className="text-xl font-bold text-emerald-400">
                       {demandaModal.concluido_em ? `Concluído: ${format(new Date(demandaModal.concluido_em), 'dd/MM/yyyy')}` : demandaModal.data_prevista ? `Previsto: ${format(new Date(demandaModal.data_prevista + 'T00:00:00'), 'dd/MM/yyyy')}` : 'Sem previsão definida'}
