@@ -31,5 +31,6 @@ export const routePermissions: Record<string, Permission> = {
   "/fields/demandas":"fields.demandas",
   "/fields/setorizacao":"fields.setorizacao",
   "/fields/painel-setorizacao":"fields.painel",
-  "/fields/mapa-field":"fields.mapa"
+  "/fields/mapa-field":"fields.mapa",
+  "/fields/relatorio-tecnico":"fields.relatorio"
 }

@@ -34,6 +34,7 @@ export type Permission =
   | "fields.setorizacao"
   | "fields.mapa"
   | "fields.painel"
+  | "fields.relatorio"
 
 
 
@@ -74,7 +75,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "fields.demandas",
     "fields.setorizacao",
     "fields.mapa",
-    "fields.painel"
+    "fields.painel",
+    "fields.relatorio"
 
   ],
 
@@ -105,7 +107,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "segundo.link",
     "fields.demandas",
     "fields.mapa",
-    "fields.painel"
+    "fields.painel",
+    "fields.relatorio"
   ],
 
   chefia_ure: [
@@ -194,7 +197,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "gestao.equipamentos",
     "fields.demandas",
     "fields.mapa",
-    "fields.painel"
+    "fields.painel",
+    "fields.relatorio"
 
   ],
 }

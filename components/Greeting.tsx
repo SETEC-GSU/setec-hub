@@ -1,32 +1,30 @@
-import { createServerSupabase } from "@/lib/supabase-server"
+import { getUser } from "@/lib/getUser"
 
-export default async function Greeting() {
-  const supabase = await createServerSupabase()
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  const { data: profile } = await supabase
-    .from("usuarios")
-    .select("nome")
-    .eq("id", user?.id)
-    .single()
-
+function getGreetingMessage() {
   const now = new Date(
     new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" })
   )
 
   const hour = now.getHours()
 
-  let message = "Boa noite"
+  if (hour >= 5 && hour < 12) return "Bom dia"
+  if (hour >= 12 && hour < 18) return "Boa tarde"
 
-  if (hour >= 5 && hour < 12) message = "Bom dia"
-  if (hour >= 12 && hour < 18) message = "Boa tarde"
+  return "Boa noite"
+}
+
+export default async function Greeting() {
+  const user = await getUser()
+
+  const message = getGreetingMessage()
+  const nome = user?.nome || user?.setor || "SETEC - URE Guarulhos Sul"
 
   return (
-    <div className="text-lg text-slate-400 mt-1">
-      {message}, <span className="text-white font-semibold">{profile?.nome}</span>
+    <div className="mt-1 truncate text-sm text-slate-400 sm:text-base md:text-lg">
+      {message},{" "}
+      <span className="font-semibold text-white">
+        {nome}
+      </span>
     </div>
   )
 }

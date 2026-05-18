@@ -6,26 +6,55 @@ import { routePermissions } from "@/lib/routePermissions"
 import { canAccess } from "@/lib/canAccess"
 
 type UserProfile = {
-  role: string
+  role: string | null
 }
 
 type CanAccessRole = Parameters<typeof canAccess>[0]
 type CanAccessPermission = Parameters<typeof canAccess>[1]
 
+const IS_DEV = process.env.NODE_ENV !== "production"
+
+const PUBLIC_PREFIXES = [
+  "/_next",
+  "/favicon.ico",
+  "/icon.ico",
+  "/icon.png",
+  "/manifest.json",
+  "/robots.txt",
+  "/sitemap.xml",
+  "/login",
+  "/auth",
+  "/api/auth",
+  "/recuperar-senha",
+  "/resetar-senha",
+  "/public",
+  "/images",
+  "/assets",
+]
+
+const PUBLIC_FILE_REGEX =
+  /\.(?:png|jpg|jpeg|gif|webp|svg|ico|css|js|mjs|map|txt|xml|json|woff|woff2|ttf|otf)$/i
+
 function isPublicPath(pathname: string) {
   return (
-    pathname.startsWith("/_next") ||
-    pathname.startsWith("/favicon.ico") ||
-    pathname.startsWith("/login") ||
-    pathname.startsWith("/auth") ||
-    pathname.startsWith("/api/auth") ||
-    pathname.startsWith("/recuperar-senha") ||
-    pathname.startsWith("/resetar-senha") ||
-    pathname.startsWith("/public") ||
-    pathname.startsWith("/images") ||
-    pathname.startsWith("/assets") ||
-    pathname.includes(".")
+    PUBLIC_PREFIXES.some((path) => pathname.startsWith(path)) ||
+    PUBLIC_FILE_REGEX.test(pathname)
   )
+}
+
+function isLocalhost(req: NextRequest) {
+  const host = req.headers.get("host") || ""
+
+  return (
+    host.startsWith("localhost") ||
+    host.startsWith("127.0.0.1") ||
+    host.startsWith("0.0.0.0")
+  )
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message
+  return String(error || "")
 }
 
 function redirectWithCookies(
@@ -38,36 +67,68 @@ function redirectWithCookies(
 
   if (keepRedirectTo) {
     const currentPath = req.nextUrl.pathname + req.nextUrl.search
-    redirectUrl.searchParams.set("redirectTo", currentPath)
+
+    if (!currentPath.startsWith("/login")) {
+      redirectUrl.searchParams.set("redirectTo", currentPath)
+    }
   }
 
   const redirectResponse = NextResponse.redirect(redirectUrl)
 
-  const cookies = baseResponse.cookies.getAll()
-
-  for (const cookie of cookies) {
-    redirectResponse.cookies.set(cookie.name, cookie.value, cookie)
+  for (const cookie of baseResponse.cookies.getAll()) {
+    redirectResponse.cookies.set(cookie.name, cookie.value, {
+      path: cookie.path,
+      domain: cookie.domain,
+      expires: cookie.expires,
+      httpOnly: cookie.httpOnly,
+      maxAge: cookie.maxAge,
+      sameSite: cookie.sameSite,
+      secure: cookie.secure,
+    })
   }
 
   return redirectResponse
 }
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) {
-    return error.message
-  }
+function routeMatches(pathname: string, route: string) {
+  if (route === "/") return pathname === "/"
+  return pathname === route || pathname.startsWith(`${route}/`)
+}
 
-  return String(error || "")
+function getRoutePermission(pathname: string) {
+  const sortedRoutes = Object.keys(routePermissions).sort(
+    (a, b) => b.length - a.length
+  )
+
+  const route = sortedRoutes.find((r) => routeMatches(pathname, r))
+
+  if (!route) return null
+
+  return routePermissions[route]
 }
 
 export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname
 
+  if (req.method === "OPTIONS") {
+    return NextResponse.next()
+  }
+
   if (isPublicPath(pathname)) {
     return NextResponse.next()
   }
 
-  const res = NextResponse.next({
+  /*
+    MODO DE RECUPERAÇÃO LOCAL:
+    No localhost, não consulta Supabase no middleware.
+    Isso evita travar o sistema quando o Auth dá timeout/fetch failed.
+    Em produção, a proteção continua ativa normalmente.
+  */
+  if (IS_DEV && isLocalhost(req)) {
+    return NextResponse.next()
+  }
+
+  let supabaseResponse = NextResponse.next({
     request: {
       headers: req.headers,
     },
@@ -77,28 +138,28 @@ export async function middleware(req: NextRequest) {
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
   if (!supabaseUrl || !supabaseAnonKey) {
-    console.error("Variáveis de ambiente do Supabase não configuradas.")
-
-    return redirectWithCookies(
-      req,
-      res,
-      "/login?erro=env",
-      true
-    )
+    console.error("[Middleware] Variáveis de ambiente do Supabase ausentes.")
+    return redirectWithCookies(req, supabaseResponse, "/login?erro=env", true)
   }
 
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
     cookies: {
-      get(name: string) {
-        return req.cookies.get(name)?.value
+      getAll() {
+        return req.cookies.getAll()
       },
-      set(name: string, value: string, options: any) {
-        res.cookies.set(name, value, options)
-      },
-      remove(name: string, options: any) {
-        res.cookies.set(name, "", {
-          ...options,
-          maxAge: 0,
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value }) => {
+          req.cookies.set(name, value)
+        })
+
+        supabaseResponse = NextResponse.next({
+          request: {
+            headers: req.headers,
+          },
+        })
+
+        cookiesToSet.forEach(({ name, value, options }) => {
+          supabaseResponse.cookies.set(name, value, options)
         })
       },
     },
@@ -113,19 +174,16 @@ export async function middleware(req: NextRequest) {
     } = await supabase.auth.getUser()
 
     if (authError) {
-      console.error("Erro ao validar usuário no middleware:", authError.message)
+      console.error("[Middleware] Erro ao validar usuário:", authError.message)
     }
 
     user = authUser
   } catch (error) {
-    console.error(
-      "Falha ao consultar auth no middleware:",
-      getErrorMessage(error)
-    )
+    console.error("[Middleware] Falha ao consultar Auth:", getErrorMessage(error))
 
     return redirectWithCookies(
       req,
-      res,
+      supabaseResponse,
       "/login?erro=auth-network",
       true
     )
@@ -134,7 +192,7 @@ export async function middleware(req: NextRequest) {
   if (!user) {
     return redirectWithCookies(
       req,
-      res,
+      supabaseResponse,
       "/login?erro=session",
       true
     )
@@ -147,42 +205,34 @@ export async function middleware(req: NextRequest) {
       .from("usuarios")
       .select("role")
       .eq("id", user.id)
-      .single()
+      .maybeSingle()
 
     if (error) {
-      console.error("Erro ao buscar perfil do usuário:", error.message)
+      console.error("[Middleware] Erro ao buscar perfil:", error.message)
     }
 
     profile = data
   } catch (error) {
-    console.error(
-      "Falha ao consultar perfil no middleware:",
-      getErrorMessage(error)
-    )
+    console.error("[Middleware] Falha ao consultar perfil:", getErrorMessage(error))
 
     return redirectWithCookies(
       req,
-      res,
+      supabaseResponse,
       "/login?erro=profile-network",
       true
     )
   }
 
-  if (!profile) {
+  if (!profile?.role) {
     return redirectWithCookies(
       req,
-      res,
+      supabaseResponse,
       "/login?erro=profile",
       true
     )
   }
 
-  const sortedRoutes = Object.keys(routePermissions).sort(
-    (a, b) => b.length - a.length
-  )
-
-  const route = sortedRoutes.find((r) => pathname.startsWith(r))
-  const permission = route ? routePermissions[route] : null
+  const permission = getRoutePermission(pathname)
 
   if (
     permission &&
@@ -191,12 +241,14 @@ export async function middleware(req: NextRequest) {
       permission as CanAccessPermission
     )
   ) {
-    return redirectWithCookies(req, res, "/")
+    return redirectWithCookies(req, supabaseResponse, "/")
   }
 
-  return res
+  return supabaseResponse
 }
 
 export const config = {
-  matcher: ["/:path*"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|icon.png|manifest.json|robots.txt|sitemap.xml).*)",
+  ],
 }

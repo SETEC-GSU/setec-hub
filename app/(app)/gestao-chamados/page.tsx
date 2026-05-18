@@ -4,10 +4,10 @@ import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase"
 
 const slaMap: Record<string, number> = {
-  critica: 2,
-  alta: 4,
-  media: 24,
-  baixa: 48,
+  critica: 8,
+  alta: 24,
+  media: 48,
+  baixa: 72,
 }
 
 export default function GestaoChamadosCommandCenter() {
