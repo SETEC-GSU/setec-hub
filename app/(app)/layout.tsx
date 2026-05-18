@@ -7,6 +7,9 @@ import Greeting from "@/components/Greeting"
 import NotificacaoChamados from "@/components/NotificacaoChamados"
 import MensagensChamados from "@/components/MensagensChamados"
 
+export const dynamic = "force-dynamic"
+export const revalidate = 0
+
 function HeaderSkeleton() {
   return (
     <div className="h-5 w-56 animate-pulse rounded-full bg-slate-800" />
@@ -24,6 +27,7 @@ function SidebarSkeleton() {
     <aside className="flex h-full w-[270px] flex-col border-r border-slate-800 bg-[#020617]">
       <div className="flex h-24 shrink-0 items-center gap-3 border-b border-slate-800 px-4">
         <div className="h-12 w-12 animate-pulse rounded-2xl bg-slate-800" />
+
         <div className="space-y-2">
           <div className="h-4 w-28 animate-pulse rounded-full bg-slate-800" />
           <div className="h-3 w-20 animate-pulse rounded-full bg-slate-800" />
@@ -49,30 +53,25 @@ export default function ProtectedLayout({
 }) {
   return (
     <div className="relative flex h-dvh overflow-hidden bg-[#0B1120] text-white">
-      {/* Controle mobile via checkbox, sem estado JS */}
       <input type="checkbox" id="mobile-menu" className="peer hidden" />
 
-      {/* Overlay mobile */}
       <label
         htmlFor="mobile-menu"
         className="fixed inset-0 z-40 hidden cursor-pointer bg-black/70 backdrop-blur-sm peer-checked:block md:peer-checked:hidden"
         aria-label="Fechar menu lateral"
       />
 
-      {/* Sidebar real do sistema */}
       <div className="fixed inset-y-0 left-0 z-50 -translate-x-full transform transition-transform duration-300 ease-in-out peer-checked:translate-x-0 md:relative md:translate-x-0">
         <Suspense fallback={<SidebarSkeleton />}>
           <Sidebar />
         </Suspense>
       </div>
 
-      {/* Área principal */}
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="relative z-30 h-20 shrink-0 border-b border-slate-800/80 bg-[#020617]/95 px-4 shadow-[0_12px_40px_rgba(0,0,0,0.22)] backdrop-blur-xl md:h-24 md:px-10">
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.12),transparent_32%),radial-gradient(circle_at_top_right,rgba(6,182,212,0.07),transparent_28%)]" />
 
           <div className="relative z-10 flex h-full items-center justify-between gap-4">
-            {/* Esquerda */}
             <div className="flex min-w-0 items-center gap-3 md:gap-5">
               <label
                 htmlFor="mobile-menu"
@@ -102,7 +101,6 @@ export default function ProtectedLayout({
               </div>
             </div>
 
-            {/* Direita */}
             <div className="flex shrink-0 items-center gap-1.5 sm:gap-2 md:gap-3">
               <div className="flex items-center gap-1.5 rounded-2xl border border-slate-800 bg-slate-950/70 px-2 py-1.5 shadow-inner sm:gap-2 md:px-3">
                 <NotificacaoChamados />

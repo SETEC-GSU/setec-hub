@@ -28,17 +28,18 @@ function cx(...classes: Array<string | false | null | undefined>) {
 
 function normalizePath(path: string) {
   if (!path) return "/"
+
   if (path === "/") return "/"
+
   return path.endsWith("/") ? path.slice(0, -1) : path
 }
 
 function splitSectionTitle(title: string) {
-  const [emoji, ...rest] = title.split(" ")
+  const parts = title.trim().split(" ")
+  const emoji = parts[0] || "•"
+  const text = parts.slice(1).join(" ") || title
 
-  return {
-    emoji: emoji || "•",
-    text: rest.join(" ") || title,
-  }
+  return { emoji, text }
 }
 
 function isHrefMatch(pathname: string, href: string) {
@@ -53,9 +54,32 @@ function isHrefMatch(pathname: string, href: string) {
 function getActiveHref(pathname: string, hrefs: string[]) {
   const matches = hrefs
     .filter((href) => isHrefMatch(pathname, href))
-    .sort((a, b) => b.length - a.length)
+    .sort((a, b) => normalizePath(b).length - normalizePath(a).length)
 
   return matches[0] || ""
+}
+
+function closeMobileMenu() {
+  const checkbox = document.getElementById("mobile-menu") as HTMLInputElement | null
+
+  if (checkbox) {
+    checkbox.checked = false
+  }
+}
+
+function getRoleLabel(role?: string) {
+  const labels: Record<string, string> = {
+    admin: "Administrador",
+    analista: "Analista",
+    dirigente: "Dirigente",
+    chefia_ure: "Chefia URE",
+    gestao_escolas: "Gestão Escolas",
+    seintec: "SEINTEC",
+  }
+
+  if (!role) return ""
+
+  return labels[role] || role
 }
 
 export default function SidebarClient({
@@ -65,18 +89,21 @@ export default function SidebarClient({
 }: SidebarClientProps) {
   const pathname = usePathname() || "/"
 
+  const safeSections = Array.isArray(sections) ? sections : []
+
   const [collapsed, setCollapsed] = useState(false)
+  const [mounted, setMounted] = useState(false)
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({})
 
   const allHrefs = useMemo(() => {
-    const hrefs = sections.flatMap((section) =>
+    const hrefs = safeSections.flatMap((section) =>
       section.items.map((item) => item.href)
     )
 
     if (showHome) hrefs.push("/")
 
     return hrefs
-  }, [sections, showHome])
+  }, [safeSections, showHome])
 
   const activeHref = useMemo(
     () => getActiveHref(pathname, allHrefs),
@@ -84,20 +111,34 @@ export default function SidebarClient({
   )
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("setec-sidebar-collapsed")
-    setCollapsed(saved === "true")
+    setMounted(true)
+
+    try {
+      const saved = window.localStorage.getItem("setec-sidebar-collapsed")
+      setCollapsed(saved === "true")
+    } catch {
+      setCollapsed(false)
+    }
   }, [])
 
   useEffect(() => {
-    window.localStorage.setItem("setec-sidebar-collapsed", String(collapsed))
-  }, [collapsed])
+    if (!mounted) return
+
+    try {
+      window.localStorage.setItem("setec-sidebar-collapsed", String(collapsed))
+    } catch {
+      // Mantém silencioso para não quebrar a sidebar se o navegador bloquear storage.
+    }
+  }, [collapsed, mounted])
 
   useEffect(() => {
     setOpenSections((current) => {
       const next = { ...current }
 
-      sections.forEach((section) => {
-        const hasActiveItem = section.items.some((item) => item.href === activeHref)
+      safeSections.forEach((section) => {
+        const hasActiveItem = section.items.some((item) =>
+          isHrefMatch(pathname, item.href)
+        )
 
         if (hasActiveItem) {
           next[section.title] = true
@@ -106,7 +147,7 @@ export default function SidebarClient({
 
       return next
     })
-  }, [activeHref, sections])
+  }, [pathname, safeSections])
 
   function toggleSection(title: string) {
     setOpenSections((current) => ({
@@ -115,16 +156,20 @@ export default function SidebarClient({
     }))
   }
 
+  function handleToggleCollapsed() {
+    setCollapsed((value) => !value)
+  }
+
   return (
     <aside
       className={cx(
-        "relative flex h-full shrink-0 flex-col justify-between overflow-hidden border-r border-slate-800 bg-[#020617] transition-[width] duration-300",
+        "relative flex h-full shrink-0 flex-col justify-between border-r border-slate-800 bg-[#020617] transition-[width] duration-300",
         collapsed ? "w-[84px]" : "w-72"
       )}
     >
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.10),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(6,182,212,0.06),transparent_26%)]" />
 
-      <div className="relative z-10 flex min-h-0 flex-1 flex-col">
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden">
         <div
           className={cx(
             "sticky top-0 z-20 flex h-24 shrink-0 items-center border-b border-slate-800 bg-[#020617]/95 backdrop-blur-md transition-all",
@@ -133,6 +178,7 @@ export default function SidebarClient({
         >
           <Link
             href="/"
+            onClick={closeMobileMenu}
             className={cx(
               "group/logo flex min-w-0 items-center",
               collapsed ? "justify-center" : "gap-3"
@@ -163,11 +209,11 @@ export default function SidebarClient({
 
           <button
             type="button"
-            onClick={() => setCollapsed((value) => !value)}
+            onClick={handleToggleCollapsed}
             aria-label={collapsed ? "Expandir menu" : "Recolher menu"}
             title={collapsed ? "Expandir menu" : "Recolher menu"}
             className={cx(
-              "absolute top-8 flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-400 shadow-lg transition-all hover:border-blue-500/40 hover:bg-slate-800 hover:text-white",
+              "absolute top-8 hidden h-9 w-9 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-400 shadow-lg transition-all hover:border-blue-500/40 hover:bg-slate-800 hover:text-white md:flex",
               collapsed ? "right-[-18px] rotate-180" : "right-4"
             )}
           >
@@ -197,6 +243,7 @@ export default function SidebarClient({
           {showHome && (
             <Link
               href="/"
+              onClick={closeMobileMenu}
               title="Menu Principal"
               aria-current={activeHref === "/" ? "page" : undefined}
               className={cx(
@@ -221,11 +268,11 @@ export default function SidebarClient({
           )}
 
           <div className="space-y-4">
-            {sections.map((section) => {
+            {safeSections.map((section) => {
               const { emoji, text } = splitSectionTitle(section.title)
               const isOpen = Boolean(openSections[section.title])
-              const sectionActive = section.items.some(
-                (item) => item.href === activeHref
+              const sectionActive = section.items.some((item) =>
+                isHrefMatch(pathname, item.href)
               )
 
               return (
@@ -234,6 +281,7 @@ export default function SidebarClient({
                     type="button"
                     onClick={() => toggleSection(section.title)}
                     title={text}
+                    aria-expanded={isOpen || collapsed}
                     className={cx(
                       "mb-2 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-all",
                       collapsed && "justify-center px-0",
@@ -245,7 +293,8 @@ export default function SidebarClient({
                     <span
                       className={cx(
                         "text-lg transition-all",
-                        sectionActive && "drop-shadow-[0_0_8px_rgba(59,130,246,0.55)]"
+                        sectionActive &&
+                          "drop-shadow-[0_0_8px_rgba(59,130,246,0.55)]"
                       )}
                     >
                       {emoji}
@@ -280,12 +329,13 @@ export default function SidebarClient({
                     <div className="overflow-hidden">
                       <div className="space-y-1">
                         {section.items.map((item) => {
-                          const active = item.href === activeHref
+                          const active = activeHref === item.href
 
                           return (
                             <Link
                               key={item.href}
                               href={item.href}
+                              onClick={closeMobileMenu}
                               title={item.label}
                               aria-current={active ? "page" : undefined}
                               className={cx(
@@ -357,7 +407,7 @@ export default function SidebarClient({
 
             {userRole && (
               <p className="mt-2 inline-flex rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-widest text-blue-300">
-                {userRole}
+                {getRoleLabel(userRole)}
               </p>
             )}
           </div>
