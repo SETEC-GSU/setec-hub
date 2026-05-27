@@ -160,6 +160,12 @@ export default async function Sidebar() {
           icon: "✅",
           permission: "fields.demandas",
         },
+        {
+          href: "/fields/credenciais-escolas",
+          label: "Credenciais Escolares",
+          icon: "🔐",
+          permission: "credenciais.escolas.view",
+        },
       ],
     },
     {
@@ -217,6 +223,12 @@ export default async function Sidebar() {
           label: "Gestão de Equipamentos",
           icon: "💻",
           permission: "gestao.equipamentos",
+        },
+        {
+          href: "/fields/credenciais-escolas/gestao",
+          label: "Gestão de Credenciais",
+          icon: "🔐",
+          permission: "credenciais.escolas.manage",
         },
         {
           href: "/fields/setorizacao",

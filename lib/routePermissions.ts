@@ -32,5 +32,7 @@ export const routePermissions: Record<string, Permission> = {
   "/fields/setorizacao":"fields.setorizacao",
   "/fields/painel-setorizacao":"fields.painel",
   "/fields/mapa-field":"fields.mapa",
-  "/fields/relatorio-tecnico":"fields.relatorio"
+  "/fields/relatorio-tecnico":"fields.relatorio",
+  "/fields/credenciais-escolas": "credenciais.escolas.view",
+  "/credenciais-escolas/gestao": "credenciais.escolas.manage"
 }

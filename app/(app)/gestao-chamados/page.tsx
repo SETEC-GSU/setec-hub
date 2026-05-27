@@ -65,7 +65,7 @@ type FiltroStatus =
 type FiltroOrigem = "todos" | "ure" | "escola"
 type FiltroPrioridade = "todas" | "critica" | "alta" | "media" | "baixa"
 type FiltroResponsavel = "todos" | "meus" | "sem_responsavel"
-type Ordenacao = "sla" | "recentes" | "antigos" | "prioridade"
+type Ordenacao = "recentes" | "sla" | "antigos" | "prioridade"
 
 type ModalResolucao = {
   id: string | null
@@ -508,7 +508,7 @@ function possuiFiltrosAtivos({
     filtroOrigem !== "todos" ||
     filtroPrioridade !== "todas" ||
     filtroResponsavel !== "todos" ||
-    ordenacao !== "sla"
+    ordenacao !== "recentes"
   )
 }
 
@@ -526,7 +526,7 @@ export default function GestaoChamadosCommandCenter() {
     useState<FiltroPrioridade>("todas")
   const [filtroResponsavel, setFiltroResponsavel] =
     useState<FiltroResponsavel>("todos")
-  const [ordenacao, setOrdenacao] = useState<Ordenacao>("sla")
+  const [ordenacao, setOrdenacao] = useState<Ordenacao>("recentes")
 
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -1066,7 +1066,7 @@ export default function GestaoChamadosCommandCenter() {
     setFiltroOrigem("todos")
     setFiltroPrioridade("todas")
     setFiltroResponsavel("todos")
-    setOrdenacao("sla")
+    setOrdenacao("recentes")
   }
 
   if (loading) {
@@ -1083,6 +1083,7 @@ export default function GestaoChamadosCommandCenter() {
             <div className="mb-4 flex flex-wrap items-center gap-2">
               <Badge tone="emerald">SLA útil</Badge>
               <Badge tone="blue">Gestão de Chamados</Badge>
+              <Badge tone="cyan">Ordem: mais recentes</Badge>
             </div>
 
             <h1 className="max-w-4xl text-3xl font-black tracking-tight text-white md:text-4xl">
@@ -1174,8 +1175,8 @@ export default function GestaoChamadosCommandCenter() {
           </Select>
 
           <Select value={ordenacao} onChange={setOrdenacao}>
-            <option value="sla">Ordenar por SLA</option>
             <option value="recentes">Mais recentes</option>
+            <option value="sla">Ordenar por SLA</option>
             <option value="antigos">Mais antigos</option>
             <option value="prioridade">Prioridade</option>
           </Select>
@@ -1324,25 +1325,48 @@ function ChamadoCard({
   const bloqueado = acaoEmAndamento === chamado.id
   const isConcluido = status === "resolvido" || status === "fechado"
 
+  const destaqueCard = sla.atrasado
+    ? "border-red-500/45 shadow-red-950/20"
+    : sla.vencendo
+      ? "border-yellow-500/40 shadow-yellow-950/10"
+      : isConcluido
+        ? "border-emerald-500/25 shadow-emerald-950/10"
+        : status === "em_atendimento"
+          ? "border-cyan-500/30 shadow-cyan-950/10"
+          : status === "assumido"
+            ? "border-purple-500/25 shadow-purple-950/10"
+            : "border-slate-800 shadow-slate-950/20 hover:border-blue-500/25"
+
+  const linhaSuperior = sla.atrasado
+    ? "bg-red-500"
+    : sla.vencendo
+      ? "bg-yellow-500"
+      : isConcluido
+        ? "bg-emerald-500"
+        : status === "em_atendimento"
+          ? "bg-cyan-500"
+          : status === "assumido"
+            ? "bg-purple-500"
+            : "bg-blue-500"
+
   return (
     <article
-      className={`relative overflow-hidden rounded-[1.5rem] border bg-[#020617] p-4 shadow-lg transition-all hover:border-slate-700 md:p-5 ${
-        sla.atrasado
-          ? "border-red-500/40"
-          : sla.vencendo
-            ? "border-yellow-500/35"
-            : "border-slate-800"
-      }`}
+      className={`group relative overflow-hidden rounded-[1.75rem] border bg-[#020617] p-4 shadow-xl transition-all duration-300 hover:-translate-y-[1px] hover:shadow-2xl md:p-5 ${destaqueCard}`}
     >
-      {sla.atrasado && <div className="absolute left-0 top-0 h-1 w-full bg-red-500" />}
+      <div className={`absolute left-0 top-0 h-1 w-full ${linhaSuperior}`} />
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[150px_1fr_190px_145px] xl:items-center">
+      <div className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+        <div className="absolute -right-20 -top-24 h-56 w-56 rounded-full bg-blue-500/10 blur-3xl" />
+        <div className="absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-cyan-500/5 blur-3xl" />
+      </div>
+
+      <div className="relative z-10 grid grid-cols-1 gap-5 xl:grid-cols-[150px_1fr_190px_145px] xl:items-center">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-600">
             Protocolo
           </p>
 
-          <p className="mt-1 text-base font-black text-slate-300">
+          <p className="mt-1 text-lg font-black text-white">
             #{chamado.codigo || "Sem código"}
           </p>
 
@@ -1365,7 +1389,7 @@ function ChamadoCard({
             {textoSeguro(chamado.titulo, "Chamado sem título")}
           </a>
 
-          <p className="mt-2 line-clamp-2 text-sm font-medium leading-relaxed text-slate-500">
+          <p className="mt-2 line-clamp-2 text-sm font-medium leading-relaxed text-slate-400">
             {textoSeguro(chamado.descricao, "Sem descrição informada.")}
           </p>
 
@@ -1386,12 +1410,14 @@ function ChamadoCard({
             </span>
           </div>
 
-          <p className="mt-3 text-xs font-medium text-slate-600">
+          <p className="mt-3 text-xs font-medium text-slate-500">
             Criado em {formatarData(chamado.created_at)}
+            <span className="mx-2 text-slate-700">•</span>
+            {formatarTempoRelativo(chamado.created_at)}
           </p>
         </div>
 
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/45 p-4">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/65 p-4 shadow-inner">
           <div className="flex items-center justify-between gap-3">
             <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">
               SLA útil
@@ -1483,7 +1509,7 @@ function ChamadoCard({
             <ActionButton
               disabled={bloqueado}
               onClick={() => onReabrir(chamado)}
-              variant="slate"
+              variant="purple"
             >
               Reabrir
             </ActionButton>
@@ -1491,7 +1517,7 @@ function ChamadoCard({
 
           <a
             href={`/gestao-chamados/${chamado.id}`}
-            className="inline-flex w-full items-center justify-center rounded-xl border border-slate-700 bg-[#020617] px-4 py-3 text-[11px] font-black uppercase tracking-widest text-slate-300 transition-all hover:border-cyan-500/40 hover:text-cyan-300"
+            className="inline-flex w-full items-center justify-center rounded-xl border border-slate-700 bg-[#020617] px-4 py-3 text-[11px] font-black uppercase tracking-widest text-slate-300 transition-all hover:border-cyan-500/40 hover:bg-cyan-500/10 hover:text-cyan-300"
           >
             Detalhes
           </a>
@@ -1510,14 +1536,16 @@ function ActionButton({
   children: string
   onClick: () => void
   disabled?: boolean
-  variant: "blue" | "yellow" | "emerald" | "slate"
+  variant: "blue" | "yellow" | "emerald" | "slate" | "purple"
 }) {
   const classes = {
-    blue: "border-blue-500/30 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20",
+    blue: "border-blue-500/30 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 hover:shadow-blue-950/30",
     yellow:
-      "border-yellow-500/30 bg-yellow-500/10 text-yellow-300 hover:bg-yellow-500/20",
+      "border-yellow-500/30 bg-yellow-500/10 text-yellow-300 hover:bg-yellow-500/20 hover:shadow-yellow-950/20",
     emerald:
-      "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20",
+      "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 hover:shadow-emerald-950/25",
+    purple:
+      "border-purple-500/35 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 hover:text-purple-200 hover:shadow-purple-950/30",
     slate: "border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800",
   }
 
@@ -1526,7 +1554,7 @@ function ActionButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className={`inline-flex w-full items-center justify-center rounded-xl border px-4 py-3 text-[11px] font-black uppercase tracking-widest transition-all disabled:cursor-not-allowed disabled:opacity-60 ${classes[variant]}`}
+      className={`inline-flex w-full items-center justify-center rounded-xl border px-4 py-3 text-[11px] font-black uppercase tracking-widest shadow-lg transition-all hover:-translate-y-[1px] disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60 ${classes[variant]}`}
     >
       {disabled ? "Aguarde..." : children}
     </button>
@@ -1535,7 +1563,7 @@ function ActionButton({
 
 function InfoChip({ icon, text }: { icon: string; text: string }) {
   return (
-    <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-slate-800 bg-slate-900/70 px-3 py-1.5 text-xs font-bold text-slate-400">
+    <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-slate-800 bg-slate-900/70 px-3 py-1.5 text-xs font-bold text-slate-400 transition group-hover:border-slate-700">
       <span>{icon}</span>
       <span className="truncate">{text}</span>
     </span>
