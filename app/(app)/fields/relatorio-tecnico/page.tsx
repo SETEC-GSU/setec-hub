@@ -97,6 +97,11 @@ type MensagemTela = {
   texto: string
 } | null
 
+type PdfPronto = {
+  html: string
+  titulo: string
+} | null
+
 type DashboardGestaoDados = {
   totalPareceres: number
   finalizados: number
@@ -190,6 +195,45 @@ function formatarDataHora(dataIso?: string | null) {
   })
 }
 
+function formatarDataArquivo(dataIso?: string | null) {
+  const data = dataIso ? new Date(`${dataIso}T00:00:00`) : new Date()
+
+  if (Number.isNaN(data.getTime())) {
+    const agora = new Date()
+    const dia = String(agora.getDate()).padStart(2, "0")
+    const mes = String(agora.getMonth() + 1).padStart(2, "0")
+    const ano = String(agora.getFullYear())
+    return `${dia}-${mes}-${ano}`
+  }
+
+  const dia = String(data.getDate()).padStart(2, "0")
+  const mes = String(data.getMonth() + 1).padStart(2, "0")
+  const ano = String(data.getFullYear())
+
+  return `${dia}-${mes}-${ano}`
+}
+
+function sanitizarNomeArquivo(value: unknown) {
+  const texto = String(value || "SETEC Hub")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_{2,}/g, "_")
+    .toUpperCase()
+
+  return texto || "SETEC_HUB"
+}
+
+function getNomeArquivoParecer(parecer: ParecerHistorico) {
+  const escola = sanitizarNomeArquivo(parecer.escola_nome || "SETEC Hub")
+  const dataExecucao = formatarDataArquivo(
+    parecer.data_atendimento || parecer.finalized_at || parecer.created_at
+  )
+
+  return `Parecer_Tecnico_${escola}_${dataExecucao}`
+}
+
 function normalizarTexto(value: unknown) {
   return String(value || "")
     .normalize("NFD")
@@ -258,88 +302,92 @@ function getResultadoClass(resultado?: string | null) {
 function montarHtmlPdf(parecer: ParecerHistorico) {
   const itens = parecer.pareceres_tecnicos_itens || []
 
+  const totalItens = itens.length
+  const totalGarantia = itens.filter((item) => item.precisa_garantia).length
+  const totalFisico = itens.filter((item) => item.possui_problema_fisico).length
+  const totalBlueMonitor = itens.filter((item) => item.registrado_bluemonitor).length
+  const totalResolvidos = itens.filter((item) =>
+    normalizarTexto(item.resultado).includes("resolvido")
+  ).length
+  const nomeArquivoPdf = getNomeArquivoParecer(parecer)
+
   const itensHtml = itens
     .map((item, index) => {
       const resultadoClass = getResultadoClass(item.resultado)
 
       return `
         <section class="item">
-          <div class="item-header">
-            <div>
-              <p class="eyebrow">Equipamento ${index + 1}</p>
+          <div class="item-top">
+            <div class="item-title">
+              <span class="item-number">ITEM ${String(index + 1).padStart(2, "0")}</span>
               <h3>${escapeHtml(item.equipamento || "Equipamento não informado")}</h3>
+              <p>${escapeHtml(item.marca_modelo || "Marca/modelo não informado")}</p>
             </div>
+
             <span class="tag ${resultadoClass}">
               ${escapeHtml(item.resultado || "Sem resultado")}
             </span>
           </div>
 
-          <div class="grid">
-            <div>
-              <p class="label">Modelo do equipamento</p>
-              <p>${escapeHtml(item.equipamento || "Não informado")}</p>
-            </div>
-            <div>
-              <p class="label">Marca</p>
-              <p>${escapeHtml(item.marca_modelo || "Não informado")}</p>
-            </div>
-            <div>
+          <div class="mini-grid">
+            <div class="mini-cell">
               <p class="label">Número de série</p>
-              <p>${escapeHtml(item.numero_serie || "Não informado")}</p>
+              <p class="value mono">${escapeHtml(item.numero_serie || "Não informado")}</p>
             </div>
-            <div>
+
+            <div class="mini-cell">
               <p class="label">Patrimônio</p>
-              <p>${escapeHtml(item.patrimonio || "Não informado")}</p>
+              <p class="value mono">${escapeHtml(item.patrimonio || "Não informado")}</p>
             </div>
-            <div>
-              <p class="label">Registro BlueMonitor/DATAMOB</p>
-              <p>${item.registrado_bluemonitor ? "Sim" : "Não"}</p>
+
+            <div class="mini-cell">
+              <p class="label">BlueMonitor/DATAMOB</p>
+              <p class="value">${item.registrado_bluemonitor ? "Sim" : "Não"}</p>
             </div>
-            <div>
+
+            <div class="mini-cell">
               <p class="label">Garantia / tratativa</p>
-              <p>${item.precisa_garantia ? "Sim" : "Não"}</p>
+              <p class="value">${item.precisa_garantia ? "Sim" : "Não"}</p>
             </div>
           </div>
 
-          <div class="block">
-            <p class="label">Problema relatado</p>
-            <p>${nl2br(item.problema_relatado || "Não informado")}</p>
-          </div>
+          <div class="text-grid">
+            <div class="text-box">
+              <p class="label">Problema relatado</p>
+              <p>${nl2br(item.problema_relatado || "Não informado")}</p>
+            </div>
 
-          <div class="block">
-            <p class="label">Diagnóstico técnico</p>
-            <p>${nl2br(item.diagnostico || "Não informado")}</p>
-          </div>
+            <div class="text-box">
+              <p class="label">Diagnóstico técnico</p>
+              <p>${nl2br(item.diagnostico || "Não informado")}</p>
+            </div>
 
-          <div class="block">
-            <p class="label">Ação realizada</p>
-            <p>${nl2br(item.acao_realizada || "Não informado")}</p>
-          </div>
+            <div class="text-box">
+              <p class="label">Ação realizada</p>
+              <p>${nl2br(item.acao_realizada || "Não informado")}</p>
+            </div>
 
-          ${
-            item.possui_problema_fisico
-              ? `
-              <div class="block danger-box">
-                <p class="label">Problema físico identificado</p>
-                <p>${nl2br(item.problema_fisico_descricao || "Problema físico informado, sem detalhamento adicional.")}</p>
-              </div>
-            `
-              : `
-              <div class="block success-box">
-                <p class="label">Problema físico</p>
-                <p>Não foi informado problema físico aparente no equipamento.</p>
-              </div>
-            `
-          }
+            <div class="text-box ${item.possui_problema_fisico ? "alert-box" : "ok-box"}">
+              <p class="label">Condição física</p>
+              <p>${
+                item.possui_problema_fisico
+                  ? nl2br(
+                      item.problema_fisico_descricao ||
+                        "Problema físico informado, sem detalhamento adicional."
+                    )
+                  : "Não foi informado problema físico aparente no equipamento."
+              }</p>
+            </div>
+          </div>
 
           ${
             item.observacao
               ? `
-              <div class="block">
-                <p class="label">Observações do item</p>
-                <p>${nl2br(item.observacao)}</p>
-              </div>
-            `
+                <div class="observation">
+                  <p class="label">Observações do item</p>
+                  <p>${nl2br(item.observacao)}</p>
+                </div>
+              `
               : ""
           }
         </section>
@@ -352,11 +400,12 @@ function montarHtmlPdf(parecer: ParecerHistorico) {
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <title>Parecer Técnico - ${escapeHtml(parecer.escola_nome)}</title>
+  <title>${escapeHtml(nomeArquivoPdf)}</title>
+
   <style>
     @page {
       size: A4;
-      margin: 12mm;
+      margin: 10mm 11mm 12mm 11mm;
     }
 
     * {
@@ -369,181 +418,289 @@ function montarHtmlPdf(parecer: ParecerHistorico) {
     body {
       margin: 0;
       padding: 0;
-      font-family: Arial, Helvetica, sans-serif;
-      color: #0f172a;
       background: #ffffff;
-      font-size: 12px;
-      line-height: 1.45;
+      color: #0f172a;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 10.8px;
+      line-height: 1.38;
+    }
+
+    p,
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+    }
+
+    .page {
+      width: 100%;
     }
 
     .header {
-      border-bottom: 3px solid #1d4ed8;
-      padding-bottom: 16px;
-      margin-bottom: 18px;
-      display: flex;
-      justify-content: space-between;
-      gap: 24px;
-      align-items: flex-start;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: start;
+      padding: 0 0 10px;
+      border-bottom: 2px solid #1d4ed8;
+      margin-bottom: 10px;
       break-inside: avoid;
+      page-break-inside: avoid;
     }
 
     .brand {
       display: flex;
-      gap: 14px;
       align-items: center;
+      gap: 12px;
+      min-width: 0;
     }
 
     .logo {
-      width: 54px;
-      height: 54px;
-      border-radius: 14px;
-      background: linear-gradient(135deg, #1d4ed8, #06b6d4);
-      color: white;
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #1d4ed8 0%, #06b6d4 100%);
+      color: #ffffff;
       display: flex;
       align-items: center;
       justify-content: center;
+      font-size: 13px;
       font-weight: 900;
-      letter-spacing: -1px;
-      font-size: 16px;
+      letter-spacing: -0.6px;
+      flex: 0 0 auto;
     }
 
-    .title h1 {
-      margin: 0;
-      font-size: 22px;
+    .brand-title h1 {
+      font-size: 18px;
+      line-height: 1.1;
       color: #0f172a;
-      letter-spacing: -0.3px;
+      letter-spacing: -0.4px;
+      font-weight: 900;
     }
 
-    .title p {
-      margin: 3px 0 0;
-      color: #475569;
-      font-size: 11px;
-      font-weight: 700;
+    .brand-title p {
+      margin-top: 3px;
+      font-size: 9px;
+      color: #64748b;
+      font-weight: 900;
       text-transform: uppercase;
-      letter-spacing: 1px;
+      letter-spacing: 1.4px;
     }
 
-    .doc-info {
+    .doc-box {
+      min-width: 180px;
       text-align: right;
-      min-width: 190px;
-    }
-
-    .doc-info p {
-      margin: 0 0 4px;
       color: #475569;
-      font-size: 11px;
+      font-size: 9.5px;
+      font-weight: 700;
     }
 
-    .doc-info strong {
+    .doc-box strong {
       color: #0f172a;
+      font-weight: 900;
     }
 
-    .badge {
+    .doc-badge {
       display: inline-block;
-      padding: 6px 10px;
+      margin-top: 5px;
+      padding: 5px 8px;
       border-radius: 999px;
       background: #dbeafe;
       color: #1d4ed8;
+      font-size: 8px;
       font-weight: 900;
-      font-size: 10px;
+      letter-spacing: 0.9px;
       text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-top: 6px;
     }
 
-    .panel {
-      border: 1px solid #cbd5e1;
-      border-radius: 14px;
-      padding: 14px;
-      margin-bottom: 14px;
+    .headline {
+      display: grid;
+      grid-template-columns: 1.4fr 0.8fr;
+      gap: 10px;
+      margin-bottom: 10px;
       break-inside: avoid;
       page-break-inside: avoid;
     }
 
-    .panel-title {
-      margin: 0 0 10px;
-      color: #1e3a8a;
-      font-size: 13px;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      font-weight: 900;
+    .school-card,
+    .service-card,
+    .summary-card {
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      padding: 10px;
+      background: #ffffff;
+      break-inside: avoid;
+      page-break-inside: avoid;
     }
 
-    .grid {
+    .card-title {
+      color: #1e3a8a;
+      font-size: 9px;
+      font-weight: 900;
+      letter-spacing: 1.1px;
+      text-transform: uppercase;
+      margin-bottom: 7px;
+      padding-bottom: 5px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+
+    .info-grid {
       display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 10px 16px;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px 12px;
+    }
+
+    .info-grid.compact {
+      grid-template-columns: 1fr;
     }
 
     .label {
-      margin: 0 0 3px;
       color: #64748b;
-      font-size: 10px;
+      font-size: 8.3px;
+      line-height: 1.2;
       font-weight: 900;
+      letter-spacing: 0.65px;
       text-transform: uppercase;
-      letter-spacing: .8px;
-    }
-
-    p {
-      margin: 0;
+      margin-bottom: 2px;
     }
 
     .value {
       color: #0f172a;
-      font-weight: 700;
+      font-weight: 800;
+      overflow-wrap: anywhere;
     }
 
-    .summary {
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 12px;
-      padding: 12px;
-      color: #1e293b;
-      font-weight: 600;
+    .mono {
+      font-family: "Courier New", Courier, monospace;
+      font-weight: 800;
     }
 
-    .item {
-      border: 1px solid #cbd5e1;
-      border-radius: 16px;
-      padding: 14px;
-      margin-bottom: 14px;
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 7px;
+      margin-bottom: 10px;
       break-inside: avoid;
       page-break-inside: avoid;
     }
 
-    .item-header {
+    .metric {
+      border: 1px solid #dbeafe;
+      background: #eff6ff;
+      border-radius: 11px;
+      padding: 8px;
+      min-height: 52px;
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 17px;
+      color: #1d4ed8;
+      line-height: 1;
+      font-weight: 900;
+      margin-bottom: 4px;
+    }
+
+    .metric span {
+      display: block;
+      font-size: 7.6px;
+      color: #475569;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .summary-card {
+      margin-bottom: 10px;
+      background: #f8fafc;
+    }
+
+    .summary-text {
+      color: #1e293b;
+      font-size: 10.4px;
+      font-weight: 650;
+      line-height: 1.45;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 10px 0 7px;
+      color: #0f172a;
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.9px;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+
+    .section-title::after {
+      content: "";
+      height: 1px;
+      background: #cbd5e1;
+      flex: 1;
+      margin-left: 10px;
+    }
+
+    .item {
+      border: 1px solid #cbd5e1;
+      border-radius: 13px;
+      padding: 10px;
+      margin-bottom: 9px;
+      background: #ffffff;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    .item-top {
       display: flex;
       justify-content: space-between;
       gap: 12px;
       align-items: flex-start;
+      padding-bottom: 7px;
+      margin-bottom: 8px;
       border-bottom: 1px solid #e2e8f0;
-      padding-bottom: 10px;
-      margin-bottom: 12px;
     }
 
-    .eyebrow {
-      margin: 0 0 3px;
+    .item-number {
+      display: inline-block;
+      margin-bottom: 3px;
       color: #2563eb;
-      font-size: 10px;
+      font-size: 8px;
       font-weight: 900;
-      text-transform: uppercase;
       letter-spacing: 1px;
+      text-transform: uppercase;
     }
 
-    h3 {
-      margin: 0;
-      font-size: 16px;
+    .item-title h3 {
       color: #0f172a;
+      font-size: 13px;
+      line-height: 1.15;
+      font-weight: 900;
+      letter-spacing: -0.2px;
+    }
+
+    .item-title p {
+      margin-top: 2px;
+      color: #64748b;
+      font-size: 9.2px;
+      font-weight: 800;
     }
 
     .tag {
+      display: inline-block;
+      max-width: 175px;
       border-radius: 999px;
-      padding: 6px 9px;
-      font-size: 9px;
+      padding: 5px 8px;
+      font-size: 7.8px;
       font-weight: 900;
+      line-height: 1.15;
+      letter-spacing: 0.55px;
       text-transform: uppercase;
-      letter-spacing: .7px;
-      white-space: nowrap;
+      text-align: center;
+      white-space: normal;
     }
 
     .tag.success {
@@ -566,186 +723,317 @@ function montarHtmlPdf(parecer: ParecerHistorico) {
       color: #334155;
     }
 
-    .block {
-      margin-top: 12px;
-      padding: 10px;
-      border-radius: 12px;
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 7px;
+      margin-bottom: 8px;
     }
 
-    .danger-box {
+    .mini-cell {
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
+      border-radius: 10px;
+      padding: 7px;
+      min-height: 44px;
+    }
+
+    .text-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px;
+    }
+
+    .text-box,
+    .observation {
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
+      border-radius: 10px;
+      padding: 8px;
+      color: #1e293b;
+      font-weight: 650;
+      min-height: 54px;
+      overflow-wrap: anywhere;
+    }
+
+    .alert-box {
       background: #fef2f2;
       border-color: #fecaca;
       color: #7f1d1d;
     }
 
-    .success-box {
+    .ok-box {
       background: #f0fdf4;
       border-color: #bbf7d0;
       color: #14532d;
     }
 
+    .observation {
+      margin-top: 7px;
+      background: #fff7ed;
+      border-color: #fed7aa;
+      color: #7c2d12;
+    }
+
     .footer {
-      margin-top: 26px;
-      padding-top: 16px;
-      border-top: 1px solid #cbd5e1;
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 28px;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      column-gap: 82px;
+      margin-top: 34px;
+      padding-top: 26px;
       break-inside: avoid;
       page-break-inside: avoid;
     }
 
     .signature {
-      padding-top: 38px;
       border-top: 1px solid #334155;
+      padding-top: 10px;
       text-align: center;
-      font-size: 11px;
       color: #334155;
-      font-weight: 700;
+      font-size: 9.8px;
+      font-weight: 800;
+      min-height: 62px;
     }
 
     .note {
-      margin-top: 16px;
-      font-size: 10px;
-      color: #64748b;
+      margin-top: 8px;
+      padding-top: 7px;
+      border-top: 1px solid #e2e8f0;
       text-align: center;
+      color: #64748b;
+      font-size: 8.5px;
+      line-height: 1.35;
     }
 
     @media print {
+      .no-print {
+        display: none !important;
+      }
+
+      html,
       body {
-        background: white;
+        background: #ffffff;
+      }
+
+      .item,
+      .school-card,
+      .service-card,
+      .summary-card,
+      .footer {
+        break-inside: avoid;
+        page-break-inside: avoid;
       }
     }
   </style>
 </head>
+
 <body>
-  <header class="header">
-    <div class="brand">
-      <div class="logo">SETEC</div>
-      <div class="title">
-        <h1>Parecer Técnico de Atendimento</h1>
-        <p>SETEC Hub • URE Guarulhos Sul</p>
-      </div>
-    </div>
+  <main class="page">
+    <header class="header">
+      <div class="brand">
+        <div class="logo">SH</div>
 
-    <div class="doc-info">
-      <p><strong>Data:</strong> ${escapeHtml(formatarData(parecer.data_atendimento))}</p>
-      <p><strong>Status:</strong> ${escapeHtml(parecer.status)}</p>
-      <p><strong>Gerado em:</strong> ${escapeHtml(formatarDataHora(new Date().toISOString()))}</p>
-      <span class="badge">Documento Institucional</span>
-    </div>
-  </header>
-
-  <section class="panel">
-    <h2 class="panel-title">Dados da Unidade Escolar</h2>
-    <div class="grid">
-      <div>
-        <p class="label">Unidade Escolar</p>
-        <p class="value">${escapeHtml(parecer.escola_nome)}</p>
+        <div class="brand-title">
+          <h1>Parecer Técnico de Atendimento</h1>
+          <p>SETEC Hub • URE Guarulhos Sul</p>
+        </div>
       </div>
-      <div>
-        <p class="label">CIE</p>
-        <p class="value">${escapeHtml(parecer.cie || "Não informado")}</p>
-      </div>
-      <div>
-        <p class="label">Endereço</p>
-        <p class="value">${escapeHtml(parecer.endereco || "Não informado")}</p>
-      </div>
-      <div>
-        <p class="label">Contato da Escola</p>
-        <p class="value">${escapeHtml(parecer.telefone || "Não informado")} • ${escapeHtml(parecer.email || "Não informado")}</p>
-      </div>
-    </div>
-  </section>
 
-  <section class="panel">
-    <h2 class="panel-title">Dados do Atendimento</h2>
-    <div class="grid">
-      <div>
-        <p class="label">Técnico Responsável</p>
-        <p class="value">${escapeHtml(parecer.tecnico_nome)}</p>
+      <div class="doc-box">
+        <p><strong>Data:</strong> ${escapeHtml(formatarData(parecer.data_atendimento))}</p>
+        <p><strong>Status:</strong> ${escapeHtml(parecer.status)}</p>
+        <p><strong>Gerado:</strong> ${escapeHtml(formatarDataHora(new Date().toISOString()))}</p>
+        <span class="doc-badge">Documento Institucional</span>
       </div>
-      <div>
-        <p class="label">E-mail do Técnico</p>
-        <p class="value">${escapeHtml(parecer.tecnico_email || "Não informado")}</p>
+    </header>
+
+    <section class="headline">
+      <div class="school-card">
+        <h2 class="card-title">Unidade Escolar</h2>
+
+        <div class="info-grid">
+          <div>
+            <p class="label">Escola</p>
+            <p class="value">${escapeHtml(parecer.escola_nome || "Não informado")}</p>
+          </div>
+
+          <div>
+            <p class="label">CIE</p>
+            <p class="value">${escapeHtml(parecer.cie || "Não informado")}</p>
+          </div>
+
+          <div>
+            <p class="label">Endereço</p>
+            <p class="value">${escapeHtml(parecer.endereco || "Não informado")}</p>
+          </div>
+
+          <div>
+            <p class="label">Contato</p>
+            <p class="value">${escapeHtml(parecer.telefone || "Não informado")} • ${escapeHtml(parecer.email || "Não informado")}</p>
+          </div>
+        </div>
       </div>
-      <div>
-        <p class="label">Turno</p>
-        <p class="value">${escapeHtml(parecer.turno || "Não informado")}</p>
+
+      <div class="service-card">
+        <h2 class="card-title">Atendimento</h2>
+
+        <div class="info-grid compact">
+          <div>
+            <p class="label">Técnico responsável</p>
+            <p class="value">${escapeHtml(parecer.tecnico_nome || "Não informado")}</p>
+          </div>
+
+          <div>
+            <p class="label">E-mail técnico</p>
+            <p class="value">${escapeHtml(parecer.tecnico_email || "Não informado")}</p>
+          </div>
+
+          <div>
+            <p class="label">Turno / referência</p>
+            <p class="value">${escapeHtml(parecer.turno || "Não informado")} • ${escapeHtml(parecer.chamado_referencia || "Sem referência")}</p>
+          </div>
+        </div>
       </div>
-      <div>
-        <p class="label">Chamado / Referência</p>
-        <p class="value">${escapeHtml(parecer.chamado_referencia || "Não informado")}</p>
+    </section>
+
+    <section class="metrics">
+      <div class="metric">
+        <strong>${totalItens}</strong>
+        <span>Equipamentos avaliados</span>
       </div>
-    </div>
-  </section>
 
-  <section class="panel">
-    <h2 class="panel-title">Resumo Geral do Atendimento</h2>
-    <div class="summary">${nl2br(parecer.resumo_atendimento || "Sem resumo geral informado.")}</div>
-  </section>
+      <div class="metric">
+        <strong>${totalResolvidos}</strong>
+        <span>Resolvidos</span>
+      </div>
 
-  <section>
-    <h2 class="panel-title">Equipamentos Avaliados</h2>
-    ${itensHtml || `<div class="panel"><p>Nenhum equipamento informado.</p></div>`}
-  </section>
+      <div class="metric">
+        <strong>${totalGarantia}</strong>
+        <span>Garantia / tratativa</span>
+      </div>
 
-  ${
-    parecer.observacoes_gerais
-      ? `
-      <section class="panel">
-        <h2 class="panel-title">Observações Gerais</h2>
-        <div class="summary">${nl2br(parecer.observacoes_gerais)}</div>
-      </section>
-    `
-      : ""
-  }
+      <div class="metric">
+        <strong>${totalFisico}</strong>
+        <span>Problema físico</span>
+      </div>
 
-  <footer class="footer">
-    <div class="signature">
-      ${escapeHtml(parecer.tecnico_nome)}<br />
-      Técnico Responsável
-    </div>
-    <div class="signature">
-      Responsável da Unidade Escolar<br />
-      Assinatura / Carimbo
-    </div>
-  </footer>
+      <div class="metric">
+        <strong>${totalBlueMonitor}</strong>
+        <span>BlueMonitor/DATAMOB</span>
+      </div>
+    </section>
 
-  <p class="note">
-    Documento gerado pelo SETEC Hub. Este parecer registra as informações técnicas declaradas no atendimento realizado.
-  </p>
+    <section class="summary-card">
+      <h2 class="card-title">Resumo Geral do Atendimento</h2>
+      <div class="summary-text">
+        ${nl2br(parecer.resumo_atendimento || "Sem resumo geral informado.")}
+      </div>
+    </section>
 
+    <h2 class="section-title">Equipamentos Avaliados</h2>
+
+    ${
+      itensHtml ||
+      `<section class="item"><p class="value">Nenhum equipamento informado.</p></section>`
+    }
+
+    ${
+      parecer.observacoes_gerais
+        ? `
+          <section class="summary-card">
+            <h2 class="card-title">Observações Gerais</h2>
+            <div class="summary-text">${nl2br(parecer.observacoes_gerais)}</div>
+          </section>
+        `
+        : ""
+    }
+
+    <footer class="footer">
+      <div class="signature">
+        ${escapeHtml(parecer.tecnico_nome || "Técnico responsável")}<br />
+        Técnico Responsável
+      </div>
+
+      <div class="signature">
+        Responsável da Unidade Escolar<br />
+        Assinatura / Carimbo
+      </div>
+    </footer>
+
+    <p class="note">
+      Documento gerado pelo SETEC Hub. Este parecer registra as informações técnicas declaradas no atendimento realizado pela equipe responsável.
+    </p>
+  </main>
+
+  <div class="no-print" style="position: fixed; right: 16px; bottom: 16px; display: flex; gap: 8px; font-family: Arial, Helvetica, sans-serif;">
+    <button onclick="window.print()" style="border: 0; border-radius: 12px; background: #1d4ed8; color: white; padding: 12px 16px; font-weight: 900; cursor: pointer; box-shadow: 0 12px 30px rgba(15,23,42,.18);">
+      Imprimir / Salvar PDF
+    </button>
+  </div>
+
+  <script>
+    window.addEventListener("load", function () {
+      window.setTimeout(function () {
+        try {
+          window.focus();
+          window.print();
+        } catch (error) {
+          console.error("Falha ao abrir impressão automática:", error);
+        }
+      }, 700);
+    });
+  </script>
 </body>
 </html>
 `
 }
 
-function gerarPdfParecer(parecer: ParecerHistorico, janela?: Window | null) {
-  const printWindow = janela && !janela.closed ? janela : window.open("", "_blank")
+function abrirHtmlEmJanelaPdf(
+  html: string,
+  titulo = "Parecer Técnico - SETEC Hub",
+  janela?: Window | null
+) {
+  const printWindow = janela && !janela.closed ? janela : window.open("about:blank", "_blank")
 
   if (!printWindow) {
-    alert("O navegador bloqueou a janela do PDF. Libere pop-ups para esta página e tente novamente.")
-    return
+    return false
   }
 
+  try {
+    printWindow.document.open()
+    printWindow.document.write(html)
+    printWindow.document.close()
+    printWindow.document.title = titulo
+    printWindow.focus()
+
+    window.setTimeout(() => {
+      try {
+        if (!printWindow.closed) {
+          printWindow.focus()
+          printWindow.print()
+        }
+      } catch (error) {
+        console.error("Erro ao acionar impressão do PDF:", error)
+      }
+    }, 900)
+
+    return true
+  } catch (error) {
+    console.error("Erro ao montar janela do PDF:", error)
+    return false
+  }
+}
+
+function gerarPdfParecer(parecer: ParecerHistorico, janela?: Window | null) {
+  const titulo = getNomeArquivoParecer(parecer)
   const html = montarHtmlPdf(parecer)
+  const abriu = abrirHtmlEmJanelaPdf(html, titulo, janela)
 
-  printWindow.document.open()
-  printWindow.document.write(html)
-  printWindow.document.close()
-
-  window.setTimeout(() => {
-    try {
-      printWindow.focus()
-      printWindow.print()
-    } catch (error) {
-      console.error("Erro ao acionar impressão do PDF:", error)
-      alert("O parecer foi gerado, mas o navegador bloqueou a impressão automática. Use Ctrl+P na janela aberta para salvar em PDF.")
-    }
-  }, 900)
+  if (!abriu) {
+    alert(
+      "O navegador bloqueou a janela do PDF. Libere pop-ups para esta página ou tente novamente pelo botão PDF no histórico."
+    )
+  }
 }
 
 export default function ParecerTecnicoPage() {
@@ -756,6 +1044,7 @@ export default function ParecerTecnicoPage() {
   const salvandoRef = useRef(false)
   const [deletandoItemId, setDeletandoItemId] = useState<string | null>(null)
   const [mensagem, setMensagem] = useState<MensagemTela>(null)
+  const [pdfPronto, setPdfPronto] = useState<PdfPronto>(null)
 
   const [usuario, setUsuario] = useState<UsuarioPerfil | null>(null)
   const [escolas, setEscolas] = useState<Escola[]>([])
@@ -1175,7 +1464,12 @@ export default function ParecerTecnicoPage() {
 
     const finalizar = status === "finalizado"
 
-    if (!validarFormulario(finalizar)) return
+    if (!validarFormulario(finalizar)) {
+      window.setTimeout(() => {
+        window.scrollTo({ top: 0, behavior: "smooth" })
+      }, 50)
+      return
+    }
 
     salvandoRef.current = true
 
@@ -1185,16 +1479,19 @@ export default function ParecerTecnicoPage() {
       janelaPdf = window.open("", "_blank")
 
       if (janelaPdf) {
+        janelaPdf.document.open()
         janelaPdf.document.write(`
           <html>
             <body style="font-family: Arial; background:#020617; color:white; display:flex; align-items:center; justify-content:center; height:100vh; margin:0;">
-              <div style="text-align:center;">
-                <h2>Gerando parecer técnico...</h2>
-                <p style="color:#94a3b8;">Aguarde enquanto o documento institucional é preparado.</p>
+              <div style="text-align:center; max-width:520px; padding:24px;">
+                <div style="width:42px; height:42px; border-radius:50%; border:3px solid #1e293b; border-top-color:#06b6d4; margin:0 auto 18px;"></div>
+                <h2 style="margin:0 0 8px;">Gerando parecer técnico...</h2>
+                <p style="color:#94a3b8; margin:0;">Aguarde enquanto o documento institucional é preparado.</p>
               </div>
             </body>
           </html>
         `)
+        janelaPdf.document.close()
       }
     }
 
@@ -1309,7 +1606,23 @@ export default function ParecerTecnicoPage() {
       })
 
       if (finalizar) {
-        gerarPdfParecer(parecerCompleto, janelaPdf)
+        const htmlPdf = montarHtmlPdf(parecerCompleto)
+        const tituloPdf = getNomeArquivoParecer(parecerCompleto)
+
+        setPdfPronto({
+          html: htmlPdf,
+          titulo: tituloPdf,
+        })
+
+        const abriuPdf = abrirHtmlEmJanelaPdf(htmlPdf, tituloPdf, janelaPdf)
+
+        if (!abriuPdf) {
+          setMensagem({
+            tipo: "info",
+            texto:
+              "Parecer finalizado com sucesso. O navegador bloqueou a abertura automática; use o botão Abrir PDF exibido na tela.",
+          })
+        }
       }
 
       limparFormulario()
@@ -1406,9 +1719,9 @@ export default function ParecerTecnicoPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center">
+      <div className="flex min-h-[60vh] items-center justify-center rounded-[2rem] border border-slate-800 bg-[#020617]">
         <div className="flex flex-col items-center gap-4">
-          <div className="h-12 w-12 animate-spin rounded-full border-t-2 border-cyan-500" />
+          <div className="h-12 w-12 animate-spin rounded-full border-2 border-cyan-500 border-t-transparent shadow-[0_0_35px_rgba(6,182,212,0.25)]" />
           <p className="text-xs font-black uppercase tracking-[0.25em] text-slate-500">
             Carregando parecer técnico
           </p>
@@ -1418,9 +1731,9 @@ export default function ParecerTecnicoPage() {
   }
 
   return (
-    <div className="mx-auto max-w-[1700px] space-y-8 pb-12">
-      <section className="relative overflow-hidden rounded-[2rem] border border-slate-800 bg-[#020617] p-5 shadow-2xl md:p-7">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(6,182,212,0.16),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(59,130,246,0.10),transparent_30%)]" />
+    <div className="mx-auto max-w-[1700px] space-y-7 pb-12">
+      <section className="relative overflow-hidden rounded-[2.25rem] border border-cyan-500/20 bg-[#020617] p-5 shadow-2xl shadow-cyan-950/10 md:p-8">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(6,182,212,0.20),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(59,130,246,0.14),transparent_32%),linear-gradient(135deg,rgba(15,23,42,0.55),transparent)]" />
 
         <div className="relative z-10 flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
           <div>
@@ -1462,7 +1775,7 @@ export default function ParecerTecnicoPage() {
             </p>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+          <div className="rounded-3xl border border-cyan-500/15 bg-slate-950/75 p-4 shadow-inner shadow-cyan-950/20">
             <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
               Técnico identificado
             </p>
@@ -1483,6 +1796,23 @@ export default function ParecerTecnicoPage() {
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="rounded-3xl border border-blue-500/20 bg-blue-500/10 p-5 shadow-xl shadow-blue-950/10">
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-300">Fluxo do parecer</p>
+          <p className="mt-2 text-sm font-semibold leading-relaxed text-blue-100/80">Preencha os dados da visita, registre os equipamentos avaliados e finalize para gerar o PDF institucional.</p>
+        </div>
+
+        <div className="rounded-3xl border border-cyan-500/20 bg-cyan-500/10 p-5 shadow-xl shadow-cyan-950/10">
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-cyan-300">PDF otimizado</p>
+          <p className="mt-2 text-sm font-semibold leading-relaxed text-cyan-100/80">O documento sai mais limpo, com margens ajustadas, indicadores técnicos e blocos compactos por equipamento.</p>
+        </div>
+
+        <div className="rounded-3xl border border-emerald-500/20 bg-emerald-500/10 p-5 shadow-xl shadow-emerald-950/10">
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-emerald-300">Registro técnico</p>
+          <p className="mt-2 text-sm font-semibold leading-relaxed text-emerald-100/80">Rascunhos continuam editáveis e pareceres finalizados seguem disponíveis no histórico recente.</p>
         </div>
       </section>
 
@@ -1532,7 +1862,7 @@ export default function ParecerTecnicoPage() {
         </div>
       )}
 
-      <section className="grid grid-cols-2 gap-4 lg:grid-cols-6">
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
         <ResumoCard
           label="Equipamentos"
           value={totaisItens.total}
@@ -1576,7 +1906,7 @@ export default function ParecerTecnicoPage() {
         />
       </section>
 
-      <form className="grid grid-cols-1 gap-8 xl:grid-cols-12">
+      <form className="grid grid-cols-1 gap-7 xl:grid-cols-12">
         <section className="xl:col-span-8">
           <Panel>
             <div className="mb-6">
@@ -1693,7 +2023,7 @@ export default function ParecerTecnicoPage() {
                 <input
                   value={chamadoReferencia}
                   onChange={(event) => setChamadoReferencia(event.target.value)}
-                  placeholder="Exemplo: SEE-0000000, chamado interno, OS, visita programada..."
+                  placeholder="Exemplo: STI-26/0000"
                   className="w-full rounded-2xl border border-slate-700 bg-slate-900/60 px-4 py-4 text-sm font-semibold text-white outline-none transition-all placeholder:text-slate-600 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
                 />
               </div>
@@ -1708,7 +2038,7 @@ export default function ParecerTecnicoPage() {
                   value={resumoAtendimento}
                   onChange={(event) => setResumoAtendimento(event.target.value)}
                   placeholder="Descreva o contexto geral do atendimento realizado na escola..."
-                  className="w-full resize-none rounded-2xl border border-slate-700 bg-slate-900/60 px-4 py-4 text-sm font-medium text-white outline-none transition-all placeholder:text-slate-600 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+                  className="w-full resize-none rounded-2xl border border-slate-700/90 bg-slate-900/60 px-4 py-4 text-sm font-medium text-white outline-none transition-all placeholder:text-slate-600 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 focus:shadow-[0_0_0_4px_rgba(6,182,212,0.08)]"
                 />
               </div>
             </div>
@@ -1959,7 +2289,7 @@ export default function ParecerTecnicoPage() {
           </div>
         </section>
 
-        <aside className="space-y-8 xl:col-span-4">
+        <aside className="space-y-7 xl:col-span-4">
           <Panel>
             <h2 className="text-xl font-black text-white">
               Finalização do parecer
@@ -1991,7 +2321,7 @@ export default function ParecerTecnicoPage() {
                 value={observacoesGerais}
                 onChange={(event) => setObservacoesGerais(event.target.value)}
                 placeholder="Observações gerais do parecer, orientações à escola ou encaminhamentos finais..."
-                className="w-full resize-none rounded-2xl border border-slate-700 bg-slate-900/60 px-4 py-4 text-sm font-medium text-white outline-none transition-all placeholder:text-slate-600 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+                className="w-full resize-none rounded-2xl border border-slate-700/90 bg-slate-900/60 px-4 py-4 text-sm font-medium text-white outline-none transition-all placeholder:text-slate-600 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 focus:shadow-[0_0_0_4px_rgba(6,182,212,0.08)]"
               />
             </div>
 
@@ -2161,6 +2491,48 @@ export default function ParecerTecnicoPage() {
           </Panel>
         </aside>
       </form>
+
+      {pdfPronto && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#020617]/90 p-4 backdrop-blur-md">
+          <div className="w-full max-w-xl overflow-hidden rounded-[2rem] border border-cyan-500/30 bg-[#020617] shadow-2xl shadow-cyan-950/30">
+            <div className="relative overflow-hidden border-b border-slate-800 p-6">
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(6,182,212,0.18),transparent_36%)]" />
+              <div className="relative z-10">
+                <p className="mb-3 inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-emerald-300">
+                  Parecer finalizado
+                </p>
+
+                <h2 className="text-2xl font-black tracking-tight text-white">
+                  PDF pronto para impressão
+                </h2>
+
+                <p className="mt-2 text-sm font-medium leading-relaxed text-slate-400">
+                  Caso a janela de impressão não tenha aberto automaticamente, use o botão abaixo para abrir o documento e salvar em PDF.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3 p-6">
+              <button
+                type="button"
+                onClick={() => abrirHtmlEmJanelaPdf(pdfPronto.html, pdfPronto.titulo)}
+                className="w-full rounded-2xl bg-cyan-500 px-5 py-4 text-sm font-black uppercase tracking-widest text-cyan-950 shadow-lg shadow-cyan-500/20 transition-all hover:bg-cyan-400"
+              >
+                Abrir PDF / Imprimir
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPdfPronto(null)}
+                className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-5 py-4 text-sm font-black uppercase tracking-widest text-slate-300 transition-all hover:bg-slate-800 hover:text-white"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
@@ -2464,12 +2836,12 @@ function ResumoCard({
   }[tone]
 
   return (
-    <div className={`rounded-2xl border p-4 shadow-lg ${colors}`}>
+    <div className={`group relative overflow-hidden rounded-[1.35rem] border p-4 shadow-lg transition-all duration-300 hover:-translate-y-0.5 hover:shadow-2xl ${colors}`}>
       <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80">
         {label}
       </p>
 
-      <p className="mt-2 text-4xl font-black">{value}</p>
+      <p className="mt-2 text-4xl font-black text-white drop-shadow-sm">{value}</p>
 
       <p className="mt-1 text-xs font-bold opacity-80">{description}</p>
     </div>
@@ -2484,7 +2856,7 @@ function MiniResumo({
   value: string | number
 }) {
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+    <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 shadow-inner">
       <p className="text-[10px] font-black uppercase tracking-widest text-slate-600">
         {label}
       </p>
@@ -2532,7 +2904,7 @@ function Campo({
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         readOnly={readOnly}
-        className={`w-full rounded-2xl border border-slate-700 px-4 py-4 text-sm font-semibold text-white outline-none transition-all placeholder:text-slate-600 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 ${
+        className={`w-full rounded-2xl border border-slate-700/90 px-4 py-4 text-sm font-semibold text-white outline-none transition-all placeholder:text-slate-600 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 focus:shadow-[0_0_0_4px_rgba(6,182,212,0.08)] ${
           readOnly ? "bg-slate-900/30 text-slate-400" : "bg-slate-900/60"
         }`}
       />
@@ -2562,7 +2934,7 @@ function Area({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="w-full resize-none rounded-2xl border border-slate-700 bg-slate-900/60 px-4 py-4 text-sm font-medium text-white outline-none transition-all placeholder:text-slate-600 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+        className="w-full resize-none rounded-2xl border border-slate-700/90 bg-slate-900/60 px-4 py-4 text-sm font-medium text-white outline-none transition-all placeholder:text-slate-600 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 focus:shadow-[0_0_0_4px_rgba(6,182,212,0.08)]"
       />
     </div>
   )

@@ -645,11 +645,13 @@ export default async function DiretoriaPage({
         </div>
       )}
 
-      <FiltroVisaoGeral
-        modelosAgrupados={modelosAgrupados}
-        totalPlataformasRecebidas={totalPlataformasRecebidas}
-        totalPlataformasRespondidas={totalPlataformasRespondidas}
-      />
+      <div className="[&_button[class*='bg-green']]:hidden [&_button[class*='bg-emerald']]:hidden [&_a[class*='bg-green']]:hidden [&_a[class*='bg-emerald']]:hidden">
+        <FiltroVisaoGeral
+          modelosAgrupados={modelosAgrupados}
+          totalPlataformasRecebidas={totalPlataformasRecebidas}
+          totalPlataformasRespondidas={totalPlataformasRespondidas}
+        />
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
         <div className="h-full">
@@ -816,8 +818,7 @@ export default async function DiretoriaPage({
                   "bg-green-500/10 text-green-400 border-green-500/30"
 
                 if (item.saude < 50) {
-                  colorClass =
-                    "bg-red-500/10 text-red-400 border-red-500/30"
+                  colorClass = "bg-red-500/10 text-red-400 border-red-500/30"
                 } else if (item.saude < 80) {
                   colorClass =
                     "bg-yellow-500/10 text-yellow-400 border-yellow-500/30"

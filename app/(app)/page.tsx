@@ -68,12 +68,90 @@ const statsIniciais: Stats = {
   inventariosPendentes: 0,
 }
 
+const AVISO_CONFIGS: Record<
+  string,
+  {
+    label: string
+    emoji: string
+    prioridade: number
+    badge: string
+    card: string
+    iconBox: string
+    glow: string
+  }
+> = {
+  urgente: {
+    label: "Urgente",
+    emoji: "🚨",
+    prioridade: 1,
+    badge: "border-red-500/30 bg-red-500/10 text-red-300",
+    card: "border-red-500/25 bg-gradient-to-br from-red-500/10 via-slate-900/80 to-[#020617]",
+    iconBox: "border-red-500/25 bg-red-500/10",
+    glow: "bg-red-500/10",
+  },
+  alerta: {
+    label: "Alerta",
+    emoji: "⚠️",
+    prioridade: 2,
+    badge: "border-yellow-500/30 bg-yellow-500/10 text-yellow-300",
+    card: "border-yellow-500/25 bg-gradient-to-br from-yellow-500/10 via-slate-900/80 to-[#020617]",
+    iconBox: "border-yellow-500/25 bg-yellow-500/10",
+    glow: "bg-yellow-500/10",
+  },
+  comunicado: {
+    label: "Comunicado",
+    emoji: "📢",
+    prioridade: 3,
+    badge: "border-cyan-500/30 bg-cyan-500/10 text-cyan-300",
+    card: "border-cyan-500/25 bg-gradient-to-br from-cyan-500/10 via-slate-900/80 to-[#020617]",
+    iconBox: "border-cyan-500/25 bg-cyan-500/10",
+    glow: "bg-cyan-500/10",
+  },
+  manutencao: {
+    label: "Manutenção",
+    emoji: "🛠️",
+    prioridade: 4,
+    badge: "border-purple-500/30 bg-purple-500/10 text-purple-300",
+    card: "border-purple-500/25 bg-gradient-to-br from-purple-500/10 via-slate-900/80 to-[#020617]",
+    iconBox: "border-purple-500/25 bg-purple-500/10",
+    glow: "bg-purple-500/10",
+  },
+  sucesso: {
+    label: "Normalizado",
+    emoji: "✅",
+    prioridade: 5,
+    badge: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+    card: "border-emerald-500/25 bg-gradient-to-br from-emerald-500/10 via-slate-900/80 to-[#020617]",
+    iconBox: "border-emerald-500/25 bg-emerald-500/10",
+    glow: "bg-emerald-500/10",
+  },
+  informativo: {
+    label: "Informativo",
+    emoji: "ℹ️",
+    prioridade: 6,
+    badge: "border-blue-500/30 bg-blue-500/10 text-blue-300",
+    card: "border-blue-500/25 bg-gradient-to-br from-blue-500/10 via-slate-900/80 to-[#020617]",
+    iconBox: "border-blue-500/25 bg-blue-500/10",
+    glow: "bg-blue-500/10",
+  },
+}
+
+function getAvisoConfig(tipo: unknown) {
+  const tipoLimpo = normalizarTexto(tipo)
+  return AVISO_CONFIGS[tipoLimpo] || AVISO_CONFIGS.informativo
+}
+
 function normalizarTexto(value: unknown) {
   return String(value || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim()
+}
+
+function textoSeguro(value: unknown, fallback = "") {
+  const texto = String(value || "").trim()
+  return texto || fallback
 }
 
 function toNumber(value: unknown) {
@@ -98,7 +176,15 @@ function isChamadoAberto(status: unknown) {
 
   if (!statusLimpo) return true
 
-  return !isChamadoAtendido(statusLimpo)
+  const fechado = isChamadoAtendido(statusLimpo)
+
+  const statusIgnorado =
+    statusLimpo.includes("cancelado") ||
+    statusLimpo.includes("cancelada") ||
+    statusLimpo.includes("arquivado") ||
+    statusLimpo.includes("arquivada")
+
+  return !fechado && !statusIgnorado
 }
 
 function isVisitaRealizada(status: unknown) {
@@ -124,6 +210,23 @@ function formatarData(dataIso?: string | null) {
   })
 }
 
+function formatarDataHora(dataIso?: string | null) {
+  if (!dataIso) return "Sem registro"
+
+  const data = new Date(dataIso)
+
+  if (Number.isNaN(data.getTime())) return "Sem registro"
+
+  return data.toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
 function getInventarioStatusClass(pendentes: number) {
   if (pendentes <= 0) {
     return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
@@ -136,6 +239,20 @@ function getInventarioStatusClass(pendentes: number) {
   return "border-red-500/30 bg-red-500/10 text-red-300"
 }
 
+function ordenarAvisosPorPrioridade(avisos: Aviso[]) {
+  return [...avisos].sort((a, b) => {
+    const prioridadeA = getAvisoConfig(a.tipo).prioridade
+    const prioridadeB = getAvisoConfig(b.tipo).prioridade
+
+    if (prioridadeA !== prioridadeB) return prioridadeA - prioridadeB
+
+    const dataA = a.created_at ? new Date(a.created_at).getTime() : 0
+    const dataB = b.created_at ? new Date(b.created_at).getTime() : 0
+
+    return dataB - dataA
+  })
+}
+
 export default function Home() {
   const supabase = useMemo(() => createClient(), [])
 
@@ -145,7 +262,9 @@ export default function Home() {
   const [avisos, setAvisos] = useState<Aviso[]>([])
   const [tecnicos, setTecnicos] = useState<Tecnico[]>([])
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [mensagem, setMensagem] = useState<MensagemTela>(null)
+  const [ultimaAtualizacao, setUltimaAtualizacao] = useState<string | null>(null)
 
   const percentualInventario = useMemo(() => {
     if (stats.escolasCadastradas <= 0) return 0
@@ -163,191 +282,220 @@ export default function Home() {
       ? Math.round((stats.chamadosAtendidos / chamadosTotalOperacional) * 100)
       : 0
 
-  const carregar = useCallback(async () => {
-    try {
-      setLoading(true)
-      setMensagem(null)
+  const carregar = useCallback(
+    async (modo: "inicial" | "manual" = "inicial") => {
+      try {
+        if (modo === "inicial") setLoading(true)
+        if (modo === "manual") setRefreshing(true)
 
-      const agora = new Date()
-      const agoraTime = agora.getTime()
-      const limiteTempo =
-        agoraTime - DIAS_DESATUALIZADO * 24 * 60 * 60 * 1000
+        setMensagem(null)
 
-      const [
-        chamadosResponse,
-        visitasResponse,
-        equipamentosResponse,
-        escolasResponse,
-        inventariosResponse,
-        tutoriaisResponse,
-        avisosResponse,
-        tecnicosResponse,
-      ] = await Promise.all([
-        supabase.from("chamados").select("id, status"),
-        supabase
-          .from("fields_visitas")
-          .select("id, escola, tecnico, status, data_visita, categoria, subcategoria")
-          .order("data_visita", { ascending: false }),
-        supabase.from("equipamentos_recebidos").select("quantidade_recebida"),
-        supabase.from("escolas").select("id, nome_escola"),
-        supabase.from("inventario_respostas").select("escola_nome, created_at"),
-        supabase
-          .from("base_conhecimento")
-          .select("id, titulo, descricao, categoria, subcategoria, arquivo_url, visualizacoes")
-          .order("visualizacoes", { ascending: false })
-          .limit(8),
-        supabase
-          .from("avisos_setec")
-          .select("*")
-          .eq("ativo", true)
-          .order("created_at", { ascending: false }),
-        supabase
-          .from("tecnicos")
-          .select("nome, ativo")
-          .eq("ativo", true)
-          .order("nome", { ascending: true }),
-      ])
+        const agora = new Date()
+        const agoraTime = agora.getTime()
+        const limiteTempo =
+          agoraTime - DIAS_DESATUALIZADO * 24 * 60 * 60 * 1000
 
-      if (chamadosResponse.error) throw chamadosResponse.error
-      if (visitasResponse.error) throw visitasResponse.error
-      if (equipamentosResponse.error) throw equipamentosResponse.error
-      if (escolasResponse.error) throw escolasResponse.error
-      if (inventariosResponse.error) throw inventariosResponse.error
-      if (tutoriaisResponse.error) throw tutoriaisResponse.error
-      if (avisosResponse.error) throw avisosResponse.error
+        const [
+          chamadosResponse,
+          visitasResponse,
+          equipamentosResponse,
+          escolasResponse,
+          inventariosResponse,
+          tutoriaisResponse,
+          avisosResponse,
+          tecnicosResponse,
+        ] = await Promise.all([
+          supabase.from("chamados").select("id, status"),
+          supabase
+            .from("fields_visitas")
+            .select(
+              "id, escola, tecnico, status, data_visita, categoria, subcategoria"
+            )
+            .order("data_visita", {
+              ascending: false,
+              nullsFirst: false,
+            }),
+          supabase.from("equipamentos_recebidos").select("quantidade_recebida"),
+          supabase.from("escolas").select("id, nome_escola"),
+          supabase.from("inventario_respostas").select("escola_nome, created_at"),
+          supabase
+            .from("base_conhecimento")
+            .select(
+              "id, titulo, descricao, categoria, subcategoria, arquivo_url, visualizacoes"
+            )
+            .order("visualizacoes", { ascending: false })
+            .limit(8),
+          supabase
+            .from("avisos_setec")
+            .select(
+              "id, titulo, descricao, emoji, tipo, ativo, data_inicio, data_fim, created_at"
+            )
+            .eq("ativo", true)
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("tecnicos")
+            .select("nome, ativo")
+            .eq("ativo", true)
+            .order("nome", { ascending: true }),
+        ])
 
-      const chamados = chamadosResponse.data || []
-      const visitasRealizadas = visitasResponse.data || []
-      const equipamentos = equipamentosResponse.data || []
-      const escolas = escolasResponse.data || []
-      const inventarios = inventariosResponse.data || []
-      const tutoriaisData = tutoriaisResponse.data || []
-      const avisosData = avisosResponse.data || []
+        if (chamadosResponse.error) throw chamadosResponse.error
+        if (visitasResponse.error) throw visitasResponse.error
+        if (equipamentosResponse.error) throw equipamentosResponse.error
+        if (escolasResponse.error) throw escolasResponse.error
+        if (inventariosResponse.error) throw inventariosResponse.error
+        if (tutoriaisResponse.error) throw tutoriaisResponse.error
+        if (avisosResponse.error) throw avisosResponse.error
 
-      const totalEscolas = escolas.length
+        const chamados = chamadosResponse.data || []
+        const visitasRealizadas = visitasResponse.data || []
+        const equipamentos = equipamentosResponse.data || []
+        const escolas = escolasResponse.data || []
+        const inventarios = inventariosResponse.data || []
+        const tutoriaisData = tutoriaisResponse.data || []
+        const avisosData = avisosResponse.data || []
 
-      const ultimasAtualizacoes = new Map<string, number>()
+        const totalEscolas = escolas.length
+        const ultimasAtualizacoes = new Map<string, number>()
 
-      inventarios.forEach((inventario: any) => {
-        if (!inventario.escola_nome || !inventario.created_at) return
+        inventarios.forEach((inventario: any) => {
+          if (!inventario.escola_nome || !inventario.created_at) return
 
-        const escola = String(inventario.escola_nome).trim()
-        const dataInventario = new Date(inventario.created_at).getTime()
+          const escola = String(inventario.escola_nome).trim()
+          const dataInventario = new Date(inventario.created_at).getTime()
 
-        if (!escola || Number.isNaN(dataInventario)) return
+          if (!escola || Number.isNaN(dataInventario)) return
 
-        const dataAtual = ultimasAtualizacoes.get(escola) || 0
+          const dataAtual = ultimasAtualizacoes.get(escola) || 0
 
-        if (dataInventario > dataAtual) {
-          ultimasAtualizacoes.set(escola, dataInventario)
-        }
-      })
-
-      let escolasAtualizadas = 0
-
-      ultimasAtualizacoes.forEach((dataUltima) => {
-        if (dataUltima >= limiteTempo) {
-          escolasAtualizadas += 1
-        }
-      })
-
-      const inventariosPendentes = Math.max(totalEscolas - escolasAtualizadas, 0)
-
-      const avisosValidos = avisosData
-        .filter((aviso: any) => {
-          const dataInicio = aviso.data_inicio
-            ? new Date(aviso.data_inicio).getTime()
-            : 0
-
-          const dataFim = aviso.data_fim
-            ? new Date(aviso.data_fim).getTime()
-            : Number.POSITIVE_INFINITY
-
-          return dataInicio <= agoraTime && dataFim >= agoraTime
-        })
-        .slice(0, 3)
-
-      let tecnicosFormatados: Tecnico[] = []
-
-      if (!tecnicosResponse.error && tecnicosResponse.data?.length) {
-        tecnicosFormatados = tecnicosResponse.data
-          .filter((tecnico: any) => tecnico?.nome)
-          .map((tecnico: any) => ({
-            nome: String(tecnico.nome),
-            ativo: tecnico.ativo,
-          }))
-      } else {
-        const tecnicosFallback = new Set<string>()
-
-        visitasRealizadas.forEach((visita: any) => {
-          if (visita.tecnico) {
-            tecnicosFallback.add(String(visita.tecnico))
+          if (dataInventario > dataAtual) {
+            ultimasAtualizacoes.set(escola, dataInventario)
           }
         })
 
-        tecnicosFormatados = Array.from(tecnicosFallback)
-          .sort((a, b) => a.localeCompare(b))
-          .map((nome) => ({ nome, ativo: true }))
-      }
+        let escolasAtualizadas = 0
 
-      setStats({
-        chamadosAtendidos: chamados.filter((chamado: any) =>
-          isChamadoAtendido(chamado.status)
-        ).length,
-        chamadosAbertos: chamados.filter((chamado: any) =>
-          isChamadoAberto(chamado.status)
-        ).length,
-        visitasRealizadas: visitasRealizadas.filter((visita: any) =>
-          isVisitaRealizada(visita.status)
-        ).length,
-        equipamentosRecebidos: equipamentos.reduce(
-          (acc: number, item: any) => acc + toNumber(item.quantidade_recebida),
+        ultimasAtualizacoes.forEach((dataUltima) => {
+          if (dataUltima >= limiteTempo) {
+            escolasAtualizadas += 1
+          }
+        })
+
+        const inventariosPendentes = Math.max(
+          totalEscolas - escolasAtualizadas,
           0
-        ),
-        escolasCadastradas: totalEscolas,
-        inventariosAtualizados: escolasAtualizadas,
-        inventariosPendentes,
-      })
+        )
 
-      setTutoriais(tutoriaisData as Tutorial[])
-      setVisitas((visitasRealizadas || []).slice(0, 5) as Visita[])
-      setAvisos(avisosValidos as Aviso[])
-      setTecnicos(tecnicosFormatados)
-    } catch (error: any) {
-      console.error("Erro ao carregar painel inicial:", error)
+        const avisosValidos = ordenarAvisosPorPrioridade(
+          avisosData.filter((aviso: any) => {
+            const dataInicio = aviso.data_inicio
+              ? new Date(aviso.data_inicio).getTime()
+              : 0
 
-      setMensagem({
-        tipo: "error",
-        texto:
-          error?.message ||
-          "Não foi possível carregar os dados da Central Operacional SETEC.",
-      })
-    } finally {
-      setLoading(false)
-    }
-  }, [supabase])
+            const dataFim = aviso.data_fim
+              ? new Date(aviso.data_fim).getTime()
+              : Number.POSITIVE_INFINITY
+
+            return dataInicio <= agoraTime && dataFim >= agoraTime
+          }) as Aviso[]
+        ).slice(0, 3)
+
+        let tecnicosFormatados: Tecnico[] = []
+
+        if (!tecnicosResponse.error && tecnicosResponse.data?.length) {
+          tecnicosFormatados = tecnicosResponse.data
+            .filter((tecnico: any) => tecnico?.nome)
+            .map((tecnico: any) => ({
+              nome: String(tecnico.nome),
+              ativo: tecnico.ativo,
+            }))
+        } else {
+          const tecnicosFallback = new Set<string>()
+
+          visitasRealizadas.forEach((visita: any) => {
+            if (visita.tecnico) {
+              tecnicosFallback.add(String(visita.tecnico))
+            }
+          })
+
+          tecnicosFormatados = Array.from(tecnicosFallback)
+            .sort((a, b) => a.localeCompare(b, "pt-BR"))
+            .map((nome) => ({ nome, ativo: true }))
+        }
+
+        setStats({
+          chamadosAtendidos: chamados.filter((chamado: any) =>
+            isChamadoAtendido(chamado.status)
+          ).length,
+          chamadosAbertos: chamados.filter((chamado: any) =>
+            isChamadoAberto(chamado.status)
+          ).length,
+          visitasRealizadas: visitasRealizadas.filter((visita: any) =>
+            isVisitaRealizada(visita.status)
+          ).length,
+          equipamentosRecebidos: equipamentos.reduce(
+            (acc: number, item: any) =>
+              acc + toNumber(item.quantidade_recebida),
+            0
+          ),
+          escolasCadastradas: totalEscolas,
+          inventariosAtualizados: escolasAtualizadas,
+          inventariosPendentes,
+        })
+
+        setTutoriais(tutoriaisData as Tutorial[])
+        setVisitas((visitasRealizadas || []).slice(0, 5) as Visita[])
+        setAvisos(avisosValidos)
+        setTecnicos(tecnicosFormatados)
+        setUltimaAtualizacao(new Date().toISOString())
+
+        if (modo === "manual") {
+          setMensagem({
+            tipo: "success",
+            texto: "Painel inicial atualizado com sucesso.",
+          })
+        }
+      } catch (error: any) {
+        console.error("Erro ao carregar painel inicial:", error)
+
+        setMensagem({
+          tipo: "error",
+          texto:
+            error?.message ||
+            "Não foi possível carregar os dados da Central Operacional SETEC.",
+        })
+      } finally {
+        setLoading(false)
+        setRefreshing(false)
+      }
+    },
+    [supabase]
+  )
 
   useEffect(() => {
-    carregar()
+    carregar("inicial")
   }, [carregar])
 
+  useEffect(() => {
+    if (!mensagem) return
+
+    const timer = window.setTimeout(() => {
+      setMensagem(null)
+    }, 5500)
+
+    return () => window.clearTimeout(timer)
+  }, [mensagem])
+
   if (loading) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="h-12 w-12 animate-spin rounded-full border-t-2 border-blue-500" />
-          <p className="text-xs font-black uppercase tracking-[0.25em] text-slate-500">
-            Carregando Central SETEC
-          </p>
-        </div>
-      </div>
-    )
+    return <LoadingPage />
   }
 
   return (
     <div className="mx-auto max-w-[1700px] space-y-8 pb-10">
       <section className="relative overflow-hidden rounded-[2rem] border border-slate-800 bg-[#020617] p-5 shadow-2xl md:p-7">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(59,130,246,0.18),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(6,182,212,0.08),transparent_30%)]" />
+        <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-blue-500/10 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-24 left-1/4 h-72 w-72 rounded-full bg-cyan-500/10 blur-3xl" />
 
         <div className="relative z-10 flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
           <div>
@@ -374,6 +522,22 @@ export default function Home() {
               inventário, equipamentos, Field, avisos internos e acessos
               essenciais do sistema.
             </p>
+
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => carregar("manual")}
+                disabled={refreshing}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-blue-500/25 bg-blue-500/10 px-4 py-3 text-xs font-black uppercase tracking-widest text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <span className={refreshing ? "animate-spin" : ""}>↻</span>
+                {refreshing ? "Atualizando" : "Atualizar painel"}
+              </button>
+
+              <span className="text-xs font-semibold text-slate-600">
+                Última atualização: {formatarDataHora(ultimaAtualizacao)}
+              </span>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 sm:min-w-[360px]">
@@ -395,7 +559,15 @@ export default function Home() {
       </section>
 
       {mensagem && (
-        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-4 text-sm font-bold text-red-300">
+        <div
+          className={`rounded-2xl border px-5 py-4 text-sm font-bold ${
+            mensagem.tipo === "success"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+              : mensagem.tipo === "info"
+                ? "border-blue-500/30 bg-blue-500/10 text-blue-300"
+                : "border-red-500/30 bg-red-500/10 text-red-300"
+          }`}
+        >
           {mensagem.texto}
         </div>
       )}
@@ -456,54 +628,35 @@ export default function Home() {
 
       <section>
         <Panel>
-          <div className="mb-5">
-            <h2 className="text-xl font-black text-white">
-              🚨 Avisos importantes - SETEC
-            </h2>
+          <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-xl font-black text-white">
+                🚨 Avisos importantes - SETEC
+              </h2>
 
-            <p className="mt-1 text-sm font-medium text-slate-500">
-              Comunicados ativos dentro do período de exibição configurado.
-            </p>
+              <p className="mt-1 text-sm font-medium text-slate-500">
+                Comunicados ativos dentro do período de exibição configurado.
+              </p>
+            </div>
+
+            {avisos.length > 0 && (
+              <span className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                Ordenado por prioridade
+              </span>
+            )}
           </div>
 
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
             {avisos.length === 0 ? (
-              <EmptyState
-                icon="✅"
-                title="Nenhum aviso ativo"
-                description="Não há comunicados importantes no momento."
-              />
+              <div className="lg:col-span-3">
+                <EmptyState
+                  icon="✅"
+                  title="Nenhum aviso ativo"
+                  description="Não há comunicados importantes no momento."
+                />
+              </div>
             ) : (
-              avisos.map((aviso) => (
-                <div
-                  key={aviso.id}
-                  className="group rounded-2xl border border-slate-800 bg-slate-900/80 p-4 transition-all hover:border-blue-500/30 hover:bg-slate-900"
-                >
-                  <div className="flex gap-4">
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-slate-700 bg-[#020617] text-2xl">
-                      {aviso.emoji || "📌"}
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-1 flex flex-wrap items-center gap-2">
-                        <p className="truncate text-sm font-black text-white">
-                          {aviso.titulo || "Aviso SETEC"}
-                        </p>
-
-                        {aviso.tipo && (
-                          <span className="rounded-full border border-slate-700 bg-[#020617] px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-slate-400">
-                            {aviso.tipo}
-                          </span>
-                        )}
-                      </div>
-
-                      <p className="line-clamp-3 text-sm leading-relaxed text-slate-400">
-                        {aviso.descricao || "Sem descrição registrada."}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ))
+              avisos.map((aviso) => <AvisoCard key={aviso.id} aviso={aviso} />)
             )}
           </div>
         </Panel>
@@ -803,6 +956,80 @@ export default function Home() {
         <span className="hidden sm:inline">Minha escola está sem internet</span>
         <span className="sm:hidden">Sem internet</span>
       </a>
+    </div>
+  )
+}
+
+function LoadingPage() {
+  return (
+    <div className="flex min-h-[60vh] items-center justify-center p-4">
+      <div className="w-full max-w-md rounded-[2rem] border border-slate-800 bg-[#020617] p-6 text-center shadow-2xl shadow-slate-950/30">
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-blue-500/25 bg-blue-500/10">
+          <div className="h-7 w-7 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
+        </div>
+
+        <p className="text-sm font-black uppercase tracking-[0.18em] text-white">
+          Carregando Central SETEC
+        </p>
+
+        <p className="mt-2 text-sm font-medium leading-relaxed text-slate-500">
+          Consolidando indicadores, avisos, inventário e registros operacionais.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function AvisoCard({ aviso }: { aviso: Aviso }) {
+  const config = getAvisoConfig(aviso.tipo)
+
+  return (
+    <div
+      className={`group relative min-h-[180px] overflow-hidden rounded-2xl border p-4 transition-all hover:-translate-y-0.5 hover:shadow-2xl ${config.card}`}
+    >
+      <div
+        className={`pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full blur-3xl ${config.glow}`}
+      />
+
+      <div className="relative z-10 flex h-full flex-col">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div
+            className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border text-2xl ${config.iconBox}`}
+          >
+            {aviso.emoji || config.emoji}
+          </div>
+
+          <span
+            className={`rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${config.badge}`}
+          >
+            {config.label}
+          </span>
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <p className="line-clamp-2 text-sm font-black leading-snug text-white">
+            {aviso.titulo || "Aviso SETEC"}
+          </p>
+
+          <p className="mt-2 line-clamp-4 text-sm font-medium leading-relaxed text-slate-300">
+            {aviso.descricao || "Sem descrição registrada."}
+          </p>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-800/70 pt-3">
+          {aviso.data_fim && (
+            <span className="rounded-full border border-slate-700 bg-[#020617]/70 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+              Até {formatarData(aviso.data_fim)}
+            </span>
+          )}
+
+          {!aviso.data_fim && (
+            <span className="rounded-full border border-slate-700 bg-[#020617]/70 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+              Sem expiração
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

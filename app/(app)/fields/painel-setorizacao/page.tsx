@@ -1,318 +1,838 @@
 "use client"
 
-import { useEffect, useState, useMemo } from "react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react"
 import { createClient } from "@/lib/supabase"
 
-// HELPER: Extrai as iniciais (ex: "Matheus Paiva" -> "MP") para os avatares da esquerda
-const getInitials = (name: string) => {
-  if (!name || name === "Sem Técnico") return "⚠️";
-  const parts = name.trim().split(" ");
+type EscolaSetorizacao = {
+  id: string
+  nome_escola: string | null
+  cie: string | number | null
+  tecnico_atribuido: string | null
+}
+
+type TecnicoCarga = {
+  name: string
+  count: number
+}
+
+type Feedback = {
+  tipo: "success" | "error" | "info"
+  texto: string
+} | null
+
+function textoSeguro(value: unknown, fallback = "") {
+  const text = String(value ?? "").trim()
+  return text || fallback
+}
+
+function normalizar(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+}
+
+function getInitials(name?: string | null) {
+  const clean = textoSeguro(name)
+
+  if (!clean || clean === "Sem Técnico") return "ST"
+
+  const parts = clean.split(/\s+/).filter(Boolean)
+
   if (parts.length >= 2) {
-    return (parts[0][0] + parts[1][0]).toUpperCase();
+    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
   }
-  return name.substring(0, 2).toUpperCase();
+
+  return clean.substring(0, 2).toUpperCase()
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message
+  return "Não foi possível carregar os dados da setorização."
+}
+
+function getCargaStyle(count: number, media: number) {
+  if (media > 0 && count > media + 2) {
+    return {
+      label: "Alta carga",
+      badge: "border-orange-500/30 bg-orange-500/10 text-orange-300",
+      bar: "from-orange-500 to-red-500",
+      text: "text-orange-300",
+      glow: "shadow-orange-950/20",
+      dot: "bg-orange-400",
+    }
+  }
+
+  if (media > 0 && count < Math.max(media - 2, 1)) {
+    return {
+      label: "Baixa carga",
+      badge: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+      bar: "from-emerald-500 to-teal-400",
+      text: "text-emerald-300",
+      glow: "shadow-emerald-950/20",
+      dot: "bg-emerald-400",
+    }
+  }
+
+  return {
+    label: "Equilibrado",
+    badge: "border-cyan-500/30 bg-cyan-500/10 text-cyan-300",
+    bar: "from-blue-500 to-cyan-400",
+    text: "text-cyan-300",
+    glow: "shadow-cyan-950/20",
+    dot: "bg-cyan-400",
+  }
 }
 
 export default function PainelVisualSetorizacao() {
-  const supabase = createClient()
-  const [escolas, setEscolas] = useState<any[]>([])
+  const supabase = useMemo(() => createClient(), [])
+
+  const [escolas, setEscolas] = useState<EscolaSetorizacao[]>([])
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [busca, setBusca] = useState("")
   const [filtroTecnico, setFiltroTecnico] = useState("Todos")
+  const [feedback, setFeedback] = useState<Feedback>(null)
+
+  const carregarDados = useCallback(
+    async (modo: "inicial" | "manual" = "inicial") => {
+      if (modo === "inicial") setLoading(true)
+      if (modo === "manual") setRefreshing(true)
+
+      setFeedback(null)
+
+      try {
+        const { data, error } = await supabase
+          .from("escolas")
+          .select("id, nome_escola, cie, tecnico_atribuido")
+          .order("nome_escola", { ascending: true })
+
+        if (error) throw error
+
+        setEscolas((data || []) as EscolaSetorizacao[])
+
+        if (modo === "manual") {
+          setFeedback({
+            tipo: "success",
+            texto: "Painel atualizado com sucesso.",
+          })
+        }
+      } catch (error) {
+        console.error("[Painel Visual Setorização] Erro ao carregar:", error)
+
+        setFeedback({
+          tipo: "error",
+          texto: getErrorMessage(error),
+        })
+      } finally {
+        setLoading(false)
+        setRefreshing(false)
+      }
+    },
+    [supabase]
+  )
 
   useEffect(() => {
-    async function carregar() {
-      const { data } = await supabase.from("escolas").select("id, nome_escola, cie, tecnico_atribuido").order("nome_escola")
-      setEscolas(data || [])
-      setLoading(false)
-    }
-    carregar()
-  }, [])
+    carregarDados("inicial")
+  }, [carregarDados])
+
+  useEffect(() => {
+    if (!feedback) return
+
+    const timer = window.setTimeout(() => {
+      setFeedback(null)
+    }, 5000)
+
+    return () => window.clearTimeout(timer)
+  }, [feedback])
 
   const stats = useMemo(() => {
     const contagem: Record<string, number> = {}
     let pendentes = 0
-    
-    escolas.forEach(e => {
-      if (e.tecnico_atribuido) {
-        contagem[e.tecnico_atribuido] = (contagem[e.tecnico_atribuido] || 0) + 1
+
+    escolas.forEach((escola) => {
+      const tecnico = textoSeguro(escola.tecnico_atribuido)
+
+      if (tecnico) {
+        contagem[tecnico] = (contagem[tecnico] || 0) + 1
       } else {
         pendentes++
       }
     })
 
-    const chartData = Object.entries(contagem)
+    const chartData: TecnicoCarga[] = Object.entries(contagem)
       .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count)
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "pt-BR"))
 
+    const total = escolas.length
+    const cobertas = total - pendentes
     const maxCarga = chartData.length > 0 ? chartData[0].count : 1
-    const totalTecnicosAtivos = chartData.length;
-    const mediaPorTecnico = totalTecnicosAtivos > 0 ? Math.round((escolas.length - pendentes) / totalTecnicosAtivos) : 0;
-    const tecnicoMaisLotado = chartData.length > 0 ? chartData[0] : null;
+    const totalTecnicosAtivos = chartData.length
+    const mediaPorTecnico =
+      totalTecnicosAtivos > 0 ? Math.round(cobertas / totalTecnicosAtivos) : 0
 
-    return { 
-      chartData, 
-      pendentes, 
-      total: escolas.length, 
-      maxCarga, 
-      mediaPorTecnico, 
+    const tecnicoMaisLotado = chartData.length > 0 ? chartData[0] : null
+    const tecnicoMenosLotado =
+      chartData.length > 0 ? chartData[chartData.length - 1] : null
+
+    const percentualCobertura =
+      total > 0 ? Math.round((cobertas / total) * 100) : 0
+
+    const acimaDaMedia = chartData.filter((item) =>
+      mediaPorTecnico > 0 ? item.count > mediaPorTecnico : false
+    ).length
+
+    return {
+      chartData,
+      pendentes,
+      total,
+      cobertas,
+      maxCarga,
+      mediaPorTecnico,
       tecnicoMaisLotado,
-      totalTecnicosAtivos
+      tecnicoMenosLotado,
+      totalTecnicosAtivos,
+      percentualCobertura,
+      acimaDaMedia,
     }
   }, [escolas])
 
   const listaTecnicosSelect = useMemo(() => {
-    const nomes = new Set(escolas.map(e => e.tecnico_atribuido).filter(Boolean))
-    return Array.from(nomes).sort()
+    const nomes = new Set<string>()
+
+    escolas.forEach((escola) => {
+      const tecnico = textoSeguro(escola.tecnico_atribuido)
+      if (tecnico) nomes.add(tecnico)
+    })
+
+    return Array.from(nomes).sort((a, b) => a.localeCompare(b, "pt-BR"))
   }, [escolas])
 
-  const escolasFiltradas = escolas.filter(e => {
-    const matchBusca = e.nome_escola?.toLowerCase().includes(busca.toLowerCase()) || 
-                       e.cie?.toLowerCase().includes(busca.toLowerCase()) ||
-                       e.tecnico_atribuido?.toLowerCase().includes(busca.toLowerCase())
-    
-    const matchTecnico = filtroTecnico === "Todos" 
-                         ? true 
-                         : filtroTecnico === "Sem Técnico"
-                           ? !e.tecnico_atribuido
-                           : e.tecnico_atribuido === filtroTecnico
+  const escolasFiltradas = useMemo(() => {
+    const termo = normalizar(busca)
 
-    return matchBusca && matchTecnico
-  })
+    return escolas.filter((escola) => {
+      const tecnico = textoSeguro(escola.tecnico_atribuido)
 
-  if (loading) return (
-    <div className="flex items-center justify-center h-screen bg-[#0B1120]">
-      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-cyan-500"></div>
-    </div>
-  )
+      const matchBusca = termo
+        ? [escola.nome_escola, escola.cie, escola.tecnico_atribuido]
+            .map(normalizar)
+            .join(" ")
+            .includes(termo)
+        : true
+
+      const matchTecnico =
+        filtroTecnico === "Todos"
+          ? true
+          : filtroTecnico === "Sem Técnico"
+            ? !tecnico
+            : tecnico === filtroTecnico
+
+      return matchBusca && matchTecnico
+    })
+  }, [busca, escolas, filtroTecnico])
+
+  const filtrosAtivos = Boolean(busca.trim()) || filtroTecnico !== "Todos"
+
+  function limparFiltros() {
+    setBusca("")
+    setFiltroTecnico("Todos")
+  }
+
+  if (loading) return <LoadingPage />
 
   return (
-    <div className="space-y-8 pb-12 max-w-[1600px] mx-auto min-h-screen">
-      
-      {/* HEADER EXECUTIVO COM NOVOS CARDS */}
-      <div className="flex flex-col gap-6 border-b border-slate-800/50 pb-8">
-        <div>
-          <h1 className="text-4xl font-black text-white tracking-tight flex items-center gap-3">
-             <span className="text-cyan-500">●</span> Gestão e Setorização FIELD
-          </h1>
-          <p className="text-slate-400 mt-2 text-sm font-medium">
-            Monitoramento tático de carga e diretório de setorização da malha de atendimento.
-          </p>
-        </div>
-        
-        {/* 🚀 FAIXA DE KPIs (NOVIDADE: 5 Cards Estratégicos) */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-           <div className="bg-[#020617] border border-slate-800 rounded-2xl px-5 py-4 flex flex-col items-center justify-center shadow-lg">
-              <span className="text-3xl font-black text-white">{stats.total}</span>
-              <span className="text-[10px] uppercase font-bold text-slate-500 tracking-widest mt-1">Total UEs</span>
-           </div>
-           
-           <div className="bg-gradient-to-t from-emerald-900/20 to-[#020617] border border-emerald-500/30 rounded-2xl px-5 py-4 flex flex-col items-center justify-center shadow-lg shadow-emerald-900/10">
-              <span className="text-3xl font-black text-emerald-400">{stats.total - stats.pendentes}</span>
-              <span className="text-[10px] uppercase font-bold text-emerald-500/80 tracking-widest mt-1">Cobertas</span>
-           </div>
-           
-           <div className="bg-gradient-to-t from-red-900/20 to-[#020617] border border-red-500/30 rounded-2xl px-5 py-4 flex flex-col items-center justify-center shadow-lg shadow-red-900/10">
-              <span className="text-3xl font-black text-red-400">{stats.pendentes}</span>
-              <span className="text-[10px] uppercase font-bold text-red-500/80 tracking-widest mt-1">Descobertas</span>
-           </div>
+    <div className="mx-auto max-w-[1700px] space-y-7 pb-12">
+      <section className="relative overflow-hidden rounded-[2.5rem] border border-cyan-500/20 bg-[#020617] p-5 shadow-2xl shadow-cyan-950/10 md:p-8">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(6,182,212,0.24),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(37,99,235,0.18),transparent_34%)]" />
+        <div className="pointer-events-none absolute -right-28 -top-28 h-72 w-72 rounded-full bg-cyan-500/10 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-28 left-1/3 h-72 w-72 rounded-full bg-blue-500/10 blur-3xl" />
 
-           <div className="bg-gradient-to-t from-blue-900/20 to-[#020617] border border-blue-500/30 rounded-2xl px-5 py-4 flex flex-col items-center justify-center shadow-lg shadow-blue-900/10">
-              <span className="text-3xl font-black text-blue-400">~{stats.mediaPorTecnico}</span>
-              <span className="text-[10px] uppercase font-bold text-blue-500/80 tracking-widest mt-1 text-center">Média / Técnico</span>
-           </div>
+        <div className="relative z-10 grid grid-cols-1 gap-7 xl:grid-cols-[1fr_360px] xl:items-stretch">
+          <div className="flex flex-col justify-between gap-8">
+            <div>
+              <div className="mb-5 flex flex-wrap gap-2">
+                <Badge color="cyan">Fields</Badge>
+                <Badge color="blue">Setorização</Badge>
+                <Badge color="emerald">Malha de atendimento</Badge>
+              </div>
 
-           <div className="bg-gradient-to-t from-orange-900/20 to-[#020617] border border-orange-500/30 rounded-2xl px-4 py-4 flex flex-col items-center justify-center shadow-lg shadow-orange-900/10">
-              <span className="text-2xl font-black text-orange-400 truncate w-full text-center" title={stats.tecnicoMaisLotado?.name || "N/A"}>
-                {stats.tecnicoMaisLotado ? stats.tecnicoMaisLotado.count : "0"} <span className="text-sm">UEs</span>
-              </span>
-              <span className="text-[9px] uppercase font-bold text-orange-500/80 tracking-widest mt-1 text-center truncate w-full">
-                Gargalo: {stats.tecnicoMaisLotado ? getInitials(stats.tecnicoMaisLotado.name) : "Nenhum"}
-              </span>
-           </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 items-start">
-        
-        {/* COLUNA ESQUERDA: GRÁFICO REFORMULADO */}
-        <div className="xl:col-span-1">
-          <Glass title="📊 Carga da Equipe Field">
-            <div className="space-y-4 mt-2 max-h-[579px] overflow-y-auto pr-3 custom-scrollbar">
-              {stats.chartData.length === 0 ? (
-                <div className="text-center py-10">
-                  <span className="text-3xl mb-2 block opacity-50">👨‍🔧</span>
-                  <p className="text-slate-500 text-xs font-bold uppercase tracking-widest">Nenhum técnico atribuído</p>
-                </div>
-              ) : (
-                stats.chartData.map((tec, i) => {
-                  const percent = (tec.count / stats.maxCarga) * 100;
-                  
-                  // Triage de Carga
-                  const isAltaCarga = tec.count > 12;
-                  const isBaixaCarga = tec.count < 8;
-                  
-                  let themeColor = "bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.4)]";
-                  let textColor = "text-cyan-400";
-                  let bgBadge = "bg-cyan-900/30 border-cyan-500/30 text-cyan-400";
-                  
-                  if (isAltaCarga) {
-                    themeColor = "bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]";
-                    textColor = "text-red-400";
-                    bgBadge = "bg-red-900/30 border-red-500/30 text-red-400";
-                  } else if (isBaixaCarga) {
-                    themeColor = "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.4)]";
-                    textColor = "text-emerald-400";
-                    bgBadge = "bg-emerald-900/30 border-emerald-500/30 text-emerald-400";
-                  }
-
-                  const isTop3 = i < 3;
-                  const rankTrophy = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "";
-
-                  return (
-                    <div key={tec.name} className="group flex items-center gap-4 bg-slate-900/30 p-3 rounded-2xl border border-slate-800/50 hover:bg-slate-800/50 transition-all duration-300">
-                      <div className="relative shrink-0">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-sm border ${bgBadge}`}>
-                          {getInitials(tec.name)}
-                        </div>
-                        {isTop3 && (
-                          <div className="absolute -top-2 -right-2 text-lg drop-shadow-md">
-                            {rankTrophy}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex-1 min-w-0">
-                        <div className="flex justify-between items-end mb-1.5">
-                          <span className="text-sm font-bold text-slate-200 truncate pr-2 group-hover:text-white transition-colors">
-                            {tec.name}
-                          </span>
-                          <span className={`text-sm font-black shrink-0 ${textColor}`}>
-                            {tec.count} <span className="text-[9px] text-slate-500 uppercase tracking-widest">UEs</span>
-                          </span>
-                        </div>
-                        <div className="w-full bg-[#020617] rounded-full h-2 border border-slate-800/80 overflow-hidden">
-                          <div 
-                            className={`h-full rounded-full transition-all duration-1000 ${themeColor}`} 
-                            style={{ width: `${percent}%` }}
-                          ></div>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })
-              )}
-            </div>
-          </Glass>
-        </div>
-
-        {/* COLUNA DIREITA: DIRETÓRIO DE CONSULTA */}
-        <div className="xl:col-span-2">
-          <Glass title="🔍 Consulta de Malha de Atendimento">
-            
-            <div className="flex flex-col md:flex-row gap-4 mb-6">
-              <div className="relative flex-1">
-                <span className="absolute inset-y-0 left-5 flex items-center text-slate-500">
-                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
+              <h1 className="max-w-5xl text-3xl font-black tracking-tight text-white md:text-5xl">
+                Gestão e Setorização{" "}
+                <span className="bg-gradient-to-r from-cyan-300 via-blue-400 to-blue-600 bg-clip-text text-transparent">
+                  FIELD
                 </span>
-                <input 
-                  type="text" 
-                  placeholder="Localizar por Escola ou CIE..." 
+              </h1>
+
+              <p className="mt-4 max-w-3xl text-sm font-medium leading-relaxed text-slate-400 md:text-base">
+                Monitoramento tático da distribuição das unidades escolares por
+                técnico de campo, com visão de cobertura, carga operacional,
+                gargalos e escolas ainda sem atribuição.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+              <KpiCard
+                label="Total UEs"
+                value={stats.total}
+                subtitle="Base geral"
+                tone="slate"
+              />
+
+              <KpiCard
+                label="Cobertas"
+                value={stats.cobertas}
+                subtitle={`${stats.percentualCobertura}% da malha`}
+                tone="emerald"
+              />
+
+              <KpiCard
+                label="Descobertas"
+                value={stats.pendentes}
+                subtitle="Sem técnico"
+                tone="red"
+              />
+
+              <KpiCard
+                label="Média"
+                value={`~${stats.mediaPorTecnico}`}
+                subtitle="UEs/técnico"
+                tone="blue"
+              />
+
+              <KpiCard
+                label="Acima da média"
+                value={stats.acimaDaMedia}
+                subtitle="Pontos de atenção"
+                tone="orange"
+              />
+            </div>
+          </div>
+
+          <div className="relative overflow-hidden rounded-[2rem] border border-cyan-500/25 bg-slate-950/70 p-5 shadow-xl shadow-cyan-950/20">
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(6,182,212,0.14),transparent_48%)]" />
+
+            <div className="relative z-10 flex h-full flex-col items-center justify-center text-center">
+              <div
+                className="relative flex h-44 w-44 items-center justify-center rounded-full"
+                style={{
+                  background: `conic-gradient(#22d3ee ${stats.percentualCobertura * 3.6}deg, rgba(30,41,59,0.92) 0deg)`,
+                }}
+              >
+                <div className="flex h-36 w-36 flex-col items-center justify-center rounded-full border border-slate-800 bg-[#020617] shadow-inner">
+                  <p className="text-4xl font-black text-white">
+                    {stats.percentualCobertura}%
+                  </p>
+                  <p className="mt-1 text-[10px] font-black uppercase tracking-[0.22em] text-cyan-300">
+                    Cobertura
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <p className="text-lg font-black text-white">
+                  {stats.pendentes > 0
+                    ? `${stats.pendentes} escola(s) sem técnico`
+                    : "Malha totalmente coberta"}
+                </p>
+                <p className="mt-1 text-sm font-medium leading-relaxed text-slate-500">
+                  Dados consolidados a partir da coluna técnico atribuído.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {feedback && (
+        <div
+          className={`rounded-2xl border px-5 py-4 text-sm font-bold ${
+            feedback.tipo === "success"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+              : feedback.tipo === "error"
+                ? "border-red-500/30 bg-red-500/10 text-red-300"
+                : "border-blue-500/30 bg-blue-500/10 text-blue-300"
+          }`}
+        >
+          {feedback.texto}
+        </div>
+      )}
+
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[0.82fr_1.18fr]">
+        <Glass title="Carga da Equipe Field" icon="📊">
+          {stats.chartData.length === 0 ? (
+            <EmptyState
+              icon="👨‍🔧"
+              title="Nenhum técnico atribuído"
+              description="Ainda não há técnicos vinculados às escolas na base."
+            />
+          ) : (
+            <div className="custom-scrollbar max-h-[650px] space-y-3 overflow-y-auto pr-2">
+              {stats.chartData.map((tecnico, index) => (
+                <TecnicoCargaCard
+                  key={tecnico.name}
+                  tecnico={tecnico}
+                  index={index}
+                  maxCarga={stats.maxCarga}
+                  media={stats.mediaPorTecnico}
+                />
+              ))}
+            </div>
+          )}
+        </Glass>
+
+        <Glass title="Consulta da Malha de Atendimento" icon="🔎">
+          <div className="mb-5 rounded-[1.75rem] border border-slate-800 bg-slate-950/45 p-4">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_270px_auto]">
+              <div className="relative">
+                <span className="pointer-events-none absolute inset-y-0 left-5 flex items-center text-slate-500">
+                  🔍
+                </span>
+
+                <input
+                  type="text"
+                  placeholder="Localizar por escola, CIE ou técnico..."
                   value={busca}
-                  onChange={(e) => setBusca(e.target.value)}
-                  className="w-full bg-[#020617] border border-slate-700 text-white rounded-2xl pl-14 pr-6 py-4 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all text-sm font-semibold shadow-inner placeholder:text-slate-600"
+                  onChange={(event) => setBusca(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-800 bg-[#020617] py-4 pl-14 pr-4 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-500/60 focus:ring-1 focus:ring-cyan-500/50"
                 />
               </div>
 
-              <div className="relative shrink-0 md:w-64">
-                <select
-                  value={filtroTecnico}
-                  onChange={(e) => setFiltroTecnico(e.target.value)}
-                  className="w-full h-full bg-[#020617] border border-slate-700 text-slate-300 rounded-2xl pl-4 pr-10 py-4 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all text-sm font-semibold shadow-inner cursor-pointer appearance-none"
-                >
-                  <option className="bg-slate-900 text-white" value="Todos">👨‍🔧 Todos os Técnicos</option>
-                  <option className="bg-slate-900 text-red-400 font-bold" value="Sem Técnico">⚠️ Sem Técnico</option>
-                  {listaTecnicosSelect.map(t => (
-                    <option className="bg-slate-900 text-slate-200" key={String(t)} value={String(t)}>{String(t)}</option>
-                  ))}
-                </select>
-                <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none">
-                  <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-                </div>
-              </div>
+              <select
+                value={filtroTecnico}
+                onChange={(event) => setFiltroTecnico(event.target.value)}
+                className="w-full rounded-2xl border border-slate-800 bg-[#020617] px-4 py-4 text-sm font-bold text-white outline-none transition focus:border-cyan-500/60 focus:ring-1 focus:ring-cyan-500/50"
+              >
+                <option value="Todos">Todos os técnicos</option>
+                <option value="Sem Técnico">Sem técnico</option>
+
+                {listaTecnicosSelect.map((tecnico) => (
+                  <option key={tecnico} value={tecnico}>
+                    {tecnico}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                onClick={() => carregarDados("manual")}
+                disabled={refreshing}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-cyan-500/25 bg-cyan-500/10 px-5 py-4 text-sm font-black uppercase tracking-widest text-cyan-300 transition hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <span className={refreshing ? "animate-spin" : ""}>↻</span>
+                Atualizar
+              </button>
             </div>
 
-            {/* 🚀 LISTA DE ESCOLAS ALINHADA E COM NOME COMPLETO */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar content-start">
-              {escolasFiltradas.length === 0 ? (
-                 <div className="col-span-1 lg:col-span-2 py-10 flex flex-col items-center justify-center text-slate-500">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 mb-3 opacity-30"><path strokeLinecap="round" strokeLinejoin="round" d="M15.182 16.318A4.486 4.486 0 0012.016 15a4.486 4.486 0 00-3.198 1.318M21 12a9 9 0 11-18 0 9 9 0 0118 0zM9.75 9.75c0 .414-.168.75-.375.75S9 10.164 9 9.75 9.168 9 9.375 9s.375.336.375.75zm3.625 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75z" /></svg>
-                    <p className="text-sm font-bold uppercase tracking-widest">Nenhum resultado encontrado</p>
-                 </div>
-              ) : (
-                escolasFiltradas.map((escola) => (
-                  // 🚀 h-20 garante que todos os cards fiquem com a mesma altura
-                  <div key={escola.id} className="group bg-[#020617] border border-slate-800 rounded-2xl p-4 flex justify-between items-center hover:bg-slate-800/40 hover:border-cyan-500/30 transition-all duration-300 shadow-sm h-20">
-                    
-                    <div className="flex flex-col overflow-hidden pr-3 flex-1 min-w-0">
-                      <p className="text-white font-bold text-sm truncate" title={escola.nome_escola}>{escola.nome_escola}</p>
-                      <p className="text-slate-500 text-[10px] font-mono mt-0.5">CIE: {escola.cie || "S/N"}</p>
-                    </div>
-                    
-                    {/* 🚀 NOME COMPLETO VOLTOU AQUI */}
-                    <div className="shrink-0 flex justify-end max-w-[45%]">
-                      {escola.tecnico_atribuido ? (
-                        <div className="bg-blue-900/20 border border-blue-500/30 px-3 py-1.5 rounded-lg flex items-center gap-2 max-w-full">
-                           <div className="w-1.5 h-1.5 rounded-full bg-blue-400 shadow-[0_0_5px_rgba(96,165,250,0.8)] shrink-0"></div>
-                           <span className="text-[10px] font-black uppercase text-blue-300 tracking-wider truncate" title={escola.tecnico_atribuido}>
-                             {escola.tecnico_atribuido}
-                           </span>
-                        </div>
-                      ) : (
-                        <div className="bg-red-900/20 border border-red-500/30 px-3 py-1.5 rounded-lg flex items-center gap-2 max-w-full">
-                           <div className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_5px_rgba(239,68,68,0.8)] animate-pulse shrink-0"></div>
-                           <span className="text-[10px] font-black uppercase text-red-400 tracking-wider truncate">
-                             Descoberta
-                           </span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
+              <p className="text-xs font-semibold text-slate-500">
+                Exibindo{" "}
+                <span className="font-black text-cyan-300">
+                  {escolasFiltradas.length}
+                </span>{" "}
+                de <span className="font-black text-slate-300">{stats.total}</span>{" "}
+                escola(s).
+              </p>
+
+              {filtrosAtivos && (
+                <button
+                  type="button"
+                  onClick={limparFiltros}
+                  className="rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-300 transition hover:border-cyan-500/40 hover:text-cyan-300"
+                >
+                  Limpar filtros
+                </button>
               )}
             </div>
+          </div>
 
-          </Glass>
-        </div>
+          {escolasFiltradas.length === 0 ? (
+            <EmptyState
+              icon="📭"
+              title="Nenhum resultado encontrado"
+              description="Ajuste a busca, selecione outro técnico ou limpe os filtros."
+            />
+          ) : (
+            <div className="custom-scrollbar grid max-h-[560px] grid-cols-1 gap-3 overflow-y-auto pr-2 lg:grid-cols-2">
+              {escolasFiltradas.map((escola) => (
+                <EscolaCard key={escola.id} escola={escola} />
+              ))}
+            </div>
+          )}
+        </Glass>
+      </section>
 
-      </div>
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <InsightCard
+          label="Maior carga"
+          value={stats.tecnicoMaisLotado ? `${stats.tecnicoMaisLotado.count} UEs` : "0"}
+          detail={stats.tecnicoMaisLotado?.name || "Nenhum técnico"}
+          tone="orange"
+        />
+
+        <InsightCard
+          label="Menor carga"
+          value={stats.tecnicoMenosLotado ? `${stats.tecnicoMenosLotado.count} UEs` : "0"}
+          detail={stats.tecnicoMenosLotado?.name || "Nenhum técnico"}
+          tone="emerald"
+        />
+
+        <InsightCard
+          label="Técnicos ativos"
+          value={stats.totalTecnicosAtivos}
+          detail="Técnicos com escolas vinculadas"
+          tone="cyan"
+        />
+      </section>
 
       <style jsx global>{`
+        .custom-scrollbar {
+          scrollbar-width: thin;
+          scrollbar-color: #475569 rgba(15, 23, 42, 0.45);
+        }
+
         .custom-scrollbar::-webkit-scrollbar {
-          width: 6px;
+          width: 8px;
+          height: 8px;
         }
+
         .custom-scrollbar::-webkit-scrollbar-track {
-          background: rgba(15, 23, 42, 0.3);
-          border-radius: 10px;
+          background: rgba(15, 23, 42, 0.35);
+          border-radius: 999px;
         }
+
         .custom-scrollbar::-webkit-scrollbar-thumb {
           background-color: #334155;
-          border-radius: 10px;
+          border-radius: 999px;
+          border: 2px solid transparent;
+          background-clip: padding-box;
         }
+
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
           background-color: #475569;
+        }
+
+        select option {
+          background-color: #0f172a;
+          color: #f8fafc;
         }
       `}</style>
     </div>
   )
 }
 
-function Glass({ children, title, className = "" }: any) {
+function TecnicoCargaCard({
+  tecnico,
+  index,
+  maxCarga,
+  media,
+}: {
+  tecnico: TecnicoCarga
+  index: number
+  maxCarga: number
+  media: number
+}) {
+  const percent = maxCarga > 0 ? (tecnico.count / maxCarga) * 100 : 0
+  const visual = getCargaStyle(tecnico.count, media)
+
+  const rank =
+    index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : null
+
   return (
-    <div className={`bg-[#020617] border border-slate-800 rounded-[2rem] p-8 shadow-2xl relative overflow-hidden h-full ${className}`}>
-      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-slate-800 to-transparent opacity-50"></div>
-      {title && <h3 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.2em] mb-6">{title}</h3>}
+    <article
+      className={`group relative overflow-hidden rounded-[1.55rem] border border-slate-800 bg-slate-950/75 p-4 shadow-lg transition hover:-translate-y-[1px] hover:border-cyan-500/35 hover:bg-slate-900/80 ${visual.glow}`}
+    >
+      <div className="pointer-events-none absolute inset-0 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="absolute -right-20 -top-24 h-48 w-48 rounded-full bg-cyan-500/10 blur-3xl" />
+      </div>
+
+      <div className="relative z-10 flex items-center gap-4">
+        <div className="relative shrink-0">
+          <div
+            className={`flex h-14 w-14 items-center justify-center rounded-2xl border text-sm font-black ${visual.badge}`}
+          >
+            {getInitials(tecnico.name)}
+          </div>
+
+          {rank && (
+            <div className="absolute -right-2 -top-2 text-lg drop-shadow-md">
+              {rank}
+            </div>
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="mb-2 flex items-end justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-black text-white">
+                {tecnico.name}
+              </p>
+
+              <span
+                className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${visual.badge}`}
+              >
+                {visual.label}
+              </span>
+            </div>
+
+            <p className={`shrink-0 text-2xl font-black ${visual.text}`}>
+              {tecnico.count}
+              <span className="ml-1 text-[10px] font-black uppercase tracking-widest text-slate-600">
+                UEs
+              </span>
+            </p>
+          </div>
+
+          <div className="h-3 overflow-hidden rounded-full border border-slate-800 bg-[#020617]">
+            <div
+              className={`h-full rounded-full bg-gradient-to-r transition-all duration-700 ${visual.bar}`}
+              style={{ width: `${Math.max(percent, 5)}%` }}
+            />
+          </div>
+        </div>
+      </div>
+    </article>
+  )
+}
+
+function EscolaCard({ escola }: { escola: EscolaSetorizacao }) {
+  const tecnico = textoSeguro(escola.tecnico_atribuido)
+  const descoberta = !tecnico
+
+  return (
+    <article
+      className={`group relative min-h-[112px] overflow-hidden rounded-[1.55rem] border p-4 shadow-lg transition hover:-translate-y-[1px] ${
+        descoberta
+          ? "border-red-500/25 bg-red-500/[0.045] hover:border-red-500/40"
+          : "border-slate-800 bg-slate-950/75 hover:border-cyan-500/35 hover:bg-slate-900/80"
+      }`}
+    >
+      <div className="pointer-events-none absolute inset-0 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="absolute -right-20 -top-20 h-44 w-44 rounded-full bg-blue-500/10 blur-3xl" />
+      </div>
+
+      <div className="relative z-10 flex h-full flex-col justify-between gap-3">
+        <div>
+          <div className="mb-2 flex flex-wrap gap-2">
+            <span className="rounded-full border border-blue-500/25 bg-blue-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-blue-300">
+              CIE {textoSeguro(escola.cie, "S/N")}
+            </span>
+
+            {descoberta ? (
+              <span className="rounded-full border border-red-500/25 bg-red-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-red-300">
+                Descoberta
+              </span>
+            ) : (
+              <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-300">
+                Coberta
+              </span>
+            )}
+          </div>
+
+          <h3
+            className="line-clamp-2 text-sm font-black leading-snug text-white"
+            title={textoSeguro(escola.nome_escola, "Escola sem nome")}
+          >
+            {textoSeguro(escola.nome_escola, "Escola sem nome")}
+          </h3>
+        </div>
+
+        <div
+          className={`inline-flex max-w-full items-center gap-2 self-start rounded-xl border px-3 py-2 ${
+            descoberta
+              ? "border-red-500/25 bg-red-500/10 text-red-300"
+              : "border-cyan-500/25 bg-cyan-500/10 text-cyan-300"
+          }`}
+          title={descoberta ? "Sem técnico atribuído" : tecnico}
+        >
+          <span
+            className={`h-2 w-2 shrink-0 rounded-full ${
+              descoberta ? "animate-pulse bg-red-400" : "bg-cyan-400"
+            }`}
+          />
+          <span className="truncate text-[10px] font-black uppercase tracking-widest">
+            {descoberta ? "Sem técnico atribuído" : tecnico}
+          </span>
+        </div>
+      </div>
+    </article>
+  )
+}
+
+function Glass({
+  children,
+  title,
+  icon,
+  className = "",
+}: {
+  children: ReactNode
+  title: string
+  icon?: string
+  className?: string
+}) {
+  return (
+    <div
+      className={`relative overflow-hidden rounded-[2rem] border border-slate-800 bg-[#020617] p-5 shadow-xl shadow-slate-950/20 md:p-6 ${className}`}
+    >
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-500/40 to-transparent" />
+
+      <div className="mb-5 flex items-center gap-3">
+        {icon && (
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-cyan-500/25 bg-cyan-500/10 text-xl">
+            {icon}
+          </div>
+        )}
+
+        <h2 className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">
+          {title}
+        </h2>
+      </div>
+
       {children}
+    </div>
+  )
+}
+
+function KpiCard({
+  label,
+  value,
+  subtitle,
+  tone,
+}: {
+  label: string
+  value: string | number
+  subtitle: string
+  tone: "slate" | "emerald" | "red" | "blue" | "orange"
+}) {
+  const styles = {
+    slate: "border-slate-800 bg-slate-950/70 text-slate-300",
+    emerald: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
+    red: "border-red-500/25 bg-red-500/10 text-red-300",
+    blue: "border-blue-500/25 bg-blue-500/10 text-blue-300",
+    orange: "border-orange-500/25 bg-orange-500/10 text-orange-300",
+  }
+
+  const bars = {
+    slate: "bg-slate-500",
+    emerald: "bg-emerald-500",
+    red: "bg-red-500",
+    blue: "bg-blue-500",
+    orange: "bg-orange-500",
+  }
+
+  return (
+    <div className={`rounded-2xl border p-4 shadow-xl ${styles[tone]}`}>
+      <p className="text-[10px] font-black uppercase tracking-[0.18em] opacity-80">
+        {label}
+      </p>
+
+      <p className="mt-2 text-2xl font-black text-white md:text-3xl">
+        {value}
+      </p>
+
+      <p className="mt-1 truncate text-xs font-semibold opacity-80" title={subtitle}>
+        {subtitle}
+      </p>
+
+      <div className={`mt-3 h-1 rounded-full ${bars[tone]}`} />
+    </div>
+  )
+}
+
+function InsightCard({
+  label,
+  value,
+  detail,
+  tone,
+}: {
+  label: string
+  value: string | number
+  detail: string
+  tone: "orange" | "emerald" | "cyan"
+}) {
+  const styles = {
+    orange: "border-orange-500/25 bg-orange-500/10 text-orange-300",
+    emerald: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
+    cyan: "border-cyan-500/25 bg-cyan-500/10 text-cyan-300",
+  }
+
+  return (
+    <div className={`rounded-[1.75rem] border p-5 shadow-xl ${styles[tone]}`}>
+      <p className="text-[10px] font-black uppercase tracking-widest opacity-80">
+        {label}
+      </p>
+
+      <p className="mt-2 text-3xl font-black text-white">{value}</p>
+
+      <p className="mt-1 truncate text-sm font-bold opacity-80" title={detail}>
+        {detail}
+      </p>
+    </div>
+  )
+}
+
+function Badge({
+  children,
+  color,
+}: {
+  children: ReactNode
+  color: "cyan" | "blue" | "emerald"
+}) {
+  const styles = {
+    cyan: "border-cyan-500/25 bg-cyan-500/10 text-cyan-300",
+    blue: "border-blue-500/25 bg-blue-500/10 text-blue-300",
+    emerald: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
+  }
+
+  return (
+    <span
+      className={`inline-flex rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${styles[color]}`}
+    >
+      {children}
+    </span>
+  )
+}
+
+function EmptyState({
+  icon,
+  title,
+  description,
+}: {
+  icon: string
+  title: string
+  description: string
+}) {
+  return (
+    <div className="flex min-h-[280px] flex-col items-center justify-center rounded-2xl border border-dashed border-slate-800 bg-slate-950/60 p-8 text-center">
+      <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-slate-800 bg-[#020617] text-3xl">
+        {icon}
+      </div>
+
+      <p className="text-lg font-black text-white">{title}</p>
+
+      <p className="mt-2 max-w-md text-sm font-medium leading-relaxed text-slate-500">
+        {description}
+      </p>
+    </div>
+  )
+}
+
+function LoadingPage() {
+  return (
+    <div className="mx-auto max-w-[1700px] space-y-7 pb-12">
+      <div className="h-72 animate-pulse rounded-[2.5rem] border border-slate-800 bg-slate-900/40" />
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.82fr_1.18fr]">
+        <div className="h-[650px] animate-pulse rounded-[2rem] border border-slate-800 bg-slate-900/40" />
+        <div className="h-[650px] animate-pulse rounded-[2rem] border border-slate-800 bg-slate-900/40" />
+      </div>
     </div>
   )
 }
