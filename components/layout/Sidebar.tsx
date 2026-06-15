@@ -102,6 +102,12 @@ export default async function Sidebar() {
           icon: "📈",
           permission: "inventario.vgeral",
         },
+        {
+          href: "/saresp",
+          label: "SARESP Digital",
+          icon: "📝",
+          permission: "inventario.view",
+        },
       ],
     },
     {
@@ -222,6 +228,12 @@ export default async function Sidebar() {
           href: "/gestao-equipamentos",
           label: "Gestão de Equipamentos",
           icon: "💻",
+          permission: "gestao.equipamentos",
+        },
+        {
+          href: "/saresp/gestao",
+          label: "Gestão SARESP",
+          icon: "📝",
           permission: "gestao.equipamentos",
         },
         {

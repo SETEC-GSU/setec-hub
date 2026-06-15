@@ -34,5 +34,7 @@ export const routePermissions: Record<string, Permission> = {
   "/fields/mapa-field":"fields.mapa",
   "/fields/relatorio-tecnico":"fields.relatorio",
   "/fields/credenciais-escolas": "credenciais.escolas.view",
-  "/credenciais-escolas/gestao": "credenciais.escolas.manage"
+  "/fields/credenciais-escolas/gestao": "credenciais.escolas.manage",
+  "/saresp": "saresp.view",
+  "/saresp/gestao": "gestao.saresp"
 }

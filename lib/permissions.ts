@@ -37,6 +37,8 @@ export type Permission =
   | "fields.relatorio"
   | "credenciais.escolas.view"
   | "credenciais.escolas.manage"
+  | "saresp.view"
+  | "gestao.saresp"
 
 
 
@@ -80,7 +82,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "fields.painel",
     "fields.relatorio",
     "credenciais.escolas.manage",
-    "credenciais.escolas.view"
+    "credenciais.escolas.view",
+    "saresp.view",
+    "gestao.saresp"
 
   ],
 
@@ -113,7 +117,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "fields.mapa",
     "fields.painel",
     "fields.relatorio",
-    "credenciais.escolas.view"
+    "credenciais.escolas.view",
+    "saresp.view",
   ],
 
   chefia_ure: [
@@ -205,7 +210,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "fields.painel",
     "fields.relatorio",
     "credenciais.escolas.manage",
-    "credenciais.escolas.view"
+    "credenciais.escolas.view",
+    "saresp.view",
+    "gestao.saresp"
 
   ],
 }

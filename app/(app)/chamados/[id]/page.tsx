@@ -1,15 +1,204 @@
 "use client"
 
-import { useEffect, useState, useRef } from "react"
-import { createClient } from "@/lib/supabase"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react"
+import Link from "next/link"
 import { useParams } from "next/navigation"
+import { createClient } from "@/lib/supabase"
+
+type Feedback = {
+  tipo: "success" | "error" | "warning" | "info"
+  texto: string
+} | null
+
+const URE_ROLES = [
+  "admin",
+  "analista",
+  "seintec",
+  "setec",
+  "chefia_ure",
+  "chefia-ure",
+  "dirigente",
+  "analista-pleno",
+  "analista-jr",
+]
+
+function textoSeguro(value: unknown, fallback = "Não informado") {
+  const text = String(value ?? "").trim()
+  return text || fallback
+}
+
+function normalizarTexto(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+}
+
+function getInitials(name: unknown) {
+  const clean = textoSeguro(name, "")
+
+  if (!clean) return "US"
+
+  const parts = clean.split(/\s+/).filter(Boolean)
+
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
+}
+
+function formatarStatus(status: string | null | undefined) {
+  if (!status) return "CARREGANDO..."
+  return status.replaceAll("_", " ").toUpperCase()
+}
+
+function formatarDataHora(data?: string | null) {
+  if (!data) return "Não informado"
+
+  const date = new Date(data)
+
+  if (Number.isNaN(date.getTime())) return "Não informado"
+
+  return date.toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
+function formatarDataMensagem(data?: string | null) {
+  if (!data) return "Sem data"
+
+  const date = new Date(data)
+
+  if (Number.isNaN(date.getTime())) return "Sem data"
+
+  return date.toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    weekday: "short",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
+function dataSeparador(data?: string | null) {
+  if (!data) return "Sem data"
+
+  const date = new Date(data)
+
+  if (Number.isNaN(date.getTime())) return "Sem data"
+
+  return date.toLocaleDateString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  })
+}
+
+function dataKey(data?: string | null) {
+  if (!data) return ""
+
+  const date = new Date(data)
+
+  if (Number.isNaN(date.getTime())) return ""
+
+  return date.toLocaleDateString("en-CA", {
+    timeZone: "America/Sao_Paulo",
+  })
+}
+
+function getStatusClasses(status: string | null | undefined) {
+  const value = normalizarTexto(status)
+
+  if (value === "aberto") {
+    return "border-red-500/25 bg-red-500/10 text-red-300"
+  }
+
+  if (
+    value === "em atendimento" ||
+    value === "em_atendimento" ||
+    value === "andamento"
+  ) {
+    return "border-yellow-500/25 bg-yellow-500/10 text-yellow-300"
+  }
+
+  if (value === "resolvido" || value === "concluido" || value === "concluído") {
+    return "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+  }
+
+  if (value === "encerrado") {
+    return "border-slate-600 bg-slate-900 text-slate-300"
+  }
+
+  return "border-blue-500/25 bg-blue-500/10 text-blue-300"
+}
+
+function getOrigemClasses(origem: string | null | undefined) {
+  const value = normalizarTexto(origem)
+
+  if (value === "escola") {
+    return "border-purple-500/25 bg-purple-500/10 text-purple-300"
+  }
+
+  if (value === "ure" || value === "sede") {
+    return "border-cyan-500/25 bg-cyan-500/10 text-cyan-300"
+  }
+
+  return "border-slate-700 bg-slate-900 text-slate-400"
+}
+
+function getPrioridadeClasses(prioridade: string | null | undefined) {
+  const value = normalizarTexto(prioridade)
+
+  if (value === "alta" || value === "urgente") {
+    return "border-red-500/25 bg-red-500/10 text-red-300"
+  }
+
+  if (value === "media" || value === "média") {
+    return "border-yellow-500/25 bg-yellow-500/10 text-yellow-300"
+  }
+
+  if (value === "baixa") {
+    return "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+  }
+
+  return "border-slate-700 bg-slate-900 text-slate-400"
+}
+
+function isStatusEncerrado(status: unknown) {
+  return normalizarTexto(status) === "encerrado"
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message
+  return "Não foi possível concluir a operação."
+}
 
 export default function ChamadoDetalhePage() {
-  const supabase = createClient()
+  const supabase = useMemo(() => createClient(), [])
   const params = useParams()
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  const id = Array.isArray(params.id) ? params.id[0] : params.id
+  const id = useMemo(() => {
+    const raw = params?.id
+    return Array.isArray(raw) ? raw[0] : raw
+  }, [params])
 
   const [chamado, setChamado] = useState<any>(null)
   const [mensagens, setMensagens] = useState<any[]>([])
@@ -17,236 +206,633 @@ export default function ChamadoDetalhePage() {
   const [userId, setUserId] = useState<string | null>(null)
   const [userRole, setUserRole] = useState<string>("usuario")
   const [anexos, setAnexos] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [enviando, setEnviando] = useState(false)
+  const [feedback, setFeedback] = useState<Feedback>(null)
 
-  // Roles URE
-  const URE_ROLES = ["admin", "analista", "seintec", "chefia_ure", "dirigente"]
+  const chamadoEncerrado = isStatusEncerrado(chamado?.status)
 
-  // Helper para formatar o status sem quebrar o código
-  const formatarStatus = (status: string) => {
-    if (!status) return "Carregando..."
-    return status.replace('_', ' ').toUpperCase()
-  }
+  const scrollToBottom = useCallback(() => {
+    window.setTimeout(() => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      }
+    }, 80)
+  }, [])
 
-  function formatarData(data: string) {
-    return new Date(data).toLocaleString("pt-BR", {
-      timeZone: "America/Sao_Paulo",
-      hour12: false,
-      hour: '2-digit',
-      minute: '2-digit'
-    })
-  }
+  const carregarAnexos = useCallback(
+    async (chamadoId: string) => {
+      const porChamadoId = await supabase
+        .from("chamados_anexos")
+        .select("*")
+        .eq("chamado_id", chamadoId)
 
-  const scrollToBottom = () => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }
+      if (!porChamadoId.error) {
+        setAnexos(porChamadoId.data || [])
+        return
+      }
 
-  async function carregar() {
+      console.warn(
+        "[Chamado Detalhe] Falha ao buscar anexos por chamado_id. Tentando por id:",
+        porChamadoId.error
+      )
+
+      const porId = await supabase
+        .from("chamados_anexos")
+        .select("*")
+        .eq("id", chamadoId)
+
+      if (porId.error) {
+        console.warn("[Chamado Detalhe] Falha ao buscar anexos por id:", porId.error)
+        setAnexos([])
+        return
+      }
+
+      setAnexos(porId.data || [])
+    },
+    [supabase]
+  )
+
+  const carregar = useCallback(async () => {
     if (!id) return
 
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    setUserId(user.id)
+    setLoading(true)
+    setFeedback(null)
 
-    const { data: userData } = await supabase
-      .from("usuarios")
-      .select("role")
-      .eq("id", user.id)
-      .single()
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
 
-    const roleAtual = userData?.role ?? "usuario"
-    setUserRole(roleAtual)
+      if (!user) {
+        setFeedback({
+          tipo: "warning",
+          texto: "Sessão não localizada. Faça login novamente.",
+        })
+        setLoading(false)
+        return
+      }
 
-    const { data: chamadoData } = await supabase
-      .from("chamados")
-      .select("*")
-      .eq("id", id)
-      .single()
+      setUserId(user.id)
 
-    setChamado(chamadoData)
+      const { data: userData } = await supabase
+        .from("usuarios")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle()
 
-    const { data: msgs } = await supabase
-      .from("chamado_mensagens")
-      .select(`*, usuarios(nome, role)`)
-      .eq("chamado_id", id)
-      .order("created_at", { ascending: true })
+      const roleAtual = userData?.role ?? "usuario"
+      setUserRole(roleAtual)
 
-    setMensagens(msgs || [])
+      const { data: chamadoData, error: chamadoError } = await supabase
+        .from("chamados")
+        .select("*")
+        .eq("id", id)
+        .single()
 
-    const { data: anexosData } = await supabase
-      .from("chamados_anexos")
-      .select("*")
-      .eq("id", id) // Se a FK for chamado_id na sua tabela, mude aqui
+      if (chamadoError) throw chamadoError
 
-    setAnexos(anexosData || [])
+      setChamado(chamadoData)
 
-    // --- Lógica de Limpar Notificações ---
-    // Limpa para a URE
-    if (URE_ROLES.includes(roleAtual)) {
-      await supabase.from("chamados").update({ visualizado_gestao: true }).eq("id", id)
-    } 
-    // Limpa para o Usuário
-    await supabase.from("chamados").update({ visualizado_pelo_usuario: true }).eq("id", id)
-  }
+      const { data: msgs, error: msgsError } = await supabase
+        .from("chamado_mensagens")
+        .select(`*, usuarios(nome, role)`)
+        .eq("chamado_id", id)
+        .order("created_at", { ascending: true })
+
+      if (msgsError) throw msgsError
+
+      setMensagens(msgs || [])
+
+      await carregarAnexos(id)
+
+      if (URE_ROLES.includes(roleAtual)) {
+        await supabase
+          .from("chamados")
+          .update({ visualizado_gestao: true })
+          .eq("id", id)
+      }
+
+      await supabase
+        .from("chamados")
+        .update({ visualizado_pelo_usuario: true })
+        .eq("id", id)
+    } catch (error) {
+      console.error("[Chamado Detalhe] Erro ao carregar:", error)
+      setFeedback({
+        tipo: "error",
+        texto: getErrorMessage(error),
+      })
+      setChamado(null)
+      setMensagens([])
+      setAnexos([])
+    } finally {
+      setLoading(false)
+    }
+  }, [carregarAnexos, id, supabase])
 
   useEffect(() => {
-    if (id) carregar()
-  }, [id])
+    carregar()
+  }, [carregar])
 
   useEffect(() => {
     scrollToBottom()
-  }, [mensagens])
+  }, [mensagens, scrollToBottom])
+
+  useEffect(() => {
+    if (!feedback) return
+
+    const timer = window.setTimeout(() => {
+      setFeedback(null)
+    }, 6000)
+
+    return () => window.clearTimeout(timer)
+  }, [feedback])
 
   async function enviarMensagem() {
     if (!novaMsg.trim()) return
-    if (chamado?.status === "encerrado") return
+    if (chamadoEncerrado) return
+    if (!userId || !id) return
+
+    setEnviando(true)
+    setFeedback(null)
 
     const tipo = URE_ROLES.includes(userRole) ? "analista" : "usuario"
 
-    const { error } = await supabase.from("chamado_mensagens").insert({
-      chamado_id: id,
-      usuario_id: userId,
-      mensagem: novaMsg,
-      tipo,
-    })
+    try {
+      const { error } = await supabase.from("chamado_mensagens").insert({
+        chamado_id: id,
+        usuario_id: userId,
+        mensagem: novaMsg.trim(),
+        tipo,
+      })
 
-    if (error) return
+      if (error) throw error
 
-    setNovaMsg("")
-    carregar()
+      setNovaMsg("")
+      await carregar()
+    } catch (error) {
+      console.error("[Chamado Detalhe] Erro ao enviar mensagem:", error)
+      setFeedback({
+        tipo: "error",
+        texto: getErrorMessage(error),
+      })
+    } finally {
+      setEnviando(false)
+    }
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Se apertou Enter SEM o Shift, ele envia a mensagem.
-    if (e.key === 'Enter' && !e.shiftKey) {
+  function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       enviarMensagem()
     }
   }
 
-  // 🚀 Loading mantido para evitar crashes
-  if (!chamado) return <div className="p-20 text-center text-blue-400 font-bold animate-pulse">Carregando detalhes...</div>
+  if (loading) {
+    return (
+      <div className="flex min-h-[560px] items-center justify-center">
+        <div className="flex flex-col items-center gap-4 rounded-[2rem] border border-slate-800 bg-[#020617] px-10 py-8 shadow-2xl shadow-slate-950/30">
+          <div className="h-12 w-12 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">
+            Carregando detalhes do chamado
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!chamado) {
+    return (
+      <div className="mx-auto max-w-4xl pb-12">
+        <div className="rounded-[2rem] border border-red-500/25 bg-red-500/10 p-8 text-center">
+          <p className="text-4xl">⚠️</p>
+
+          <h1 className="mt-4 text-2xl font-black text-white">
+            Chamado não localizado
+          </h1>
+
+          <p className="mt-2 text-sm font-medium text-red-200/80">
+            Não foi possível carregar os dados deste protocolo.
+          </p>
+
+          <Link
+            href="/chamados"
+            className="mt-6 inline-flex rounded-2xl border border-slate-700 bg-slate-900 px-6 py-3 text-sm font-black uppercase tracking-widest text-slate-200 transition hover:bg-slate-800"
+          >
+            ← Voltar para chamados
+          </Link>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6 pb-10">
+    <div className="mx-auto max-w-[1450px] space-y-7 pb-12">
+      <section className="rounded-[1.75rem] border border-slate-800 bg-[#020617] p-5 shadow-xl shadow-slate-950/20 md:p-6">
+        <div className="flex flex-col gap-5">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap gap-2">
+              <Link
+                href="/chamados"
+                className="inline-flex min-h-[42px] items-center justify-center gap-2 rounded-2xl border border-slate-700 bg-slate-900 px-4 text-xs font-black uppercase tracking-widest text-slate-300 transition hover:border-blue-500/40 hover:bg-slate-800 hover:text-white"
+              >
+                ← Voltar
+              </Link>
 
-      {/* CABEÇALHO */}
-      <div className="bg-[#020617] p-6 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden">
-        <div className="absolute top-4 right-4">
-            <span className="px-4 py-1.5 rounded-full text-[10px] font-black bg-blue-500/10 text-blue-400 border border-blue-500/20">
+              <button
+                type="button"
+                onClick={carregar}
+                className="inline-flex min-h-[42px] items-center justify-center gap-2 rounded-2xl border border-cyan-500/25 bg-cyan-500/10 px-4 text-xs font-black uppercase tracking-widest text-cyan-300 transition hover:bg-cyan-500/20"
+              >
+                ↻ Atualizar
+              </button>
+            </div>
+
+            <span
+              className={`inline-flex min-h-[42px] items-center rounded-2xl border px-4 text-xs font-black uppercase tracking-widest ${getStatusClasses(
+                chamado.status
+              )}`}
+            >
               {formatarStatus(chamado.status)}
             </span>
+          </div>
+
+          <div className="border-t border-slate-800 pt-5">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-blue-500/25 bg-blue-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-blue-300">
+                Protocolo #{chamado.codigo || "N/A"}
+              </span>
+
+              <span
+                className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${getOrigemClasses(
+                  chamado.origem
+                )}`}
+              >
+                {textoSeguro(chamado.origem, "Origem não informada").toUpperCase()}
+              </span>
+            </div>
+
+            <h1 className="break-words text-2xl font-black leading-tight tracking-tight text-white md:text-4xl">
+              {chamado.titulo || "Chamado sem título"}
+            </h1>
+
+            <p className="mt-3 text-sm font-medium text-slate-500">
+              Acompanhe as respostas da equipe técnica, anexos e devolutiva do atendimento.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {feedback && (
+        <div
+          className={`rounded-2xl border px-5 py-4 text-sm font-bold ${
+            feedback.tipo === "success"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+              : feedback.tipo === "error"
+                ? "border-red-500/30 bg-red-500/10 text-red-300"
+                : feedback.tipo === "warning"
+                  ? "border-yellow-500/30 bg-yellow-500/10 text-yellow-300"
+                  : "border-blue-500/30 bg-blue-500/10 text-blue-300"
+          }`}
+        >
+          {feedback.texto}
+        </div>
+      )}
+
+      <section
+        className={`grid grid-cols-1 gap-5 ${
+          anexos.length > 0 ? "xl:grid-cols-[1fr_420px]" : ""
+        }`}
+      >
+        <Panel>
+          <div className="mb-5 flex flex-col gap-3 border-b border-slate-800 pb-5 md:flex-row md:items-start md:justify-between">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-300">
+                Dados do chamado
+              </p>
+              <h2 className="mt-2 text-2xl font-black text-white">
+                Resumo da solicitação
+              </h2>
+            </div>
+
+            <span
+              className={`rounded-full border px-4 py-2 text-[10px] font-black uppercase tracking-widest ${getStatusClasses(
+                chamado.status
+              )}`}
+            >
+              {formatarStatus(chamado.status)}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <InfoBox
+              label="Solicitante"
+              value={chamado.solicitante_nome ?? chamado.nome ?? "-"}
+            />
+
+            <InfoBox label="Unidade / Escola" value={chamado.escola || "URE"} />
+
+            <InfoBox label="Categoria" value={chamado.categoria || "-"} />
+
+            <InfoBox
+              label="Prioridade"
+              value={chamado.prioridade || "Não definida"}
+              highlight={normalizarTexto(chamado.prioridade) === "alta"}
+            />
+
+            <InfoBox label="Origem" value={chamado.origem || "-"} />
+
+            <InfoBox label="Criado em" value={formatarDataHora(chamado.created_at)} />
+          </div>
+
+          <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/70 p-5">
+            <p className="mb-3 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
+              Descrição
+            </p>
+
+            <p className="whitespace-pre-wrap break-words text-sm font-medium leading-relaxed text-slate-300">
+              {chamado.descricao || "Sem descrição registrada."}
+            </p>
+          </div>
+
+          {(chamado.status === "resolvido" || chamado.status === "encerrado") &&
+            chamado.retorno_devolutivo && (
+              <div className="mt-5 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 p-5">
+                <div className="mb-3 flex items-center gap-2">
+                  <span className="text-2xl">✅</span>
+                  <p className="text-xs font-black uppercase tracking-widest text-emerald-300">
+                    Solução técnica
+                  </p>
+                </div>
+
+                <p className="whitespace-pre-wrap break-words text-sm font-medium leading-relaxed text-emerald-50/90">
+                  {chamado.retorno_devolutivo}
+                </p>
+              </div>
+            )}
+        </Panel>
+
+        {anexos.length > 0 && (
+          <Panel>
+            <div className="mb-5 border-b border-slate-800 pb-5">
+              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-purple-300">
+                Evidências
+              </p>
+              <h2 className="mt-2 text-xl font-black text-white">
+                Anexos enviados
+              </h2>
+            </div>
+
+            <div className="space-y-3">
+              {anexos.map((a) => (
+                <a
+                  key={a.id}
+                  href={a.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="group flex items-center gap-3 rounded-2xl border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-sm font-bold text-blue-300 transition hover:bg-blue-500/20"
+                >
+                  <span className="text-xl transition-transform group-hover:scale-110">📄</span>
+
+                  <span className="min-w-0 flex-1 truncate">
+                    {a.nome_arquivo || "Arquivo anexado"}
+                  </span>
+
+                  <span className="text-[10px] font-black uppercase tracking-widest text-blue-200/70">
+                    Abrir
+                  </span>
+                </a>
+              ))}
+            </div>
+          </Panel>
+        )}
+      </section>
+
+      <section className="overflow-hidden rounded-[2rem] border border-slate-800 bg-[#020617] shadow-2xl shadow-slate-950/30">
+        <div className="flex flex-col gap-4 border-b border-slate-800 bg-slate-950/70 p-5 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="relative flex h-11 w-11 items-center justify-center rounded-2xl border border-emerald-500/25 bg-emerald-500/10">
+              <div className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.9)]" />
+              <div className="absolute h-2.5 w-2.5 animate-ping rounded-full bg-emerald-400/40" />
+            </div>
+
+            <div>
+              <h3 className="text-sm font-black uppercase tracking-widest text-white">
+                Histórico de atendimento
+              </h3>
+
+              <p className="mt-1 text-xs font-semibold text-slate-500">
+                Mensagens com data, horário e identificação da equipe técnica.
+              </p>
+            </div>
+          </div>
+
+          <span className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-400">
+            {mensagens.length} mensagem(ns)
+          </span>
         </div>
 
-        <div className="space-y-4">
-          <div>
-            <p className="text-blue-500 text-xs font-bold uppercase tracking-widest mb-1">Protocolo {chamado.codigo}</p>
-            <h2 className="text-2xl font-black text-white leading-tight">{chamado.titulo}</h2>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-            <div className="space-y-2">
-              <p className="text-slate-400"><strong className="text-slate-200">Categoria:</strong> {chamado.categoria}</p>
-              <p className="text-slate-400"><strong className="text-slate-200">Solicitante:</strong> {chamado.solicitante_nome ?? "-"}</p>
-            </div>
-            <div className="space-y-2">
-              <p className="text-slate-400"><strong className="text-slate-200">Unidade:</strong> {chamado.escola || "URE"}</p>
-              <p className="text-slate-400"><strong className="text-slate-200">Origem:</strong> {chamado.origem?.toUpperCase()}</p>
-            </div>
-          </div>
-
-          <div className="bg-slate-900/50 p-4 rounded-2xl border border-slate-800/50">
-            <p className="text-xs font-bold text-slate-500 uppercase mb-2">Descrição</p>
-            <p className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap">{chamado.descricao}</p>
-          </div>
-
-          {/* 🚀 DESTAQUE DO PARECER TÉCNICO (RETORNO DEVOLUTIVO) */}
-          {(chamado.status === 'resolvido' || chamado.status === 'encerrado') && chamado.retorno_devolutivo && (
-            <div className="bg-emerald-950/20 p-5 rounded-2xl border border-emerald-500/30 relative overflow-hidden shadow-lg shadow-emerald-900/10 mt-4">
-              <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-lg">✅</span>
-                <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Solução Técnica</p>
+        <div
+          ref={scrollRef}
+          className="custom-scrollbar min-h-[520px] max-h-[680px] space-y-6 overflow-y-auto bg-[radial-gradient(#1e293b_1px,transparent_1px)] p-5 [background-position:center] [background-size:20px_20px] md:p-8"
+        >
+          {mensagens.length === 0 && (
+            <div className="flex min-h-[440px] flex-col items-center justify-center text-center">
+              <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-[1.5rem] border border-slate-800 bg-slate-950 text-5xl">
+                💬
               </div>
-              <p className="text-emerald-50/90 text-sm leading-relaxed whitespace-pre-wrap pl-7">
-                {chamado.retorno_devolutivo}
+
+              <p className="text-sm font-black uppercase tracking-[0.2em] text-white">
+                Nenhuma mensagem registrada
+              </p>
+
+              <p className="mt-2 max-w-md text-sm font-medium leading-relaxed text-slate-500">
+                Use o campo abaixo para responder ou complementar as informações do chamado.
               </p>
             </div>
           )}
 
-          {anexos.length > 0 && (
-            <div className="flex flex-wrap gap-2 pt-2">
-              {anexos.map((a) => (
-                <a key={a.id} href={a.url} target="_blank" className="flex items-center gap-2 bg-blue-500/5 border border-blue-500/20 px-3 py-2 rounded-xl text-blue-400 text-xs hover:bg-blue-500/10 transition">
-                  📄 {a.nome_arquivo}
-                </a>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* CHAT */}
-      <div className="bg-[#020617] rounded-3xl border border-slate-800 flex flex-col shadow-2xl overflow-hidden">
-        <div className="p-4 border-b border-slate-800 bg-slate-900/20 flex items-center gap-2">
-          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-          <h3 className="text-white font-bold text-sm">Histórico de Atendimento</h3>
-        </div>
-
-        <div ref={scrollRef} className="p-6 space-y-6 h-[450px] overflow-y-auto custom-scrollbar">
-          {mensagens.map((m) => {
+          {mensagens.map((m, index) => {
             const isMe = m.usuario_id === userId
             const isUre = URE_ROLES.includes(m.usuarios?.role)
+            const atualKey = dataKey(m.created_at)
+            const anteriorKey = index > 0 ? dataKey(mensagens[index - 1]?.created_at) : ""
+            const mostrarSeparador = atualKey !== anteriorKey
 
             return (
-              <div key={m.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[80%] flex flex-col ${isMe ? "items-end" : "items-start"}`}>
-                  <div className="flex items-center gap-2 mb-1 px-1">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{m.usuarios?.nome}</span>
-                    {isUre && <span className="bg-blue-500/20 text-blue-400 text-[8px] font-black px-1.5 py-0.5 rounded uppercase">Suporte</span>}
+              <div key={m.id || `${m.created_at}-${index}`} className="space-y-5">
+                {mostrarSeparador && (
+                  <div className="flex items-center gap-3">
+                    <div className="h-px flex-1 bg-slate-800" />
+
+                    <span className="rounded-full border border-slate-800 bg-slate-950 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                      {dataSeparador(m.created_at)}
+                    </span>
+
+                    <div className="h-px flex-1 bg-slate-800" />
                   </div>
-                  
-                  {/* 🚀 CLASSE whitespace-pre-wrap ADICIONADA AQUI */}
-                  <div className={`p-4 rounded-2xl text-sm whitespace-pre-wrap ${isMe ? "bg-blue-600 text-white rounded-tr-none" : "bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700"}`}>
-                    {m.mensagem}
+                )}
+
+                <div className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+                  <div
+                    className={`flex max-w-[88%] flex-col md:max-w-[76%] ${
+                      isMe ? "items-end" : "items-start"
+                    }`}
+                  >
+                    <div
+                      className={`mb-2 flex items-center gap-2 px-1 ${
+                        isMe ? "flex-row-reverse" : ""
+                      }`}
+                    >
+                      <div
+                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-[10px] font-black ${
+                          isUre
+                            ? "border-blue-500/25 bg-blue-500/10 text-blue-300"
+                            : "border-slate-700 bg-slate-900 text-slate-400"
+                        }`}
+                      >
+                        {getInitials(m.usuarios?.nome)}
+                      </div>
+
+                      <div className={isMe ? "text-right" : "text-left"}>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                            {m.usuarios?.nome || "Usuário"}
+                          </span>
+
+                          {isUre && (
+                            <span className="rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-blue-300">
+                              Equipe técnica
+                            </span>
+                          )}
+                        </div>
+
+                        <span className="text-[9px] font-bold uppercase tracking-widest text-slate-600">
+                          {formatarDataMensagem(m.created_at)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div
+                      className={`whitespace-pre-wrap break-words rounded-2xl p-4 text-sm leading-relaxed shadow-lg ${
+                        isMe
+                          ? "rounded-tr-none bg-blue-600 text-white shadow-blue-950/20"
+                          : "rounded-tl-none border border-slate-700 bg-slate-800 text-slate-200 shadow-slate-950/20"
+                      }`}
+                    >
+                      {m.mensagem}
+                    </div>
                   </div>
-                  
-                  <span className="text-[9px] text-slate-600 mt-1.5">{formatarData(m.created_at)}</span>
                 </div>
               </div>
             )
           })}
         </div>
 
-        {chamado.status !== "encerrado" ? (
-          <div className="p-4 bg-slate-900/40 border-t border-slate-800">
-            <div className="flex gap-2 items-center bg-[#0B1120] border border-slate-700 rounded-2xl p-2 focus-within:border-blue-500 transition-all">
-              
-              {/* 🚀 TROCADO PARA TEXTAREA E ADICIONADO onKeyDown */}
+        {!chamadoEncerrado ? (
+          <div className="border-t border-slate-800 bg-slate-950/80 p-5">
+            <div className="flex flex-col gap-3 rounded-2xl border border-slate-700 bg-[#0B1120] p-3 shadow-inner transition focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500/50 md:flex-row md:items-end">
               <textarea
                 value={novaMsg}
                 onChange={(e) => setNovaMsg(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Escreva sua mensagem (Shift+Enter para nova linha)..."
-                rows={1}
-                className="flex-1 bg-transparent border-none px-3 py-2 text-white text-sm outline-none resize-none custom-scrollbar max-h-32 min-h-[40px]"
+                placeholder="Escreva sua mensagem..."
+                rows={2}
+                className="custom-scrollbar min-h-[52px] max-h-40 flex-1 resize-none border-none bg-transparent px-3 py-3 text-sm text-white outline-none placeholder:text-slate-700"
               />
-              
-              <button onClick={enviarMensagem} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-95 self-end">
-                Enviar
+
+              <button
+                type="button"
+                onClick={enviarMensagem}
+                disabled={enviando || !novaMsg.trim()}
+                className="min-h-[48px] rounded-2xl bg-blue-600 px-7 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-blue-500/20 transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+              >
+                {enviando ? "Enviando..." : "Enviar"}
               </button>
             </div>
-            <div className="flex justify-between mt-2 px-2">
-                <p className="text-[9px] text-slate-600 font-bold uppercase italic">Enter para enviar</p>
+
+            <div className="mt-3 flex flex-col gap-1 px-2 text-[9px] font-bold uppercase tracking-widest text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+              <p>Enter para enviar | Shift + Enter para nova linha</p>
+              <p>SETEC Hub</p>
             </div>
           </div>
         ) : (
-          <div className="p-4 bg-red-500/5 text-red-400 text-center text-xs font-bold border-t border-red-500/10">
-            CHAMADO ENCERRADO
+          <div className="border-t border-red-500/10 bg-red-500/5 p-6 text-center text-[10px] font-black uppercase tracking-[0.3em] text-red-400">
+            Chamado encerrado — chat desativado
           </div>
         )}
-      </div>
+      </section>
+
+      <style jsx global>{`
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 7px;
+          height: 7px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: rgba(15, 23, 42, 0.35);
+          border-radius: 999px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background-color: rgba(51, 65, 85, 0.95);
+          border-radius: 999px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background-color: rgba(71, 85, 105, 1);
+        }
+      `}</style>
+    </div>
+  )
+}
+
+function Panel({
+  children,
+  className = "",
+}: {
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <div
+      className={`relative overflow-hidden rounded-[2rem] border border-slate-800 bg-[#020617] p-5 shadow-xl shadow-slate-950/20 md:p-6 ${className}`}
+    >
+      <div className="pointer-events-none absolute left-0 top-0 h-px w-full bg-gradient-to-r from-transparent via-blue-500/25 to-transparent" />
+      {children}
+    </div>
+  )
+}
+
+function InfoBox({
+  label,
+  value,
+  highlight = false,
+}: {
+  label: string
+  value: ReactNode
+  highlight?: boolean
+}) {
+  return (
+    <div
+      className={`rounded-2xl border p-4 ${
+        highlight
+          ? "border-red-500/25 bg-red-500/10"
+          : "border-slate-800 bg-slate-950/70"
+      }`}
+    >
+      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
+        {label}
+      </p>
+
+      <p
+        className={`mt-2 break-words text-sm font-black ${
+          highlight ? "text-red-300" : "text-white"
+        }`}
+      >
+        {value}
+      </p>
     </div>
   )
 }
