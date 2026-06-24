@@ -251,6 +251,9 @@ type SugestaoGrupo = {
 
 const GORDURA_OPERACIONAL_PERCENTUAL = 0.1
 const GORDURA_OPERACIONAL_MINIMA = 5
+const RAIO_MINIMO_SUGESTOES_KM = 6.5
+const SUGESTOES_INICIAIS_POR_ESCOLA = 2
+const LIMITE_SUGESTOES_EXPANDIDAS = 20
 
 const STATUS_FILTROS = [
   { value: "todos", label: "Todos" },
@@ -898,6 +901,9 @@ export default function CentralSarespPage() {
   const [filtroEscolaSugestao, setFiltroEscolaSugestao] = useState("todas")
   const [filtroStatusSugestao, setFiltroStatusSugestao] =
     useState<SugestaoFiltroStatus>("todos")
+  const [gruposSugestoesExpandidos, setGruposSugestoesExpandidos] = useState<
+    Record<string, boolean>
+  >({})
   const [loading, setLoading] = useState(true)
   const [loadingDados, setLoadingDados] = useState(false)
   const [salvando, setSalvando] = useState(false)
@@ -918,6 +924,13 @@ export default function CentralSarespPage() {
   const edicaoSelecionada = useMemo(() => {
     return edicoes.find((item) => item.id === edicaoId) || null
   }, [edicaoId, edicoes])
+
+  const raioSugestoesKm = useMemo(() => {
+    return Math.max(
+      numeroSeguro(edicaoSelecionada?.distancia_maxima_km),
+      RAIO_MINIMO_SUGESTOES_KM
+    )
+  }, [edicaoSelecionada?.distancia_maxima_km])
 
   useEffect(() => {
     if (!edicaoSelecionada) return
@@ -1313,6 +1326,10 @@ export default function CentralSarespPage() {
   }, [carregarDadosEdicao, edicaoId])
 
   useEffect(() => {
+    setGruposSugestoesExpandidos({})
+  }, [edicaoId])
+
+  useEffect(() => {
     if (!feedback) return
 
     const timer = window.setTimeout(() => {
@@ -1642,7 +1659,7 @@ export default function CentralSarespPage() {
   const sugestoesFallback = useMemo(() => {
     if (!edicaoSelecionada) return []
 
-    const distanciaMaxima = numeroSeguro(edicaoSelecionada.distancia_maxima_km) || 10
+    const distanciaMaxima = raioSugestoesKm
     const resultadosParaSugestao = resultados.filter((item) => item.edicao_id === edicaoSelecionada.id)
 
     const sugestoesCalculadas: SarespSugestao[] = []
@@ -1704,12 +1721,12 @@ export default function CentralSarespPage() {
             numeroSeguro(b.quantidade_sugerida) -
               numeroSeguro(a.quantidade_sugerida)
         )
-        .slice(0, 8)
+        .slice(0, LIMITE_SUGESTOES_EXPANDIDAS)
         .forEach((item) => sugestoesCalculadas.push(item))
     })
 
     return sugestoesCalculadas
-  }, [doadorasDisponiveis, edicaoSelecionada, resultados])
+  }, [doadorasDisponiveis, edicaoSelecionada, raioSugestoesKm, resultados])
 
   const sugestoes = useMemo(() => {
     const map = new Map<string, SarespSugestao>()
@@ -1838,7 +1855,7 @@ export default function CentralSarespPage() {
       const grupo = map.get(key)
       if (!grupo) return
 
-      if (grupo.sugestoes.length < 8) {
+      if (grupo.sugestoes.length < LIMITE_SUGESTOES_EXPANDIDAS) {
         grupo.sugestoes.push(sugestao)
       }
     })
@@ -3769,6 +3786,9 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
                       o cálculo automático não indicar remanejamento, a escola fica disponível para análise
                       manual em caso de oscilação de equipamentos, logística ou necessidade operacional.
                     </p>
+                    <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-cyan-500/25 bg-cyan-500/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-cyan-300">
+                      🧭 Raio mínimo ampliado para {formatarDistancia(raioSugestoesKm)}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:min-w-[520px]">
@@ -3856,6 +3876,28 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
                       const statusGrupo = grupo.statusInfo
                       const ehAtencao = grupo.tipo === "atencao"
                       const semIndicacao = grupo.tipo === "sem_indicacao"
+                      const grupoKey = `${grupo.resultado?.demanda_id || grupo.resultado?.escola_id || grupo.destino}`
+                      const grupoExpandido = Boolean(
+                        gruposSugestoesExpandidos[grupoKey]
+                      )
+                      const sugestoesOrdenadas = [...grupo.sugestoes].sort(
+                        (a, b) =>
+                          numeroSeguro(a.distancia_km) -
+                            numeroSeguro(b.distancia_km) ||
+                          numeroSeguro(b.quantidade_sugerida) -
+                            numeroSeguro(a.quantidade_sugerida)
+                      )
+                      const sugestoesVisiveis = grupoExpandido
+                        ? sugestoesOrdenadas
+                        : sugestoesOrdenadas.slice(
+                            0,
+                            SUGESTOES_INICIAIS_POR_ESCOLA
+                          )
+                      const quantidadeOpcoesOcultas = Math.max(
+                        sugestoesOrdenadas.length -
+                          SUGESTOES_INICIAIS_POR_ESCOLA,
+                        0
+                      )
 
                       return (
                         <div
@@ -3928,7 +3970,7 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
                             </div>
                           ) : (
                             <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-                              {grupo.sugestoes.map((sugestao) => {
+                              {sugestoesVisiveis.map((sugestao) => {
                                 const statusOperacional = getStatusOperacionalSugestao(sugestao)
 
                                 return (
@@ -3947,6 +3989,43 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
                                   />
                                 )
                               })}
+                            </div>
+                          )}
+
+                          {quantidadeOpcoesOcultas > 0 && (
+                            <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+                              <div>
+                                <p className="text-sm font-black text-white">
+                                  Mais escolas doadoras disponíveis
+                                </p>
+                                <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-500">
+                                  O sistema considera opções dentro de um raio operacional de até {formatarDistancia(
+                                    raioSugestoesKm
+                                  )}. As alternativas adicionais ficam ocultas para manter o card mais simples.
+                                </p>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setGruposSugestoesExpandidos((current) => ({
+                                    ...current,
+                                    [grupoKey]: !grupoExpandido,
+                                  }))
+                                }
+                                className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-2xl border border-cyan-500/30 bg-cyan-500/10 px-4 text-xs font-black uppercase tracking-widest text-cyan-300 transition hover:bg-cyan-500/20"
+                              >
+                                {grupoExpandido
+                                  ? "Ocultar opções adicionais"
+                                  : `Mostrar mais opções (${quantidadeOpcoesOcultas})`}
+                                <span
+                                  className={`text-base transition-transform ${
+                                    grupoExpandido ? "rotate-180" : ""
+                                  }`}
+                                >
+                                  ⌄
+                                </span>
+                              </button>
                             </div>
                           )}
                         </div>
