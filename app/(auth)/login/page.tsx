@@ -1,5 +1,6 @@
 "use client"
 
+import Image from "next/image"
 import { useState, type FormEvent, type ReactNode } from "react"
 import { createClient } from "@/lib/supabase"
 
@@ -76,25 +77,8 @@ export default function LoginPage() {
         <div className="pointer-events-none absolute -bottom-24 -right-24 h-96 w-96 rounded-full bg-blue-500/10 blur-3xl" />
 
         <div className="relative z-10">
-          <div className="mb-12 flex items-center gap-4">
-            <div className="flex h-16 w-16 items-center justify-center rounded-3xl border border-blue-400/20 bg-gradient-to-br from-blue-600 to-blue-500 shadow-[0_0_30px_rgba(37,99,235,0.45)]">
-              <span className="text-2xl font-black tracking-tight text-white">
-                SH
-              </span>
-            </div>
-
-            <div>
-              <div className="flex items-baseline text-4xl font-black tracking-tight">
-                <span className="bg-gradient-to-r from-blue-300 to-blue-600 bg-clip-text text-transparent">
-                  SETEC
-                </span>
-                <span className="ml-1 font-light text-slate-200">Hub</span>
-              </div>
-
-              <p className="mt-1 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
-                URE Guarulhos Sul
-              </p>
-            </div>
+          <div className="mb-12">
+            <BrandLogo size="large" className="max-w-[390px]" />
           </div>
 
           <p className="mb-5 inline-flex rounded-full border border-cyan-500/25 bg-cyan-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300">
@@ -139,25 +123,8 @@ export default function LoginPage() {
           className="relative z-10 w-full max-w-[430px] rounded-[2rem] border border-slate-800 bg-slate-950/85 p-5 shadow-2xl backdrop-blur-xl sm:p-8"
         >
           <div className="mb-8 text-center">
-            <div className="mx-auto mb-6 flex w-fit items-center gap-3">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-blue-400/20 bg-gradient-to-br from-blue-600 to-blue-500 shadow-[0_0_24px_rgba(37,99,235,0.42)]">
-                <span className="text-lg font-black tracking-tight text-white">
-                  SH
-                </span>
-              </div>
-
-              <div className="text-left leading-tight">
-                <div className="flex items-baseline text-2xl font-black tracking-tight sm:text-3xl">
-                  <span className="bg-gradient-to-r from-blue-300 to-blue-600 bg-clip-text text-transparent">
-                    SETEC
-                  </span>
-                  <span className="ml-1 font-light text-slate-200">Hub</span>
-                </div>
-
-                <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">
-                  URE Guarulhos Sul
-                </p>
-              </div>
+            <div className="mx-auto mb-6 flex w-full justify-center">
+              <BrandLogo size="compact" className="max-w-[270px]" />
             </div>
 
             <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
@@ -247,6 +214,79 @@ export default function LoginPage() {
         </form>
       </section>
     </main>
+  )
+}
+
+
+function BrandLogo({
+  size,
+  className = "",
+}: {
+  size: "large" | "compact"
+  className?: string
+}) {
+  const [imageError, setImageError] = useState(false)
+  const isLarge = size === "large"
+
+  return (
+    <div
+      className={`flex items-center ${
+        isLarge ? "gap-4" : "gap-3"
+      } ${!isLarge ? "justify-center" : ""} ${className}`}
+    >
+      <div
+        className={`relative shrink-0 overflow-hidden ${
+          isLarge
+            ? "h-[76px] w-[76px] rounded-[22px]"
+            : "h-[58px] w-[58px] rounded-[18px]"
+        }`}
+      >
+        {!imageError ? (
+          <Image
+            src="/brand/setec-hub-icon.png"
+            alt="Símbolo SETEC Hub"
+            fill
+            priority
+            sizes={isLarge ? "76px" : "58px"}
+            onError={() => setImageError(true)}
+            className="object-contain"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center border border-blue-400/20 bg-gradient-to-br from-blue-600 to-blue-500 shadow-[0_0_30px_rgba(37,99,235,0.45)]">
+            <span
+              className={`font-black tracking-tight text-white ${
+                isLarge ? "text-2xl" : "text-lg"
+              }`}
+            >
+              SH
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="min-w-0 text-left">
+        <div
+          className={`flex items-baseline whitespace-nowrap font-black tracking-tight ${
+            isLarge ? "text-[2.35rem] leading-none" : "text-[1.75rem] leading-none"
+          }`}
+        >
+          <span className="bg-gradient-to-r from-blue-300 via-blue-400 to-blue-600 bg-clip-text text-transparent">
+            SETEC
+          </span>
+          <span className="ml-1.5 font-light text-slate-100">Hub</span>
+        </div>
+
+        <p
+          className={`mt-2 whitespace-nowrap font-black uppercase text-blue-200/75 ${
+            isLarge
+              ? "text-[13px] tracking-[0.24em]"
+              : "text-[11px] tracking-[0.18em]"
+          }`}
+        >
+          URE Guarulhos Sul
+        </p>
+      </div>
+    </div>
   )
 }
 

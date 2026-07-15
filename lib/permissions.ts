@@ -39,6 +39,7 @@ export type Permission =
   | "credenciais.escolas.manage"
   | "saresp.view"
   | "gestao.saresp"
+  | "gestao.apoiousuario"
 
 
 
@@ -84,7 +85,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "credenciais.escolas.manage",
     "credenciais.escolas.view",
     "saresp.view",
-    "gestao.saresp"
+    "gestao.saresp",
+    "gestao.apoiousuario"
 
   ],
 
@@ -212,7 +214,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "credenciais.escolas.manage",
     "credenciais.escolas.view",
     "saresp.view",
-    "gestao.saresp"
+    "gestao.saresp",
+    "gestao.apoiousuario"
+
 
   ],
 }

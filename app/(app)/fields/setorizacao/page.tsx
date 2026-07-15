@@ -30,6 +30,7 @@ type Feedback = {
 } | null
 
 type FiltroStatus = "todas" | "pendentes" | "atribuidas"
+type FiltroEquipe = "todos" | "ativos" | "inativos" | "sobrecarga"
 
 function textoSeguro(value: unknown, fallback = "") {
   const text = String(value ?? "").trim()
@@ -92,6 +93,8 @@ export default function SetorizacaoPage() {
 
   const [buscaEscola, setBuscaEscola] = useState("")
   const [filtroStatus, setFiltroStatus] = useState<FiltroStatus>("todas")
+  const [buscaTecnico, setBuscaTecnico] = useState("")
+  const [filtroEquipe, setFiltroEquipe] = useState<FiltroEquipe>("todos")
 
   const [savingId, setSavingId] = useState<string | null>(null)
   const [successId, setSuccessId] = useState<string | null>(null)
@@ -224,11 +227,15 @@ export default function SetorizacaoPage() {
         ? Math.ceil(totalEscolas / tecnicosAtivos.length)
         : 0
 
-    const ranking = Object.entries(contagemPorTecnico)
-      .map(([nome, carga]) => ({
-        nome,
-        carga,
-      }))
+    const ranking = tecnicosAtivos
+      .map((tecnico) => {
+        const nome = textoSeguro(tecnico.nome)
+
+        return {
+          nome,
+          carga: contagemPorTecnico[nome] || 0,
+        }
+      })
       .sort((a, b) => b.carga - a.carga || a.nome.localeCompare(b.nome, "pt-BR"))
 
     const maiorCarga = ranking[0] || null
@@ -247,7 +254,49 @@ export default function SetorizacaoPage() {
       menorCarga,
       tecnicosAtivos: tecnicosAtivos.length,
     }
-  }, [contagemPorTecnico, escolas, tecnicoStatusPorNome, tecnicosAtivos.length])
+  }, [contagemPorTecnico, escolas, tecnicoStatusPorNome, tecnicosAtivos])
+
+  const tecnicosEquipeFiltrados = useMemo(() => {
+    const termo = normalizar(buscaTecnico)
+    const mediaIdeal = stats.mediaIdeal || 1
+
+    return [...tecnicos]
+      .filter((tecnico) => {
+        const nome = textoSeguro(tecnico.nome)
+        const ativo = Boolean(tecnico.ativo)
+        const carga = contagemPorTecnico[nome] || 0
+
+        const matchBusca = termo ? normalizar(nome).includes(termo) : true
+
+        if (!matchBusca) return false
+        if (filtroEquipe === "ativos") return ativo
+        if (filtroEquipe === "inativos") return !ativo
+        if (filtroEquipe === "sobrecarga") {
+          return ativo && carga > mediaIdeal + 2
+        }
+
+        return true
+      })
+      .sort((a, b) => {
+        const ativoA = Boolean(a.ativo)
+        const ativoB = Boolean(b.ativo)
+
+        if (ativoA !== ativoB) return ativoA ? -1 : 1
+
+        const nomeA = textoSeguro(a.nome)
+        const nomeB = textoSeguro(b.nome)
+        const cargaA = contagemPorTecnico[nomeA] || 0
+        const cargaB = contagemPorTecnico[nomeB] || 0
+
+        return cargaB - cargaA || nomeA.localeCompare(nomeB, "pt-BR")
+      })
+  }, [
+    buscaTecnico,
+    contagemPorTecnico,
+    filtroEquipe,
+    stats.mediaIdeal,
+    tecnicos,
+  ])
 
   const escolasFiltradas = useMemo(() => {
     const termo = normalizar(buscaEscola)
@@ -278,6 +327,19 @@ export default function SetorizacaoPage() {
   function limparFiltros() {
     setBuscaEscola("")
     setFiltroStatus("todas")
+  }
+
+  function visualizarEscolasDoTecnico(nome: string) {
+    if (!nome) return
+
+    setBuscaEscola(nome)
+    setFiltroStatus("atribuidas")
+
+    window.setTimeout(() => {
+      document
+        .getElementById("matriz-atribuicao")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" })
+    }, 100)
   }
 
   async function handleAtribuirTecnico(escolaId: string, novoTecnico: string) {
@@ -510,8 +572,8 @@ export default function SetorizacaoPage() {
   if (loading) return <LoadingPage />
 
   return (
-    <div className="mx-auto max-w-[1750px] space-y-7 pb-12">
-      <section className="relative overflow-hidden rounded-[2.5rem] border border-blue-500/20 bg-[#020617] p-5 shadow-2xl shadow-blue-950/20 md:p-8">
+    <div className="mx-auto max-w-[1750px] space-y-6 pb-12">
+      <section className="relative overflow-hidden rounded-[2rem] border border-blue-500/20 bg-[#020617] p-5 shadow-2xl shadow-blue-950/20 md:p-7">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.28),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(6,182,212,0.16),transparent_34%)]" />
         <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-blue-500/10 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-28 left-1/3 h-72 w-72 rounded-full bg-cyan-500/10 blur-3xl" />
@@ -525,7 +587,7 @@ export default function SetorizacaoPage() {
                 <Badge color="emerald">Atribuições sincronizadas</Badge>
               </div>
 
-              <h1 className="max-w-5xl text-3xl font-black tracking-tight text-white md:text-5xl">
+              <h1 className="max-w-5xl text-3xl font-black tracking-tight text-white md:text-4xl">
                 Setorização{" "}
                 <span className="bg-gradient-to-r from-blue-300 via-cyan-300 to-blue-600 bg-clip-text text-transparent">
                   SETEC / FIELD
@@ -533,9 +595,8 @@ export default function SetorizacaoPage() {
               </h1>
 
               <p className="mt-4 max-w-3xl text-sm font-medium leading-relaxed text-slate-400 md:text-base">
-                Painel executivo para gerenciamento dos técnicos de campo e atribuição
-                das unidades escolares. As alterações refletem na coluna de técnico
-                atribuído da tabela de escolas.
+                Distribua as unidades escolares entre os técnicos Field, acompanhe
+                a carga da equipe e ajuste as atribuições em uma única visão.
               </p>
             </div>
 
@@ -597,159 +658,253 @@ export default function SetorizacaoPage() {
         </div>
       )}
 
-      <section className="grid grid-cols-1 items-start gap-7 xl:grid-cols-[0.82fr_1.18fr]">
+      <section className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[0.9fr_1.1fr]">
         <div className="space-y-7">
-          <Panel title="Gerenciar equipe FIELD">
+          <Panel title="Carga da Equipe Field" className="flex flex-col">
+            <div className="mb-5 grid grid-cols-3 gap-2">
+              <TeamSummary label="Ativos" value={stats.tecnicosAtivos} tone="blue" />
+              <TeamSummary label="Média ideal" value={stats.mediaIdeal || 0} tone="cyan" />
+              <TeamSummary label="Pendentes" value={stats.pendentes} tone="red" />
+            </div>
+
             <form
               onSubmit={handleAdicionarTecnico}
-              className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]"
+              className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]"
             >
               <input
                 type="text"
-                placeholder="Nome do novo técnico..."
+                placeholder="Cadastrar novo técnico..."
                 value={novoTecnicoNome}
                 onChange={(event) => setNovoTecnicoNome(event.target.value)}
-                className="rounded-2xl border border-slate-800 bg-slate-950 px-5 py-4 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/50"
+                className="min-h-12 rounded-xl border border-slate-800 bg-slate-950 px-4 py-3 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/50"
               />
 
               <button
                 type="submit"
                 disabled={salvandoTecnico || !novoTecnicoNome.trim()}
-                className="inline-flex items-center justify-center rounded-2xl bg-blue-600 px-6 py-4 text-sm font-black uppercase tracking-widest text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+                className="inline-flex min-h-12 items-center justify-center rounded-xl bg-blue-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-blue-950/25 transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
               >
-                {salvandoTecnico ? "Salvando..." : "Adicionar"}
+                {salvandoTecnico ? "Salvando..." : "+ Adicionar"}
               </button>
             </form>
+
+            <div className="mb-4 rounded-2xl border border-slate-800 bg-slate-950/55 p-3">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                <div className="relative">
+                  <span className="pointer-events-none absolute inset-y-0 left-4 flex items-center text-slate-600">
+                    🔎
+                  </span>
+
+                  <input
+                    value={buscaTecnico}
+                    onChange={(event) => setBuscaTecnico(event.target.value)}
+                    placeholder="Buscar técnico..."
+                    className="h-11 w-full rounded-xl border border-slate-800 bg-[#020617] pl-11 pr-4 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500/60"
+                  />
+                </div>
+
+                <div className="custom-horizontal-scroll flex gap-1 overflow-x-auto rounded-xl border border-slate-800 bg-[#020617] p-1">
+                  <TeamFilterButton
+                    active={filtroEquipe === "todos"}
+                    onClick={() => setFiltroEquipe("todos")}
+                  >
+                    Todos
+                  </TeamFilterButton>
+                  <TeamFilterButton
+                    active={filtroEquipe === "ativos"}
+                    onClick={() => setFiltroEquipe("ativos")}
+                  >
+                    Ativos
+                  </TeamFilterButton>
+                  <TeamFilterButton
+                    active={filtroEquipe === "inativos"}
+                    onClick={() => setFiltroEquipe("inativos")}
+                  >
+                    Inativos
+                  </TeamFilterButton>
+                  <TeamFilterButton
+                    active={filtroEquipe === "sobrecarga"}
+                    onClick={() => setFiltroEquipe("sobrecarga")}
+                  >
+                    Sobrecarga
+                  </TeamFilterButton>
+                </div>
+              </div>
+
+              <div className="mt-3 flex items-center justify-between gap-3 px-1">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-600">
+                  {tecnicosEquipeFiltrados.length} de {tecnicos.length} técnico(s)
+                </p>
+
+                {(buscaTecnico || filtroEquipe !== "todos") && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBuscaTecnico("")
+                      setFiltroEquipe("todos")
+                    }}
+                    className="text-[10px] font-black uppercase tracking-widest text-blue-300 transition hover:text-blue-200"
+                  >
+                    Limpar
+                  </button>
+                )}
+              </div>
+            </div>
 
             {tecnicos.length === 0 ? (
               <EmptyState
                 icon="👨‍🔧"
                 title="Nenhum técnico cadastrado"
-                description="Cadastre o primeiro técnico field para iniciar a setorização."
+                description="Cadastre o primeiro técnico Field para iniciar a setorização."
+              />
+            ) : tecnicosEquipeFiltrados.length === 0 ? (
+              <EmptyState
+                icon="🔎"
+                title="Nenhum técnico encontrado"
+                description="Ajuste a busca ou altere o filtro aplicado à equipe."
               />
             ) : (
-              <div className="custom-scrollbar max-h-[390px] space-y-4 overflow-y-auto overscroll-contain pr-2">
-                {tecnicos.map((tecnico) => {
-                  const nome = textoSeguro(tecnico.nome)
-                  const carga = contagemPorTecnico[nome] || 0
-                  const ativo = Boolean(tecnico.ativo)
-                  const config = getCargaColor(carga, stats.mediaIdeal || 1)
-                  const bloqueado = savingTecnicoId === tecnico.id
+              <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/35 p-2 shadow-inner shadow-slate-950/40">
+                <div className="team-scrollbar h-[480px] touch-pan-y space-y-3 overflow-y-scroll overscroll-y-contain pr-2">
+                  {tecnicosEquipeFiltrados.map((tecnico, index) => {
+                    const nome = textoSeguro(tecnico.nome)
+                    const carga = contagemPorTecnico[nome] || 0
+                    const ativo = Boolean(tecnico.ativo)
+                    const config = getCargaColor(carga, stats.mediaIdeal || 1)
+                    const bloqueado = savingTecnicoId === tecnico.id
+                    const percentualCarga = Math.min(
+                      Math.max(
+                        (carga / Math.max(stats.mediaIdeal || 1, carga || 1)) * 100,
+                        carga > 0 ? 8 : 0
+                      ),
+                      100
+                    )
 
-                  return (
-                    <article
-                      key={tecnico.id}
-                      className={`relative overflow-hidden rounded-[1.75rem] border p-4 shadow-lg transition ${
-                        ativo
-                          ? "border-slate-800 bg-slate-950/75 hover:border-blue-500/35"
-                          : "border-red-500/20 bg-red-500/[0.045] opacity-85"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex min-w-0 gap-4">
-                          <div
-                            className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border text-sm font-black ${
-                              ativo
-                                ? "border-blue-500/25 bg-blue-500/10 text-blue-300"
-                                : "border-red-500/25 bg-red-500/10 text-red-300"
-                            }`}
-                          >
-                            {getInitials(nome)}
-                          </div>
-
-                          <div className="min-w-0">
-                            <p
-                              className={`truncate text-base font-black ${
-                                ativo ? "text-white" : "text-slate-500 line-through"
+                    return (
+                      <article
+                        key={tecnico.id}
+                        className={`relative overflow-hidden rounded-2xl border p-3.5 transition [contain-intrinsic-size:0_210px] [content-visibility:auto] ${
+                          ativo
+                            ? "border-slate-800 bg-[#020617] hover:border-blue-500/35"
+                            : "border-red-500/20 bg-red-500/[0.045]"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 flex-1 gap-3">
+                            <div
+                              className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border text-xs font-black ${
+                                ativo
+                                  ? "border-blue-500/25 bg-blue-500/10 text-blue-300"
+                                  : "border-red-500/25 bg-red-500/10 text-red-300"
                               }`}
                             >
-                              {nome || "Técnico sem nome"}
-                            </p>
-
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              <span
-                                className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${
-                                  ativo
-                                    ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
-                                    : "border-red-500/25 bg-red-500/10 text-red-300"
-                                }`}
-                              >
-                                {ativo ? "Ativo" : "Inativo"}
-                              </span>
-
-                              {ativo && (
-                                <span
-                                  className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${config.badge}`}
-                                >
-                                  {config.label}
-                                </span>
-                              )}
+                              {getInitials(nome)}
                             </div>
+
+                            <div className="min-w-0 flex-1">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <span className="text-[10px] font-black text-slate-700">
+                                  #{index + 1}
+                                </span>
+                                <p
+                                  className={`truncate text-sm font-black ${
+                                    ativo ? "text-white" : "text-slate-500 line-through"
+                                  }`}
+                                >
+                                  {nome || "Técnico sem nome"}
+                                </p>
+                              </div>
+
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                <span
+                                  className={`rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${
+                                    ativo
+                                      ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+                                      : "border-red-500/25 bg-red-500/10 text-red-300"
+                                  }`}
+                                >
+                                  {ativo ? "Ativo" : "Inativo"}
+                                </span>
+
+                                {ativo && (
+                                  <span
+                                    className={`rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${config.badge}`}
+                                  >
+                                    {config.label}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex min-w-[72px] flex-col items-center rounded-xl border border-slate-800 bg-slate-950 px-3 py-2">
+                            <p className="text-xl font-black text-white">{carga}</p>
+                            <p className="text-[8px] font-black uppercase tracking-widest text-slate-600">
+                              UEs
+                            </p>
                           </div>
                         </div>
 
                         {ativo && (
-                          <div className="flex min-w-[82px] flex-col items-center rounded-2xl border border-slate-800 bg-[#020617] px-3 py-2">
-                            <p className="text-2xl font-black text-white">{carga}</p>
-                            <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">
-                              Escolas
-                            </p>
+                          <div className="mt-3">
+                            <div className="mb-1.5 flex items-center justify-between text-[9px] font-bold uppercase tracking-widest text-slate-600">
+                              <span>Carga atual</span>
+                              <span>Meta: {stats.mediaIdeal || 0}</span>
+                            </div>
+                            <div className="h-2 overflow-hidden rounded-full border border-slate-800 bg-slate-950">
+                              <div
+                                className={`h-full rounded-full bg-gradient-to-r ${config.bar}`}
+                                style={{ width: `${percentualCarga}%` }}
+                              />
+                            </div>
                           </div>
                         )}
-                      </div>
 
-                      {ativo && (
-                        <div className="mt-4 h-2.5 overflow-hidden rounded-full border border-slate-800 bg-[#020617]">
-                          <div
-                            className={`h-full rounded-full bg-gradient-to-r ${config.bar}`}
-                            style={{
-                              width: `${Math.min(
-                                Math.max(
-                                  (carga / Math.max(stats.mediaIdeal || 1, carga || 1)) * 100,
-                                  8
-                                ),
-                                100
-                              )}%`,
-                            }}
-                          />
+                        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                          <button
+                            type="button"
+                            onClick={() => visualizarEscolasDoTecnico(nome)}
+                            disabled={!ativo || carga <= 0 || bloqueado}
+                            className="rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            Ver escolas
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleToggleStatusTecnico(tecnico)}
+                            disabled={bloqueado}
+                            className={`rounded-xl border px-3 py-2.5 text-[10px] font-black uppercase tracking-widest transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                              ativo
+                                ? "border-orange-500/25 bg-orange-500/10 text-orange-300 hover:bg-orange-500/20"
+                                : "border-emerald-500/25 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                            }`}
+                          >
+                            {bloqueado
+                              ? "Processando..."
+                              : ativo
+                                ? "Suspender"
+                                : "Reativar"}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemoverTecnico(tecnico)}
+                            disabled={bloqueado}
+                            className="rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-red-300 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Remover
+                          </button>
                         </div>
-                      )}
-
-                      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                        <button
-                          type="button"
-                          onClick={() => handleToggleStatusTecnico(tecnico)}
-                          disabled={bloqueado}
-                          className={`rounded-2xl border px-4 py-3 text-xs font-black uppercase tracking-widest transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                            ativo
-                              ? "border-red-500/25 bg-red-500/10 text-red-300 hover:bg-red-500/20"
-                              : "border-emerald-500/25 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
-                          }`}
-                        >
-                          {bloqueado
-                            ? "Processando..."
-                            : ativo
-                              ? "Suspender e limpar"
-                              : "Reativar técnico"}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleRemoverTecnico(tecnico)}
-                          disabled={bloqueado}
-                          className="rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3 text-xs font-black uppercase tracking-widest text-slate-300 transition hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          Remover
-                        </button>
-                      </div>
-                    </article>
-                  )
-                })}
+                      </article>
+                    )
+                  })}
+                </div>
               </div>
             )}
           </Panel>
 
-          <Panel title="Inteligência de setorização">
+          <Panel title="Resumo da distribuição">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <InsightBox
                 label="Unidades"
@@ -787,8 +942,9 @@ export default function SetorizacaoPage() {
         </div>
 
         <Panel
+          id="matriz-atribuicao"
           title={`Matriz de atribuição (${escolasFiltradas.length} listadas)`}
-          className="flex h-[748px] flex-col"
+          className="flex h-[720px] flex-col sm:h-[748px]"
         >
           <div className="flex min-h-0 flex-1 flex-col gap-5">
             <div className="shrink-0 rounded-[1.75rem] border border-slate-800 bg-slate-950/45 p-4">
@@ -867,7 +1023,7 @@ export default function SetorizacaoPage() {
                       return (
                         <article
                           key={escola.id}
-                          className={`rounded-[1.5rem] border p-4 transition ${
+                          className={`rounded-[1.5rem] border p-4 transition [contain-intrinsic-size:0_130px] [content-visibility:auto] ${
                             isSuccess
                               ? "border-emerald-500/35 bg-emerald-500/10"
                               : atribuicaoInativa
@@ -960,30 +1116,45 @@ export default function SetorizacaoPage() {
       </section>
 
       <style jsx global>{`
-        .custom-scrollbar {
+        .custom-scrollbar,
+        .team-scrollbar {
           scrollbar-width: thin;
           scrollbar-color: #475569 rgba(15, 23, 42, 0.45);
+          scrollbar-gutter: stable;
+          -webkit-overflow-scrolling: touch;
         }
 
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 8px;
+        .custom-scrollbar::-webkit-scrollbar,
+        .team-scrollbar::-webkit-scrollbar {
+          width: 10px;
           height: 8px;
         }
 
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: rgba(15, 23, 42, 0.45);
+        .custom-scrollbar::-webkit-scrollbar-track,
+        .team-scrollbar::-webkit-scrollbar-track {
+          background: rgba(15, 23, 42, 0.55);
           border-radius: 999px;
         }
 
-        .custom-scrollbar::-webkit-scrollbar-thumb {
+        .custom-scrollbar::-webkit-scrollbar-thumb,
+        .team-scrollbar::-webkit-scrollbar-thumb {
           background-color: #334155;
           border-radius: 999px;
           border: 2px solid transparent;
           background-clip: padding-box;
         }
 
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background-color: #475569;
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover,
+        .team-scrollbar::-webkit-scrollbar-thumb:hover {
+          background-color: #64748b;
+        }
+
+        .custom-horizontal-scroll {
+          scrollbar-width: none;
+        }
+
+        .custom-horizontal-scroll::-webkit-scrollbar {
+          display: none;
         }
 
         select option {
@@ -999,13 +1170,16 @@ function Panel({
   children,
   title,
   className = "",
+  id,
 }: {
   children: ReactNode
   title?: string
   className?: string
+  id?: string
 }) {
   return (
     <div
+      id={id}
       className={`relative overflow-hidden rounded-[2rem] border border-slate-800 bg-[#020617] p-5 shadow-xl shadow-slate-950/20 md:p-6 ${className}`}
     >
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-blue-500/40 to-transparent" />
@@ -1084,6 +1258,55 @@ function KpiCard({
 
       <div className={`mt-3 h-1 rounded-full ${bars[tone]}`} />
     </div>
+  )
+}
+
+function TeamSummary({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: number
+  tone: "blue" | "cyan" | "red"
+}) {
+  const styles = {
+    blue: "border-blue-500/20 bg-blue-500/10 text-blue-300",
+    cyan: "border-cyan-500/20 bg-cyan-500/10 text-cyan-300",
+    red: "border-red-500/20 bg-red-500/10 text-red-300",
+  }
+
+  return (
+    <div className={`rounded-xl border p-3 ${styles[tone]}`}>
+      <p className="text-[8px] font-black uppercase tracking-widest opacity-75">
+        {label}
+      </p>
+      <p className="mt-1 text-xl font-black text-white">{value}</p>
+    </div>
+  )
+}
+
+function TeamFilterButton({
+  children,
+  active,
+  onClick,
+}: {
+  children: ReactNode
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`shrink-0 rounded-lg px-3 py-2 text-[9px] font-black uppercase tracking-widest transition ${
+        active
+          ? "bg-blue-600 text-white shadow-md shadow-blue-950/30"
+          : "text-slate-500 hover:bg-slate-800 hover:text-slate-200"
+      }`}
+    >
+      {children}
+    </button>
   )
 }
 

@@ -53,6 +53,22 @@ type Tecnico = {
   ativo?: boolean | null
 }
 
+type PerfilUsuario = {
+  id: string
+  nome?: string | null
+  email?: string | null
+  role?: string | null
+  setor?: string | null
+}
+
+type InventarioEscolaStatus = {
+  escolaNome: string
+  emDia: boolean
+  ultimaAtualizacao: string | null
+  diasDesdeAtualizacao: number | null
+  diasRestantes: number
+}
+
 type MensagemTela = {
   tipo: "error" | "success" | "info"
   texto: string
@@ -253,6 +269,62 @@ function ordenarAvisosPorPrioridade(avisos: Aviso[]) {
   })
 }
 
+function encontrarEscolaPorReferencia(
+  referencia: unknown,
+  escolas: Array<{ nome_escola?: string | null }>
+) {
+  const referenciaNormalizada = normalizarTexto(referencia)
+
+  if (!referenciaNormalizada || referenciaNormalizada.length < 5) {
+    return null
+  }
+
+  const correspondenciaExata = escolas.find(
+    (escola) =>
+      normalizarTexto(escola.nome_escola) === referenciaNormalizada
+  )
+
+  if (correspondenciaExata) return correspondenciaExata
+
+  return (
+    escolas.find((escola) => {
+      const nomeNormalizado = normalizarTexto(escola.nome_escola)
+
+      if (!nomeNormalizado || nomeNormalizado.length < 5) return false
+
+      return (
+        referenciaNormalizada.includes(nomeNormalizado) ||
+        nomeNormalizado.includes(referenciaNormalizada)
+      )
+    }) || null
+  )
+}
+
+function encontrarUltimoInventario(
+  nomeEscola: unknown,
+  inventariosPorEscola: Map<string, { nome: string; data: number }>
+) {
+  const nomeNormalizado = normalizarTexto(nomeEscola)
+
+  if (!nomeNormalizado) return null
+
+  const correspondenciaExata = inventariosPorEscola.get(nomeNormalizado)
+
+  if (correspondenciaExata) return correspondenciaExata
+
+  for (const [nomeInventario, registro] of inventariosPorEscola.entries()) {
+    if (
+      nomeInventario.length >= 5 &&
+      (nomeNormalizado.includes(nomeInventario) ||
+        nomeInventario.includes(nomeNormalizado))
+    ) {
+      return registro
+    }
+  }
+
+  return null
+}
+
 export default function Home() {
   const supabase = useMemo(() => createClient(), [])
 
@@ -260,7 +332,10 @@ export default function Home() {
   const [tutoriais, setTutoriais] = useState<Tutorial[]>([])
   const [visitas, setVisitas] = useState<Visita[]>([])
   const [avisos, setAvisos] = useState<Aviso[]>([])
+  const [avisoSelecionado, setAvisoSelecionado] = useState<Aviso | null>(null)
   const [tecnicos, setTecnicos] = useState<Tecnico[]>([])
+  const [inventarioEscola, setInventarioEscola] =
+    useState<InventarioEscolaStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [mensagem, setMensagem] = useState<MensagemTela>(null)
@@ -294,6 +369,34 @@ export default function Home() {
         const agoraTime = agora.getTime()
         const limiteTempo =
           agoraTime - DIAS_DESATUALIZADO * 24 * 60 * 60 * 1000
+
+        let perfilAtual: PerfilUsuario | null = null
+
+        const {
+          data: { user: usuarioAutenticado },
+        } = await supabase.auth.getUser()
+
+        if (usuarioAutenticado) {
+          const perfilPorId = await supabase
+            .from("usuarios")
+            .select("id, nome, email, role, setor")
+            .eq("id", usuarioAutenticado.id)
+            .maybeSingle()
+
+          if (perfilPorId.data) {
+            perfilAtual = perfilPorId.data as PerfilUsuario
+          } else if (usuarioAutenticado.email) {
+            const perfilPorEmail = await supabase
+              .from("usuarios")
+              .select("id, nome, email, role, setor")
+              .ilike("email", usuarioAutenticado.email)
+              .maybeSingle()
+
+            if (perfilPorEmail.data) {
+              perfilAtual = perfilPorEmail.data as PerfilUsuario
+            }
+          }
+        }
 
         const [
           chamadosResponse,
@@ -356,27 +459,45 @@ export default function Home() {
         const avisosData = avisosResponse.data || []
 
         const totalEscolas = escolas.length
-        const ultimasAtualizacoes = new Map<string, number>()
+        const inventariosPorEscola = new Map<
+          string,
+          { nome: string; data: number }
+        >()
 
         inventarios.forEach((inventario: any) => {
           if (!inventario.escola_nome || !inventario.created_at) return
 
-          const escola = String(inventario.escola_nome).trim()
+          const nomeOriginal = String(inventario.escola_nome).trim()
+          const nomeNormalizado = normalizarTexto(nomeOriginal)
           const dataInventario = new Date(inventario.created_at).getTime()
 
-          if (!escola || Number.isNaN(dataInventario)) return
+          if (
+            !nomeOriginal ||
+            !nomeNormalizado ||
+            Number.isNaN(dataInventario)
+          ) {
+            return
+          }
 
-          const dataAtual = ultimasAtualizacoes.get(escola) || 0
+          const registroAtual = inventariosPorEscola.get(nomeNormalizado)
 
-          if (dataInventario > dataAtual) {
-            ultimasAtualizacoes.set(escola, dataInventario)
+          if (!registroAtual || dataInventario > registroAtual.data) {
+            inventariosPorEscola.set(nomeNormalizado, {
+              nome: nomeOriginal,
+              data: dataInventario,
+            })
           }
         })
 
         let escolasAtualizadas = 0
 
-        ultimasAtualizacoes.forEach((dataUltima) => {
-          if (dataUltima >= limiteTempo) {
+        escolas.forEach((escola: any) => {
+          const ultimoInventario = encontrarUltimoInventario(
+            escola.nome_escola,
+            inventariosPorEscola
+          )
+
+          if (ultimoInventario && ultimoInventario.data >= limiteTempo) {
             escolasAtualizadas += 1
           }
         })
@@ -385,6 +506,48 @@ export default function Home() {
           totalEscolas - escolasAtualizadas,
           0
         )
+
+        const escolaDoUsuario = encontrarEscolaPorReferencia(
+          perfilAtual?.setor,
+          escolas
+        )
+
+        if (escolaDoUsuario?.nome_escola) {
+          const ultimoInventario = encontrarUltimoInventario(
+            escolaDoUsuario.nome_escola,
+            inventariosPorEscola
+          )
+
+          const diasDesdeAtualizacao = ultimoInventario
+            ? Math.max(
+                0,
+                Math.floor(
+                  (agoraTime - ultimoInventario.data) /
+                    (24 * 60 * 60 * 1000)
+                )
+              )
+            : null
+
+          setInventarioEscola({
+            escolaNome: escolaDoUsuario.nome_escola,
+            emDia: Boolean(
+              ultimoInventario && ultimoInventario.data >= limiteTempo
+            ),
+            ultimaAtualizacao: ultimoInventario
+              ? new Date(ultimoInventario.data).toISOString()
+              : null,
+            diasDesdeAtualizacao,
+            diasRestantes:
+              diasDesdeAtualizacao === null
+                ? 0
+                : Math.max(
+                    DIAS_DESATUALIZADO - diasDesdeAtualizacao,
+                    0
+                  ),
+          })
+        } else {
+          setInventarioEscola(null)
+        }
 
         const avisosValidos = ordenarAvisosPorPrioridade(
           avisosData.filter((aviso: any) => {
@@ -486,6 +649,26 @@ export default function Home() {
     return () => window.clearTimeout(timer)
   }, [mensagem])
 
+  useEffect(() => {
+    if (!avisoSelecionado) return
+
+    const overflowAnterior = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+
+    function fecharComEsc(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setAvisoSelecionado(null)
+      }
+    }
+
+    window.addEventListener("keydown", fecharComEsc)
+
+    return () => {
+      document.body.style.overflow = overflowAnterior
+      window.removeEventListener("keydown", fecharComEsc)
+    }
+  }, [avisoSelecionado])
+
   if (loading) {
     return <LoadingPage />
   }
@@ -542,10 +725,32 @@ export default function Home() {
 
           <div className="grid grid-cols-2 gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 sm:min-w-[360px]">
             <MiniIndicator
-              label="Inventário"
-              value={`${percentualInventario}%`}
-              description={`${stats.inventariosAtualizados}/${stats.escolasCadastradas} UEs`}
-              tone={stats.inventariosPendentes > 0 ? "yellow" : "green"}
+              label={
+                inventarioEscola
+                  ? "Inventário da escola"
+                  : "Inventário"
+              }
+              value={
+                inventarioEscola
+                  ? inventarioEscola.emDia
+                    ? "OK"
+                    : "PENDENTE"
+                  : `${percentualInventario}%`
+              }
+              description={
+                inventarioEscola
+                  ? inventarioEscola.escolaNome
+                  : `${stats.inventariosAtualizados}/${stats.escolasCadastradas} UEs`
+              }
+              tone={
+                inventarioEscola
+                  ? inventarioEscola.emDia
+                    ? "green"
+                    : "yellow"
+                  : stats.inventariosPendentes > 0
+                    ? "yellow"
+                    : "green"
+              }
             />
 
             <MiniIndicator
@@ -656,7 +861,13 @@ export default function Home() {
                 />
               </div>
             ) : (
-              avisos.map((aviso) => <AvisoCard key={aviso.id} aviso={aviso} />)
+              avisos.map((aviso) => (
+                <AvisoCard
+                  key={aviso.id}
+                  aviso={aviso}
+                  onOpen={() => setAvisoSelecionado(aviso)}
+                />
+              ))
             )}
           </div>
         </Panel>
@@ -664,7 +875,7 @@ export default function Home() {
 
       <section>
         <Panel>
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[360px_1fr] xl:items-center">
+          <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 className="text-xl font-black text-white">
                 📋 Status do inventário
@@ -675,77 +886,161 @@ export default function Home() {
               </p>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr] lg:items-center">
-              <div
-                className={`rounded-2xl border p-5 ${getInventarioStatusClass(
-                  stats.inventariosPendentes
-                )}`}
+            {inventarioEscola && (
+              <span
+                className={`inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-widest ${
+                  inventarioEscola.emDia
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                    : "border-red-500/30 bg-red-500/10 text-red-300"
+                }`}
               >
-                <p className="text-xs font-black uppercase tracking-[0.2em] opacity-80">
-                  Recertificação
-                </p>
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    inventarioEscola.emDia
+                      ? "bg-emerald-400"
+                      : "bg-red-400"
+                  }`}
+                />
+                {inventarioEscola.emDia
+                  ? "Sua escola está em dia"
+                  : "Sua escola precisa atualizar"}
+              </span>
+            )}
+          </div>
 
-                <p className="mt-3 text-5xl font-black">
-                  {percentualInventario}%
-                </p>
+          {inventarioEscola && (
+            <div
+              className={`mb-6 overflow-hidden rounded-2xl border p-5 ${
+                inventarioEscola.emDia
+                  ? "border-emerald-500/30 bg-gradient-to-r from-emerald-500/10 via-emerald-500/[0.04] to-transparent"
+                  : "border-red-500/30 bg-gradient-to-r from-red-500/10 via-red-500/[0.04] to-transparent"
+              }`}
+            >
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex min-w-0 items-start gap-4">
+                  <div
+                    className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border text-xl font-black ${
+                      inventarioEscola.emDia
+                        ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-300"
+                        : "border-red-500/30 bg-red-500/15 text-red-300"
+                    }`}
+                  >
+                    {inventarioEscola.emDia ? "✓" : "!"}
+                  </div>
 
-                <p className="mt-2 text-sm font-bold opacity-80">
-                  {stats.inventariosAtualizados} de {stats.escolasCadastradas} escolas
-                  com inventário atualizado.
-                </p>
+                  <div className="min-w-0">
+                    <p
+                      className={`text-sm font-black ${
+                        inventarioEscola.emDia
+                          ? "text-emerald-300"
+                          : "text-red-300"
+                      }`}
+                    >
+                      {inventarioEscola.emDia
+                        ? "Inventário da unidade atualizado"
+                        : "Inventário da unidade pendente"}
+                    </p>
+
+                    <p className="mt-1 truncate text-base font-black text-white">
+                      {inventarioEscola.escolaNome}
+                    </p>
+
+                    <p className="mt-2 text-xs font-medium leading-relaxed text-slate-500">
+                      {inventarioEscola.ultimaAtualizacao
+                        ? `Última atualização em ${formatarData(
+                            inventarioEscola.ultimaAtualizacao
+                          )}. ${
+                            inventarioEscola.emDia
+                              ? `Validade restante: ${inventarioEscola.diasRestantes} dia(s).`
+                              : `O registro está há ${inventarioEscola.diasDesdeAtualizacao} dia(s) sem recertificação.`
+                          }`
+                        : "Nenhuma resposta de inventário foi localizada para esta unidade."}
+                    </p>
+                  </div>
+                </div>
+
+                {!inventarioEscola.emDia && (
+                  <Link
+                    href="/inventario/atualizar"
+                    className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-xl bg-red-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-red-900/20 transition-all hover:bg-red-500"
+                  >
+                    Atualizar agora
+                  </Link>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[360px_1fr] xl:items-center">
+            <div
+              className={`rounded-2xl border p-5 ${getInventarioStatusClass(
+                stats.inventariosPendentes
+              )}`}
+            >
+              <p className="text-xs font-black uppercase tracking-[0.2em] opacity-80">
+                Recertificação geral
+              </p>
+
+              <p className="mt-3 text-5xl font-black">
+                {percentualInventario}%
+              </p>
+
+              <p className="mt-2 text-sm font-bold opacity-80">
+                {stats.inventariosAtualizados} de {stats.escolasCadastradas} escolas
+                com inventário atualizado.
+              </p>
+            </div>
+
+            <div>
+              <div className="h-4 w-full overflow-hidden rounded-full bg-slate-800">
+                <div
+                  className={`h-4 rounded-full transition-all duration-1000 ${
+                    percentualInventario >= 80
+                      ? "bg-emerald-500"
+                      : percentualInventario >= 50
+                        ? "bg-yellow-500"
+                        : "bg-red-500"
+                  }`}
+                  style={{ width: `${percentualInventario}%` }}
+                />
               </div>
 
-              <div>
-                <div className="h-4 w-full overflow-hidden rounded-full bg-slate-800">
-                  <div
-                    className={`h-4 rounded-full transition-all duration-1000 ${
-                      percentualInventario >= 80
-                        ? "bg-emerald-500"
-                        : percentualInventario >= 50
-                          ? "bg-yellow-500"
-                          : "bg-red-500"
-                    }`}
-                    style={{ width: `${percentualInventario}%` }}
-                  />
-                </div>
+              <div className="mt-5">
+                {stats.inventariosPendentes > 0 ? (
+                  <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <p className="text-sm font-black text-red-300">
+                          {stats.inventariosPendentes} escola(s) precisam revisar o
+                          inventário.
+                        </p>
 
-                <div className="mt-5">
-                  {stats.inventariosPendentes > 0 ? (
-                    <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4">
-                      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                        <div>
-                          <p className="text-sm font-black text-red-300">
-                            {stats.inventariosPendentes} escola(s) precisam revisar o
-                            inventário.
-                          </p>
-
-                          <p className="mt-1 text-xs font-medium leading-relaxed text-red-300/80">
-                            A atualização ajuda a manter os indicadores de equipamentos,
-                            garantia e parque tecnológico mais confiáveis.
-                          </p>
-                        </div>
-
-                        <Link
-                          href="/inventario/atualizar"
-                          className="inline-flex items-center justify-center rounded-xl bg-red-600 px-5 py-3 text-sm font-black uppercase tracking-widest text-white shadow-lg shadow-red-900/20 transition-all hover:bg-red-500"
-                        >
-                          Atualizar inventário
-                        </Link>
+                        <p className="mt-1 text-xs font-medium leading-relaxed text-red-300/80">
+                          A atualização ajuda a manter os indicadores de equipamentos,
+                          garantia e parque tecnológico mais confiáveis.
+                        </p>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4">
-                      <p className="text-sm font-black text-emerald-300">
-                        Todos os inventários estão em dia.
-                      </p>
 
-                      <p className="mt-1 text-xs font-medium leading-relaxed text-emerald-300/80">
-                        As escolas cadastradas possuem atualização válida dentro do
-                        período definido.
-                      </p>
+                      <Link
+                        href="/inventario/atualizar"
+                        className="inline-flex items-center justify-center rounded-xl bg-red-600 px-5 py-3 text-sm font-black uppercase tracking-widest text-white shadow-lg shadow-red-900/20 transition-all hover:bg-red-500"
+                      >
+                        Atualizar inventário
+                      </Link>
                     </div>
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4">
+                    <p className="text-sm font-black text-emerald-300">
+                      Todos os inventários estão em dia.
+                    </p>
+
+                    <p className="mt-1 text-xs font-medium leading-relaxed text-emerald-300/80">
+                      As escolas cadastradas possuem atualização válida dentro do
+                      período definido.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -946,6 +1241,13 @@ export default function Home() {
         </Panel>
       </section>
 
+      {avisoSelecionado && (
+        <AvisoModal
+          aviso={avisoSelecionado}
+          onClose={() => setAvisoSelecionado(null)}
+        />
+      )}
+
       <a
         href="https://wa.me/551124422282?text=Olá%2C%20minha%20escola%20está%20sem%20rede%2C%20poderiam%20abrir%20um%20chamado%20com%20a%20FDE%3F"
         target="_blank"
@@ -980,12 +1282,20 @@ function LoadingPage() {
   )
 }
 
-function AvisoCard({ aviso }: { aviso: Aviso }) {
+function AvisoCard({
+  aviso,
+  onOpen,
+}: {
+  aviso: Aviso
+  onOpen: () => void
+}) {
   const config = getAvisoConfig(aviso.tipo)
 
   return (
-    <div
-      className={`group relative min-h-[180px] overflow-hidden rounded-2xl border p-4 transition-all hover:-translate-y-0.5 hover:shadow-2xl ${config.card}`}
+    <button
+      type="button"
+      onClick={onOpen}
+      className={`group relative min-h-[190px] overflow-hidden rounded-2xl border p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-blue-500/40 ${config.card}`}
     >
       <div
         className={`pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full blur-3xl ${config.glow}`}
@@ -1011,25 +1321,157 @@ function AvisoCard({ aviso }: { aviso: Aviso }) {
             {aviso.titulo || "Aviso SETEC"}
           </p>
 
-          <p className="mt-2 line-clamp-4 text-sm font-medium leading-relaxed text-slate-300">
+          <p className="mt-2 line-clamp-3 text-sm font-medium leading-relaxed text-slate-300">
             {aviso.descricao || "Sem descrição registrada."}
           </p>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-800/70 pt-3">
-          {aviso.data_fim && (
-            <span className="rounded-full border border-slate-700 bg-[#020617]/70 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-500">
-              Até {formatarData(aviso.data_fim)}
-            </span>
-          )}
+        <div className="mt-4 flex items-center justify-between gap-3 border-t border-slate-800/70 pt-3">
+          <span className="rounded-full border border-slate-700 bg-[#020617]/70 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+            {aviso.data_fim
+              ? `Até ${formatarData(aviso.data_fim)}`
+              : "Sem expiração"}
+          </span>
 
-          {!aviso.data_fim && (
-            <span className="rounded-full border border-slate-700 bg-[#020617]/70 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-500">
-              Sem expiração
+          <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-slate-300 transition-all group-hover:text-white">
+            Ver aviso
+            <span className="transition-transform group-hover:translate-x-1">
+              →
             </span>
-          )}
+          </span>
         </div>
       </div>
+    </button>
+  )
+}
+
+function AvisoModal({
+  aviso,
+  onClose,
+}: {
+  aviso: Aviso
+  onClose: () => void
+}) {
+  const config = getAvisoConfig(aviso.tipo)
+
+  return (
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#020617]/90 p-3 backdrop-blur-md sm:p-6"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose()
+        }
+      }}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="aviso-completo-titulo"
+        className={`relative isolate max-h-[90vh] w-full max-w-4xl overflow-hidden rounded-[2rem] border shadow-2xl shadow-black/50 ${config.card}`}
+      >
+        <div
+          className={`pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full blur-3xl ${config.glow}`}
+        />
+
+        <div className="relative z-10 flex items-start justify-between gap-4 border-b border-slate-800/70 p-5 sm:p-7">
+          <div className="flex min-w-0 items-start gap-4">
+            <div
+              className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border text-3xl ${config.iconBox}`}
+            >
+              {aviso.emoji || config.emoji}
+            </div>
+
+            <div className="min-w-0">
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <span
+                  className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${config.badge}`}
+                >
+                  {config.label}
+                </span>
+
+                <span className="rounded-full border border-slate-700 bg-[#020617]/70 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                  Aviso SETEC
+                </span>
+              </div>
+
+              <h2
+                id="aviso-completo-titulo"
+                className="break-words text-2xl font-black leading-tight text-white sm:text-3xl"
+              >
+                {aviso.titulo || "Aviso SETEC"}
+              </h2>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-700 bg-[#020617]/80 text-xl font-black text-slate-500 transition-all hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-300"
+            aria-label="Fechar aviso"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="relative z-10 max-h-[62vh] overflow-y-auto p-5 sm:p-7">
+          <div className="rounded-2xl border border-slate-800/80 bg-[#020617]/70 p-5 sm:p-6">
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
+              Mensagem completa
+            </p>
+
+            <div className="mt-4 whitespace-pre-wrap break-words text-sm font-medium leading-7 text-slate-200 sm:text-base">
+              {aviso.descricao || "Sem descrição registrada."}
+            </div>
+          </div>
+
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <AvisoInfo
+              label="Publicado em"
+              value={formatarDataHora(aviso.created_at)}
+            />
+            <AvisoInfo
+              label="Início da exibição"
+              value={formatarData(aviso.data_inicio)}
+            />
+            <AvisoInfo
+              label="Fim da exibição"
+              value={
+                aviso.data_fim
+                  ? formatarData(aviso.data_fim)
+                  : "Sem expiração"
+              }
+            />
+          </div>
+        </div>
+
+        <div className="relative z-10 flex justify-end border-t border-slate-800/70 bg-[#020617]/60 p-4 sm:px-7">
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex min-h-11 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 px-5 text-xs font-black uppercase tracking-widest text-slate-300 transition-all hover:border-slate-600 hover:text-white"
+          >
+            Fechar aviso
+          </button>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function AvisoInfo({
+  label,
+  value,
+}: {
+  label: string
+  value: string
+}) {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-[#020617]/70 p-4">
+      <p className="text-[9px] font-black uppercase tracking-widest text-slate-600">
+        {label}
+      </p>
+
+      <p className="mt-2 text-sm font-bold text-slate-300">{value}</p>
     </div>
   )
 }

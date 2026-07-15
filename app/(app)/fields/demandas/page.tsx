@@ -2,6 +2,7 @@
 
 import {
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -451,15 +452,18 @@ export default function GestaoDemandasFields() {
   const supabase = useMemo(() => createClient(), [])
   const inputFotosRef = useRef<HTMLInputElement>(null)
   const fotosConclusaoRef = useRef<FotoPreparada[]>([])
+  const carregamentoInicialConcluidoRef = useRef(false)
 
   const [loading, setLoading] = useState(true)
+  const [atualizando, setAtualizando] = useState(false)
+  const [ultimaAtualizacao, setUltimaAtualizacao] = useState<string | null>(null)
   const [salvando, setSalvando] = useState(false)
   const [concluindo, setConcluindo] = useState(false)
   const [reabrindo, setReabrindo] = useState(false)
   const [mensagem, setMensagem] = useState<MensagemTela>(null)
 
   const [abaAtiva, setAbaAtiva] = useState<AbaAtiva>("operacao")
-  const [filtrosAvancadosAbertos, setFiltrosAvancadosAbertos] = useState(false)
+  const [filtrosAvancadosAbertos, setFiltrosAvancadosAbertos] = useState(true)
   const [formularioAberto, setFormularioAberto] = useState(true)
 
   const [usuarioLogado, setUsuarioLogado] = useState<UsuarioSistema | null>(null)
@@ -473,6 +477,8 @@ export default function GestaoDemandasFields() {
   const [filtroStatus, setFiltroStatus] = useState("Todos")
   const [filtroTipo, setFiltroTipo] = useState("Todos")
   const [filtroRapido, setFiltroRapido] = useState<FiltroRapido>("Todos")
+  const buscaDiferida = useDeferredValue(busca)
+  const buscaEmProcessamento = buscaDiferida !== busca
 
   const [escolaSelecionada, setEscolaSelecionada] = useState("")
   const [tipo, setTipo] = useState("")
@@ -531,26 +537,31 @@ export default function GestaoDemandasFields() {
   )
 
   const carregarDados = useCallback(async () => {
-    try {
-      setLoading(true)
+    const primeiraCarga = !carregamentoInicialConcluidoRef.current
 
+    if (primeiraCarga) {
+      setLoading(true)
+    } else {
+      setAtualizando(true)
+    }
+
+    try {
       const {
         data: { user },
       } = await supabase.auth.getUser()
 
-      if (user?.email) {
+      if (user) {
         const { data: userData } = await supabase
           .from("usuarios")
           .select("nome, email, role, setor")
-          .eq("email", user.email)
-          .limit(1)
+          .eq("id", user.id)
           .maybeSingle()
 
         const perfil = userData as UsuarioSistema | null
 
         setUsuarioLogado({
-          nome: perfil?.nome || user.email,
-          email: user.email,
+          nome: perfil?.nome || user.email || "Usuário",
+          email: perfil?.email || user.email || null,
           role: perfil?.role || null,
           setor: perfil?.setor || null,
         })
@@ -582,7 +593,10 @@ export default function GestaoDemandasFields() {
       if (errorDemandas) throw errorDemandas
 
       if (errorEvidencias) {
-        console.warn("Não foi possível carregar as evidências Field:", errorEvidencias)
+        console.warn(
+          "Não foi possível carregar as evidências Field:",
+          errorEvidencias
+        )
         setEvidencias([])
       } else {
         setEvidencias((dataEvidencias || []) as EvidenciaField[])
@@ -590,6 +604,7 @@ export default function GestaoDemandasFields() {
 
       setEscolas((dataEscolas || []) as Escola[])
       setDemandas((dataDemandas || []) as DemandaField[])
+      setUltimaAtualizacao(new Date().toISOString())
     } catch (error: unknown) {
       console.error("Erro ao carregar demandas Field:", error)
       setMensagem({
@@ -600,7 +615,12 @@ export default function GestaoDemandasFields() {
         ),
       })
     } finally {
-      setLoading(false)
+      if (primeiraCarga) {
+        carregamentoInicialConcluidoRef.current = true
+        setLoading(false)
+      } else {
+        setAtualizando(false)
+      }
     }
   }, [supabase])
 
@@ -669,30 +689,71 @@ export default function GestaoDemandasFields() {
   }, [escolaSelecionada, infoEscola])
 
   const stats = useMemo(() => {
-    const total = demandas.length
-    const pendentes = demandas.filter((demanda) => isPendente(demanda)).length
-    const concluidas = demandas.filter((demanda) => isConcluida(demanda)).length
-    const criticas = demandas.filter(
-      (demanda) => demanda.urgencia === "Crítica" && !isConcluida(demanda)
-    ).length
-    const atrasadas = demandas.filter((demanda) => isAtrasada(demanda)).length
-    const hoje = demandas.filter((demanda) => isPrevistaHoje(demanda)).length
-    const semPrevisao = demandas.filter(
-      (demanda) => !isConcluida(demanda) && !demanda.data_prevista
-    ).length
-    const taxaConclusao = total > 0 ? Math.round((concluidas / total) * 100) : 0
-
-    return {
-      total,
-      pendentes,
-      concluidas,
-      criticas,
-      atrasadas,
-      hoje,
-      semPrevisao,
-      taxaConclusao,
+    const resumo = {
+      total: demandas.length,
+      pendentes: 0,
+      concluidas: 0,
+      criticas: 0,
+      atrasadas: 0,
+      hoje: 0,
+      semPrevisao: 0,
+      taxaConclusao: 0,
     }
+
+    demandas.forEach((demanda) => {
+      const concluida = isConcluida(demanda)
+
+      if (concluida) {
+        resumo.concluidas += 1
+      } else {
+        if (isPendente(demanda)) resumo.pendentes += 1
+        if (demanda.urgencia === "Crítica") resumo.criticas += 1
+        if (isAtrasada(demanda)) resumo.atrasadas += 1
+        if (isPrevistaHoje(demanda)) resumo.hoje += 1
+        if (!demanda.data_prevista) resumo.semPrevisao += 1
+      }
+    })
+
+    resumo.taxaConclusao =
+      resumo.total > 0
+        ? Math.round((resumo.concluidas / resumo.total) * 100)
+        : 0
+
+    return resumo
   }, [demandas])
+
+  const opcoesFiltroRapido = useMemo(
+    () => [
+      { valor: "Todos" as FiltroRapido, rotulo: "Todos", total: stats.total },
+      {
+        valor: "Pendentes" as FiltroRapido,
+        rotulo: "Pendentes",
+        total: stats.pendentes,
+      },
+      {
+        valor: "Críticas" as FiltroRapido,
+        rotulo: "Críticas",
+        total: stats.criticas,
+      },
+      {
+        valor: "Atrasadas" as FiltroRapido,
+        rotulo: "Atrasadas",
+        total: stats.atrasadas,
+      },
+      { valor: "Hoje" as FiltroRapido, rotulo: "Hoje", total: stats.hoje },
+      {
+        valor: "Sem previsão" as FiltroRapido,
+        rotulo: "Sem previsão",
+        total: stats.semPrevisao,
+      },
+      {
+        valor: "Concluídas" as FiltroRapido,
+        rotulo: "Concluídas",
+        total: stats.concluidas,
+      },
+    ],
+    [stats]
+  )
 
   const listaTecnicosFiltro = useMemo(() => {
     const nomes = new Set<string>()
@@ -720,7 +781,7 @@ export default function GestaoDemandasFields() {
   }, [busca, filtroEscola, filtroRapido, filtroStatus, filtroTecnico, filtroTipo])
 
   const demandasFiltradas = useMemo(() => {
-    const termoBusca = normalizarTexto(busca)
+    const termoBusca = normalizarTexto(buscaDiferida)
 
     const filtradas = demandas.filter((demanda) => {
       const escolaRelacionada = escolasPorId.get(String(demanda.escola_id))
@@ -806,7 +867,7 @@ export default function GestaoDemandasFields() {
     })
   }, [
     demandas,
-    busca,
+    buscaDiferida,
     filtroEscola,
     filtroTecnico,
     filtroStatus,
@@ -815,52 +876,62 @@ export default function GestaoDemandasFields() {
     escolasPorId,
   ])
 
-  const chartCategoria = useMemo(() => {
-    return TIPOS_DEMANDA.map((tipoDemanda) => ({
-      name: tipoDemanda,
-      qtd: demandas.filter((demanda) => demanda.tipo === tipoDemanda).length,
-    }))
-  }, [demandas])
+  const {
+    chartCategoria,
+    chartUrgencia,
+    chartTecnico,
+    chartEscola,
+  } = useMemo(() => {
+    const categorias = Object.fromEntries(
+      TIPOS_DEMANDA.map((item) => [item, 0])
+    ) as Record<TipoDemanda, number>
 
-  const chartUrgencia = useMemo(() => {
-    return URGENCIAS.map((nivel) => ({
-      name: nivel,
-      qtd: demandas.filter(
-        (demanda) => demanda.urgencia === nivel && !isConcluida(demanda)
-      ).length,
-    }))
-  }, [demandas])
+    const urgencias = Object.fromEntries(
+      URGENCIAS.map((item) => [item, 0])
+    ) as Record<UrgenciaDemanda, number>
 
-  const chartTecnico = useMemo(() => {
-    const counts: Record<string, number> = {}
-
-    demandas
-      .filter((demanda) => !isConcluida(demanda))
-      .forEach((demanda) => {
-        const escola = escolasPorId.get(String(demanda.escola_id))
-        const tecnico = escola?.tecnico_atribuido || "S/ Atribuição"
-        counts[tecnico] = (counts[tecnico] || 0) + 1
-      })
-
-    return Object.entries(counts)
-      .map(([name, qtd]) => ({ name, qtd }))
-      .sort((a, b) => b.qtd - a.qtd)
-      .slice(0, 10)
-  }, [demandas, escolasPorId])
-
-  const chartEscola = useMemo(() => {
-    const counts: Record<string, number> = {}
+    const tecnicos: Record<string, number> = {}
+    const escolasDemandas: Record<string, number> = {}
 
     demandas.forEach((demanda) => {
-      const nomeSafe = demanda.escola_nome || "Escola Desconhecida"
-      counts[nomeSafe] = (counts[nomeSafe] || 0) + 1
+      if (TIPOS_DEMANDA.includes(demanda.tipo as TipoDemanda)) {
+        categorias[demanda.tipo as TipoDemanda] += 1
+      }
+
+      const nomeEscola = demanda.escola_nome || "Escola Desconhecida"
+      escolasDemandas[nomeEscola] =
+        (escolasDemandas[nomeEscola] || 0) + 1
+
+      if (!isConcluida(demanda)) {
+        if (URGENCIAS.includes(demanda.urgencia as UrgenciaDemanda)) {
+          urgencias[demanda.urgencia as UrgenciaDemanda] += 1
+        }
+
+        const escola = escolasPorId.get(String(demanda.escola_id))
+        const tecnico = escola?.tecnico_atribuido || "S/ Atribuição"
+        tecnicos[tecnico] = (tecnicos[tecnico] || 0) + 1
+      }
     })
 
-    return Object.entries(counts)
-      .map(([name, qtd]) => ({ name, qtd }))
-      .sort((a, b) => b.qtd - a.qtd)
-      .slice(0, 10)
-  }, [demandas])
+    return {
+      chartCategoria: TIPOS_DEMANDA.map((item) => ({
+        name: item,
+        qtd: categorias[item],
+      })),
+      chartUrgencia: URGENCIAS.map((item) => ({
+        name: item,
+        qtd: urgencias[item],
+      })),
+      chartTecnico: Object.entries(tecnicos)
+        .map(([name, qtd]) => ({ name, qtd }))
+        .sort((a, b) => b.qtd - a.qtd)
+        .slice(0, 10),
+      chartEscola: Object.entries(escolasDemandas)
+        .map(([name, qtd]) => ({ name, qtd }))
+        .sort((a, b) => b.qtd - a.qtd)
+        .slice(0, 10),
+    }
+  }, [demandas, escolasPorId])
 
   const limparFiltros = () => {
     setBusca("")
@@ -1409,7 +1480,10 @@ export default function GestaoDemandasFields() {
   }
 
   return (
-    <div className="mx-auto max-w-[1750px] space-y-6 pb-12">
+    <div
+      className="mx-auto max-w-[1750px] space-y-6 pb-12"
+      aria-busy={atualizando}
+    >
       <section className="relative overflow-hidden rounded-[2rem] border border-cyan-500/20 bg-[#020617] p-5 shadow-2xl shadow-cyan-950/10 md:p-7">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(6,182,212,0.18),transparent_32%),radial-gradient(circle_at_bottom_right,rgba(37,99,235,0.10),transparent_34%)]" />
 
@@ -1448,13 +1522,31 @@ export default function GestaoDemandasFields() {
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={carregarDados}
-              className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-2xl border border-cyan-500/25 bg-cyan-500/10 px-5 text-xs font-black uppercase tracking-widest text-cyan-300 transition hover:bg-cyan-500/20"
-            >
-              ↻ Atualizar
-            </button>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={carregarDados}
+                disabled={atualizando}
+                className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-2xl border border-cyan-500/25 bg-cyan-500/10 px-5 text-xs font-black uppercase tracking-widest text-cyan-300 transition hover:bg-cyan-500/20 disabled:cursor-wait disabled:opacity-60"
+              >
+                <span
+                  className={`text-base ${
+                    atualizando ? "animate-spin" : ""
+                  }`}
+                >
+                  ↻
+                </span>
+                {atualizando ? "Atualizando..." : "Atualizar dados"}
+              </button>
+
+              <p className="text-center text-[9px] font-bold uppercase tracking-widest text-slate-600">
+                {ultimaAtualizacao
+                  ? `Última sincronização: ${formatarDataHora(
+                      ultimaAtualizacao
+                    )}`
+                  : "Aguardando sincronização"}
+              </p>
+            </div>
           </div>
         </div>
       </section>
@@ -1552,7 +1644,7 @@ export default function GestaoDemandasFields() {
             <button
               type="button"
               onClick={() => setFormularioAberto((current) => !current)}
-              className="rounded-2xl border border-slate-700 bg-slate-900 px-5 py-3 text-xs font-black uppercase tracking-widest text-slate-300 transition hover:border-cyan-500/40 hover:text-cyan-300 xl:hidden"
+              className="rounded-2xl border border-slate-700 bg-slate-900 px-5 py-3 text-xs font-black uppercase tracking-widest text-slate-300 transition hover:border-cyan-500/40 hover:text-cyan-300"
             >
               {formularioAberto ? "Ocultar formulário" : "Nova demanda"}
             </button>
@@ -1758,12 +1850,22 @@ export default function GestaoDemandasFields() {
 
                 <button
                   type="button"
-                  onClick={() => setFiltrosAvancadosAbertos((current) => !current)}
-                  className="relative rounded-2xl border border-slate-700 bg-slate-900 px-5 py-3 text-xs font-black uppercase tracking-widest text-slate-300 transition hover:border-cyan-500/40 hover:text-cyan-300"
+                  onClick={() =>
+                    setFiltrosAvancadosAbertos((current) => !current)
+                  }
+                  aria-expanded={filtrosAvancadosAbertos}
+                  className={`relative inline-flex items-center justify-center gap-2 rounded-2xl border px-5 py-3 text-xs font-black uppercase tracking-widest transition ${
+                    filtrosAvancadosAbertos
+                      ? "border-cyan-500/35 bg-cyan-500/10 text-cyan-300"
+                      : "border-slate-700 bg-slate-900 text-slate-300 hover:border-cyan-500/40 hover:text-cyan-300"
+                  }`}
                 >
-                  {filtrosAvancadosAbertos ? "Ocultar filtros" : "Mais filtros"}
+                  <span aria-hidden="true">⚙</span>
+                  {filtrosAvancadosAbertos
+                    ? "Recolher filtros"
+                    : "Filtros avançados"}
                   {filtrosAtivos > 0 && (
-                    <span className="ml-2 rounded-full bg-cyan-500 px-2 py-0.5 text-[9px] text-slate-950">
+                    <span className="rounded-full bg-cyan-400 px-2 py-0.5 text-[9px] text-slate-950">
                       {filtrosAtivos}
                     </span>
                   )}
@@ -1781,90 +1883,149 @@ export default function GestaoDemandasFields() {
               </div>
             </div>
 
-            <div className="mb-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
-              <input
-                type="text"
-                placeholder="Buscar escola, descrição, técnico, responsável ou retorno..."
-                value={busca}
-                onChange={(e) => setBusca(e.target.value)}
-                className="input-base border-slate-700 focus:border-cyan-500 focus:ring-cyan-500/30"
-              />
+            <div className="mb-5 overflow-hidden rounded-[1.4rem] border border-slate-800 bg-slate-950/60">
+              <div className="p-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+                  <label className="relative block min-w-0 flex-1">
+                    <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-600">
+                      🔎
+                    </span>
+                    <input
+                      type="text"
+                      placeholder="Buscar escola, descrição, técnico, responsável ou retorno..."
+                      value={busca}
+                      onChange={(e) => setBusca(e.target.value)}
+                      className="input-base border-slate-700 pl-11 focus:border-cyan-500 focus:ring-cyan-500/30"
+                    />
+                  </label>
 
-              <div className="custom-scrollbar mt-3 flex gap-2 overflow-x-auto pb-1">
-                {[
-                  "Todos",
-                  "Pendentes",
-                  "Críticas",
-                  "Atrasadas",
-                  "Hoje",
-                  "Sem previsão",
-                  "Concluídas",
-                ].map((filtro) => (
-                  <button
-                    key={filtro}
-                    type="button"
-                    onClick={() => setFiltroRapido(filtro as FiltroRapido)}
-                    className={`shrink-0 rounded-full border px-4 py-2 text-[10px] font-black uppercase tracking-widest transition ${
-                      filtroRapido === filtro
-                        ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-300"
-                        : "border-slate-800 bg-[#020617] text-slate-500 hover:border-slate-600 hover:text-slate-300"
-                    }`}
-                  >
-                    {filtro}
-                  </button>
-                ))}
+                  <div className="flex shrink-0 items-center justify-between gap-3 rounded-xl border border-slate-800 bg-[#020617] px-4 py-3 lg:min-w-[190px]">
+                    <div>
+                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-600">
+                        Resultado atual
+                      </p>
+                      <p className="mt-1 text-sm font-black text-white">
+                        {demandasFiltradas.length} demanda(s)
+                      </p>
+                    </div>
+
+                    {buscaEmProcessamento && (
+                      <span
+                        className="h-4 w-4 animate-spin rounded-full border-2 border-cyan-500/30 border-t-cyan-400"
+                        title="Atualizando resultados"
+                      />
+                    )}
+                  </div>
+                </div>
+
+                <div className="custom-scrollbar mt-4 flex gap-2 overflow-x-auto pb-1">
+                  {opcoesFiltroRapido.map((opcao) => (
+                    <button
+                      key={opcao.valor}
+                      type="button"
+                      onClick={() => setFiltroRapido(opcao.valor)}
+                      className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-4 py-2 text-[10px] font-black uppercase tracking-widest transition ${
+                        filtroRapido === opcao.valor
+                          ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-300 shadow-[0_0_18px_rgba(6,182,212,0.08)]"
+                          : "border-slate-800 bg-[#020617] text-slate-500 hover:border-slate-600 hover:text-slate-300"
+                      }`}
+                    >
+                      {opcao.rotulo}
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[9px] ${
+                          filtroRapido === opcao.valor
+                            ? "bg-cyan-400 text-slate-950"
+                            : "bg-slate-800 text-slate-500"
+                        }`}
+                      >
+                        {opcao.total}
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {filtrosAvancadosAbertos && (
-                <div className="mt-4 grid grid-cols-1 gap-3 border-t border-slate-800 pt-4 md:grid-cols-2 xl:grid-cols-4">
-                  <select
-                    value={filtroStatus}
-                    onChange={(e) => setFiltroStatus(e.target.value)}
-                    className="input-base border-slate-700 focus:border-cyan-500 focus:ring-cyan-500/30"
-                  >
-                    <option value="Todos">Todos os status</option>
-                    <option value={STATUS.PENDENTE}>Pendentes</option>
-                    <option value={STATUS.CONCLUIDA}>Concluídas</option>
-                  </select>
+                <div className="border-t border-slate-800 bg-[#020617]/55 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[9px] font-black uppercase tracking-[0.2em] text-cyan-400">
+                        Filtros avançados
+                      </p>
+                      <p className="mt-1 text-xs font-medium text-slate-600">
+                        Combine os campos abaixo para refinar a fila operacional.
+                      </p>
+                    </div>
 
-                  <select
-                    value={filtroTipo}
-                    onChange={(e) => setFiltroTipo(e.target.value)}
-                    className="input-base border-slate-700 focus:border-cyan-500 focus:ring-cyan-500/30"
-                  >
-                    <option value="Todos">Todos os tipos</option>
-                    {TIPOS_DEMANDA.map((item) => (
-                      <option key={item} value={item}>
-                        {item}
-                      </option>
-                    ))}
-                  </select>
+                    {filtrosAtivos > 0 && (
+                      <button
+                        type="button"
+                        onClick={limparFiltros}
+                        className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-[9px] font-black uppercase tracking-widest text-red-300 transition hover:bg-red-500/20"
+                      >
+                        Limpar tudo
+                      </button>
+                    )}
+                  </div>
 
-                  <select
-                    value={filtroTecnico}
-                    onChange={(e) => setFiltroTecnico(e.target.value)}
-                    className="input-base border-slate-700 focus:border-cyan-500 focus:ring-cyan-500/30"
-                  >
-                    <option value="Todos">Todos os técnicos</option>
-                    {listaTecnicosFiltro.map((tecnico) => (
-                      <option key={tecnico} value={tecnico}>
-                        {tecnico}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <Field label="Status">
+                      <select
+                        value={filtroStatus}
+                        onChange={(e) => setFiltroStatus(e.target.value)}
+                        className="input-base border-slate-700 focus:border-cyan-500 focus:ring-cyan-500/30"
+                      >
+                        <option value="Todos">Todos os status</option>
+                        <option value={STATUS.PENDENTE}>Pendentes</option>
+                        <option value={STATUS.CONCLUIDA}>Concluídas</option>
+                      </select>
+                    </Field>
 
-                  <select
-                    value={filtroEscola}
-                    onChange={(e) => setFiltroEscola(e.target.value)}
-                    className="input-base border-slate-700 focus:border-cyan-500 focus:ring-cyan-500/30"
-                  >
-                    <option value="Todos">Todas as escolas</option>
-                    {escolas.map((escola) => (
-                      <option key={escola.id} value={escola.id}>
-                        {escola.nome_escola}
-                      </option>
-                    ))}
-                  </select>
+                    <Field label="Tipo de demanda">
+                      <select
+                        value={filtroTipo}
+                        onChange={(e) => setFiltroTipo(e.target.value)}
+                        className="input-base border-slate-700 focus:border-cyan-500 focus:ring-cyan-500/30"
+                      >
+                        <option value="Todos">Todos os tipos</option>
+                        {TIPOS_DEMANDA.map((item) => (
+                          <option key={item} value={item}>
+                            {item}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+
+                    <Field label="Técnico Field">
+                      <select
+                        value={filtroTecnico}
+                        onChange={(e) => setFiltroTecnico(e.target.value)}
+                        className="input-base border-slate-700 focus:border-cyan-500 focus:ring-cyan-500/30"
+                      >
+                        <option value="Todos">Todos os técnicos</option>
+                        {listaTecnicosFiltro.map((tecnico) => (
+                          <option key={tecnico} value={tecnico}>
+                            {tecnico}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+
+                    <Field label="Unidade escolar">
+                      <select
+                        value={filtroEscola}
+                        onChange={(e) => setFiltroEscola(e.target.value)}
+                        className="input-base border-slate-700 focus:border-cyan-500 focus:ring-cyan-500/30"
+                      >
+                        <option value="Todos">Todas as escolas</option>
+                        {escolas.map((escola) => (
+                          <option key={escola.id} value={escola.id}>
+                            {escola.nome_escola}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </div>
                 </div>
               )}
             </div>
@@ -1890,7 +2051,7 @@ export default function GestaoDemandasFields() {
                   return (
                     <article
                       key={demanda.id}
-                      className={`group relative overflow-hidden rounded-2xl border p-4 transition md:p-5 ${
+                      className={`group relative overflow-hidden rounded-[1.4rem] border p-4 transition duration-200 [content-visibility:auto] [contain-intrinsic-size:260px] hover:-translate-y-0.5 md:p-5 ${
                         sendoEditada
                           ? "border-blue-500/50 bg-blue-500/10 shadow-lg shadow-blue-950/20"
                           : concluida

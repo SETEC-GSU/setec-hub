@@ -57,10 +57,10 @@ type Feedback = {
 const STATUS_OPTIONS = [
   "Todos",
   "Pendente",
-  "Agendado",
   "Realizada",
-  "Finalizado",
   "Cancelado",
+  "Pendente Retorno",
+  "Em Andamento",
 ]
 
 const CALENDAR_VIEWS: Array<{ label: string; view: View }> = [
@@ -149,6 +149,32 @@ function calcBusinessDays(
 function getStatusTone(statusValue: unknown) {
   const status = normalizar(statusValue)
 
+  if (status.includes("pendente retorno")) {
+    return {
+      label: textoSeguro(statusValue, "Pendente Retorno"),
+      dot: "bg-violet-500",
+      badge: "border-violet-500/30 bg-violet-500/10 text-violet-300",
+      eventBg: "#7c3aed",
+      eventBorder: "#4c1d95",
+      eventText: "#ffffff",
+      modalBadge: "border-violet-600 bg-violet-500 text-white",
+      card: "border-violet-500/25 bg-violet-500/10 text-violet-300",
+    }
+  }
+
+  if (status.includes("em andamento")) {
+    return {
+      label: textoSeguro(statusValue, "Em Andamento"),
+      dot: "bg-blue-500",
+      badge: "border-blue-500/30 bg-blue-500/10 text-blue-300",
+      eventBg: "#2563eb",
+      eventBorder: "#1e3a8a",
+      eventText: "#ffffff",
+      modalBadge: "border-blue-600 bg-blue-500 text-white",
+      card: "border-blue-500/25 bg-blue-500/10 text-blue-300",
+    }
+  }
+
   if (status.includes("pendente") || status.includes("agendado")) {
     return {
       label: textoSeguro(statusValue, "Pendente"),
@@ -175,36 +201,76 @@ function getStatusTone(statusValue: unknown) {
     }
   }
 
+  if (
+    status.includes("realizada") ||
+    status.includes("realizado") ||
+    status.includes("finalizado") ||
+    status.includes("finalizada") ||
+    status.includes("concluido") ||
+    status.includes("concluído")
+  ) {
+    return {
+      label: textoSeguro(statusValue, "Realizada"),
+      dot: "bg-emerald-500",
+      badge: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+      eventBg: "#22c55e",
+      eventBorder: "#166534",
+      eventText: "#03130a",
+      modalBadge: "border-emerald-600 bg-emerald-500 text-black",
+      card: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
+    }
+  }
+
   return {
-    label: textoSeguro(statusValue, "Concluído"),
-    dot: "bg-emerald-500",
-    badge: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
-    eventBg: "#22c55e",
-    eventBorder: "#166534",
-    eventText: "#03130a",
-    modalBadge: "border-emerald-600 bg-emerald-500 text-black",
-    card: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
+    label: textoSeguro(statusValue, "Status não informado"),
+    dot: "bg-slate-500",
+    badge: "border-slate-600 bg-slate-800 text-slate-300",
+    eventBg: "#475569",
+    eventBorder: "#1e293b",
+    eventText: "#ffffff",
+    modalBadge: "border-slate-600 bg-slate-700 text-white",
+    card: "border-slate-700 bg-slate-900 text-slate-300",
   }
 }
-
 function getEventDate(visita: FieldVisita) {
   const status = normalizar(visita.status)
 
-  if (status.includes("pendente") || status.includes("agendado")) {
+  if (
+    status.includes("pendente retorno") ||
+    status.includes("pendente") ||
+    status.includes("agendado")
+  ) {
     return visita.data_prevista
   }
 
-  return visita.data_visita
-}
+  if (status.includes("em andamento")) {
+    return visita.data_visita || visita.data_prevista
+  }
 
+  if (status.includes("cancelado")) {
+    return visita.data_prevista || visita.data_visita
+  }
+
+  return visita.data_visita || visita.data_prevista
+}
 function matchStatusFilter(statusValue: unknown, filtro: string) {
   if (filtro === "Todos") return true
 
   const status = normalizar(statusValue)
   const filtroNormalizado = normalizar(filtro)
 
-  if (filtroNormalizado === "finalizado") {
+  if (filtroNormalizado === "pendente retorno") {
+    return status.includes("pendente retorno")
+  }
+
+  if (filtroNormalizado === "em andamento") {
+    return status.includes("em andamento")
+  }
+
+  if (filtroNormalizado === "realizada") {
     return (
+      status.includes("realizada") ||
+      status.includes("realizado") ||
       status.includes("finalizado") ||
       status.includes("finalizada") ||
       status.includes("concluido") ||
@@ -212,13 +278,20 @@ function matchStatusFilter(statusValue: unknown, filtro: string) {
     )
   }
 
-  if (filtroNormalizado === "realizada") {
-    return status.includes("realizada") || status.includes("realizado")
+  if (filtroNormalizado === "cancelado") {
+    return status.includes("cancelado")
+  }
+
+  if (filtroNormalizado === "pendente") {
+    return (
+      (status.includes("pendente") &&
+        !status.includes("pendente retorno")) ||
+      status.includes("agendado")
+    )
   }
 
   return status.includes(filtroNormalizado)
 }
-
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message
   return "Não foi possível carregar a agenda operacional."
@@ -359,17 +432,26 @@ export default function AgendaFields() {
   const indicadores = useMemo(() => {
     const pendentes = visitas.filter((visita) => {
       const status = normalizar(visita.status)
-      return status.includes("pendente") || status.includes("agendado")
+      return (
+        (status.includes("pendente") &&
+          !status.includes("pendente retorno")) ||
+        status.includes("agendado")
+      )
     }).length
 
     const cancelados = visitas.filter((visita) =>
       normalizar(visita.status).includes("cancelado")
     ).length
 
+    const emAndamento = visitas.filter((visita) =>
+      normalizar(visita.status).includes("em andamento")
+    ).length
+
     const concluidos = visitas.filter((visita) => {
       const status = normalizar(visita.status)
       return (
         status.includes("realizada") ||
+        status.includes("realizado") ||
         status.includes("finalizado") ||
         status.includes("finalizada") ||
         status.includes("concluido") ||
@@ -383,6 +465,7 @@ export default function AgendaFields() {
       total: visitas.length,
       exibidos: eventos.length,
       pendentes,
+      emAndamento,
       concluidos,
       cancelados,
       semData,
@@ -398,7 +481,7 @@ export default function AgendaFields() {
         <div className="pointer-events-none absolute -right-28 -top-28 h-72 w-72 rounded-full bg-blue-500/10 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-28 left-1/3 h-72 w-72 rounded-full bg-cyan-500/10 blur-3xl" />
 
-        <div className="relative z-10 grid grid-cols-1 gap-7 xl:grid-cols-[1fr_600px] xl:items-end">
+        <div className="relative z-10 grid grid-cols-1 gap-7 xl:grid-cols-[1fr_760px] xl:items-end">
           <div>
             <div className="mb-5 flex flex-wrap gap-2">
               <Badge color="blue">Agenda Field</Badge>
@@ -419,10 +502,15 @@ export default function AgendaFields() {
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
             <MiniStat label="Total" value={indicadores.total} tone="slate" />
             <MiniStat label="Exibidos" value={indicadores.exibidos} tone="blue" />
             <MiniStat label="Pendentes" value={indicadores.pendentes} tone="yellow" />
+            <MiniStat
+              label="Em andamento"
+              value={indicadores.emAndamento}
+              tone="cyan"
+            />
             <MiniStat label="Concluídos" value={indicadores.concluidos} tone="emerald" />
           </div>
         </div>
@@ -445,8 +533,10 @@ export default function AgendaFields() {
       <section className="rounded-[2rem] border border-slate-800 bg-[#020617] p-4 shadow-xl shadow-slate-950/20 md:p-5">
         <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_220px_220px_auto]">
           <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3">
-            <LegendItem color="bg-yellow-400" label="Pendente / Agendado" />
-            <LegendItem color="bg-emerald-500" label="Concluído" />
+            <LegendItem color="bg-yellow-400" label="Pendente" />
+            <LegendItem color="bg-blue-500" label="Em andamento" />
+            <LegendItem color="bg-violet-500" label="Pendente retorno" />
+            <LegendItem color="bg-emerald-500" label="Realizada" />
             <LegendItem color="bg-red-500" label="Cancelado" />
 
             {indicadores.semData > 0 && (
@@ -1090,12 +1180,13 @@ function MiniStat({
 }: {
   label: string
   value: string | number
-  tone: "slate" | "blue" | "yellow" | "emerald"
+  tone: "slate" | "blue" | "yellow" | "cyan" | "emerald"
 }) {
   const styles = {
     slate: "border-slate-800 bg-slate-950/70 text-slate-300",
     blue: "border-blue-500/25 bg-blue-500/10 text-blue-300",
     yellow: "border-yellow-500/25 bg-yellow-500/10 text-yellow-300",
+    cyan: "border-cyan-500/25 bg-cyan-500/10 text-cyan-300",
     emerald: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
   }
 
@@ -1103,6 +1194,7 @@ function MiniStat({
     slate: "bg-slate-500",
     blue: "bg-blue-500",
     yellow: "bg-yellow-400",
+    cyan: "bg-cyan-500",
     emerald: "bg-emerald-500",
   }
 

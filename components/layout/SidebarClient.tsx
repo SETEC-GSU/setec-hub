@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import Image from "next/image"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 
@@ -94,6 +95,7 @@ export default function SidebarClient({
   const [collapsed, setCollapsed] = useState(false)
   const [mounted, setMounted] = useState(false)
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({})
+  const [logoError, setLogoError] = useState(false)
 
   const allHrefs = useMemo(() => {
     const hrefs = safeSections.flatMap((section) =>
@@ -185,10 +187,25 @@ export default function SidebarClient({
             )}
             title="SETEC Hub"
           >
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-blue-400/20 bg-gradient-to-br from-blue-600 to-blue-500 shadow-[0_0_22px_rgba(37,99,235,0.38)] transition-all group-hover/logo:scale-105">
-              <span className="text-lg font-black tracking-tight text-white">
-                SH
-              </span>
+            <div className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-blue-400/20 bg-blue-500/5 shadow-[0_0_24px_rgba(37,99,235,0.30)] transition-all group-hover/logo:scale-105 group-hover/logo:border-blue-400/40">
+              {!logoError ? (
+                <Image
+                  src="/brand/setec-hub-icon.png"
+                  alt="Símbolo do SETEC Hub"
+                  width={1024}
+                  height={1024}
+                  priority
+                  sizes="48px"
+                  onError={() => setLogoError(true)}
+                  className="h-full w-full object-contain"
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-blue-600 to-blue-500">
+                  <span className="text-lg font-black tracking-tight text-white">
+                    SH
+                  </span>
+                </div>
+              )}
             </div>
 
             {!collapsed && (

@@ -26,6 +26,8 @@ type Feedback = {
   texto: string
 } | null
 
+type FiltroCarga = "todos" | "alta" | "equilibrada" | "baixa"
+
 function textoSeguro(value: unknown, fallback = "") {
   const text = String(value ?? "").trim()
   return text || fallback
@@ -99,6 +101,8 @@ export default function PainelVisualSetorizacao() {
   const [refreshing, setRefreshing] = useState(false)
   const [busca, setBusca] = useState("")
   const [filtroTecnico, setFiltroTecnico] = useState("Todos")
+  const [buscaCarga, setBuscaCarga] = useState("")
+  const [filtroCarga, setFiltroCarga] = useState<FiltroCarga>("todos")
   const [feedback, setFeedback] = useState<Feedback>(null)
 
   const carregarDados = useCallback(
@@ -215,6 +219,34 @@ export default function PainelVisualSetorizacao() {
     return Array.from(nomes).sort((a, b) => a.localeCompare(b, "pt-BR"))
   }, [escolas])
 
+  const tecnicosCargaFiltrados = useMemo(() => {
+    const termo = normalizar(buscaCarga)
+
+    return stats.chartData.filter((tecnico) => {
+      const matchBusca = !termo || normalizar(tecnico.name).includes(termo)
+      const estilo = getCargaStyle(tecnico.count, stats.mediaPorTecnico)
+
+      const matchCarga =
+        filtroCarga === "todos" ||
+        (filtroCarga === "alta" && estilo.label === "Alta carga") ||
+        (filtroCarga === "equilibrada" && estilo.label === "Equilibrado") ||
+        (filtroCarga === "baixa" && estilo.label === "Baixa carga")
+
+      return matchBusca && matchCarga
+    })
+  }, [buscaCarga, filtroCarga, stats.chartData, stats.mediaPorTecnico])
+
+  function visualizarEscolasDoTecnico(nome: string) {
+    setFiltroTecnico(nome)
+    setBusca("")
+
+    window.setTimeout(() => {
+      document
+        .getElementById("consulta-malha-field")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" })
+    }, 80)
+  }
+
   const escolasFiltradas = useMemo(() => {
     const termo = normalizar(busca)
 
@@ -272,9 +304,9 @@ export default function PainelVisualSetorizacao() {
               </h1>
 
               <p className="mt-4 max-w-3xl text-sm font-medium leading-relaxed text-slate-400 md:text-base">
-                Monitoramento tático da distribuição das unidades escolares por
-                técnico de campo, com visão de cobertura, carga operacional,
-                gargalos e escolas ainda sem atribuição.
+                Consulte a cobertura das escolas, compare a carga dos técnicos
+                Field e identifique rapidamente unidades ainda sem atendimento
+                atribuído.
               </p>
             </div>
 
@@ -365,30 +397,122 @@ export default function PainelVisualSetorizacao() {
         </div>
       )}
 
-      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[0.82fr_1.18fr]">
-        <Glass title="Carga da Equipe Field" icon="📊">
-          {stats.chartData.length === 0 ? (
-            <EmptyState
-              icon="👨‍🔧"
-              title="Nenhum técnico atribuído"
-              description="Ainda não há técnicos vinculados às escolas na base."
-            />
-          ) : (
-            <div className="custom-scrollbar max-h-[650px] space-y-3 overflow-y-auto pr-2">
-              {stats.chartData.map((tecnico, index) => (
-                <TecnicoCargaCard
-                  key={tecnico.name}
-                  tecnico={tecnico}
-                  index={index}
-                  maxCarga={stats.maxCarga}
-                  media={stats.mediaPorTecnico}
+      <section className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-[0.82fr_1.18fr]">
+        <Glass
+          title="Carga da Equipe Field"
+          icon="📊"
+          className="flex min-h-[620px] flex-col xl:h-full"
+        >
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="shrink-0 space-y-3 border-b border-slate-800 pb-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]">
+                <div className="relative">
+                  <span className="pointer-events-none absolute inset-y-0 left-4 flex items-center text-slate-500">
+                    🔍
+                  </span>
+
+                  <input
+                    type="text"
+                    value={buscaCarga}
+                    onChange={(event) => setBuscaCarga(event.target.value)}
+                    placeholder="Buscar técnico..."
+                    className="w-full rounded-2xl border border-slate-800 bg-slate-950 py-3.5 pl-12 pr-4 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-500/60 focus:ring-1 focus:ring-cyan-500/50"
+                  />
+                </div>
+
+                <span className="inline-flex items-center justify-center rounded-2xl border border-cyan-500/25 bg-cyan-500/10 px-4 py-3 text-xs font-black uppercase tracking-widest text-cyan-300">
+                  {tecnicosCargaFiltrados.length} técnico(s)
+                </span>
+              </div>
+
+              <div className="team-filter-scroll custom-scrollbar flex gap-2 overflow-x-auto pb-1">
+                <CargaFilterButton
+                  active={filtroCarga === "todos"}
+                  onClick={() => setFiltroCarga("todos")}
+                >
+                  Todos
+                </CargaFilterButton>
+
+                <CargaFilterButton
+                  active={filtroCarga === "alta"}
+                  onClick={() => setFiltroCarga("alta")}
+                >
+                  Alta carga
+                </CargaFilterButton>
+
+                <CargaFilterButton
+                  active={filtroCarga === "equilibrada"}
+                  onClick={() => setFiltroCarga("equilibrada")}
+                >
+                  Equilibrados
+                </CargaFilterButton>
+
+                <CargaFilterButton
+                  active={filtroCarga === "baixa"}
+                  onClick={() => setFiltroCarga("baixa")}
+                >
+                  Baixa carga
+                </CargaFilterButton>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <CargaResumo
+                  label="Média"
+                  value={stats.mediaPorTecnico}
+                  detail="UEs por técnico"
                 />
-              ))}
+                <CargaResumo
+                  label="Maior"
+                  value={stats.tecnicoMaisLotado?.count || 0}
+                  detail="Maior carga"
+                />
+                <CargaResumo
+                  label="Atenção"
+                  value={stats.acimaDaMedia}
+                  detail="Acima da média"
+                />
+              </div>
             </div>
-          )}
+
+            <div className="relative mt-4 min-h-0 flex-1">
+              {stats.chartData.length === 0 ? (
+                <EmptyState
+                  icon="👨‍🔧"
+                  title="Nenhum técnico atribuído"
+                  description="Ainda não há técnicos vinculados às escolas na base."
+                />
+              ) : tecnicosCargaFiltrados.length === 0 ? (
+                <EmptyState
+                  icon="🔎"
+                  title="Nenhum técnico encontrado"
+                  description="Ajuste a busca ou selecione outro filtro de carga."
+                />
+              ) : (
+                <div className="team-load-scroll custom-scrollbar absolute inset-0 space-y-3 overflow-y-auto overscroll-contain pr-2">
+                  {tecnicosCargaFiltrados.map((tecnico) => {
+                    const indexGeral = stats.chartData.findIndex(
+                      (item) => item.name === tecnico.name
+                    )
+
+                    return (
+                      <TecnicoCargaCard
+                        key={tecnico.name}
+                        tecnico={tecnico}
+                        index={indexGeral}
+                        maxCarga={stats.maxCarga}
+                        media={stats.mediaPorTecnico}
+                        onSelect={() => visualizarEscolasDoTecnico(tecnico.name)}
+                      />
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         </Glass>
 
-        <Glass title="Consulta da Malha de Atendimento" icon="🔎">
+        <div id="consulta-malha-field" className="h-full scroll-mt-6">
+          <Glass title="Consulta da Malha de Atendimento" icon="🔎" className="h-full">
           <div className="mb-5 rounded-[1.75rem] border border-slate-800 bg-slate-950/45 p-4">
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_270px_auto]">
               <div className="relative">
@@ -466,7 +590,8 @@ export default function PainelVisualSetorizacao() {
               ))}
             </div>
           )}
-        </Glass>
+          </Glass>
+        </div>
       </section>
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -495,11 +620,22 @@ export default function PainelVisualSetorizacao() {
       <style jsx global>{`
         .custom-scrollbar {
           scrollbar-width: thin;
-          scrollbar-color: #475569 rgba(15, 23, 42, 0.45);
+          scrollbar-color: #64748b rgba(15, 23, 42, 0.45);
+          scrollbar-gutter: stable;
+          -webkit-overflow-scrolling: touch;
+        }
+
+        .team-load-scroll {
+          touch-action: pan-y;
+          contain: layout paint;
+        }
+
+        .team-filter-scroll {
+          touch-action: pan-x;
         }
 
         .custom-scrollbar::-webkit-scrollbar {
-          width: 8px;
+          width: 10px;
           height: 8px;
         }
 
@@ -509,14 +645,14 @@ export default function PainelVisualSetorizacao() {
         }
 
         .custom-scrollbar::-webkit-scrollbar-thumb {
-          background-color: #334155;
+          background-color: #475569;
           border-radius: 999px;
           border: 2px solid transparent;
           background-clip: padding-box;
         }
 
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background-color: #475569;
+          background-color: #64748b;
         }
 
         select option {
@@ -533,11 +669,13 @@ function TecnicoCargaCard({
   index,
   maxCarga,
   media,
+  onSelect,
 }: {
   tecnico: TecnicoCarga
   index: number
   maxCarga: number
   media: number
+  onSelect: () => void
 }) {
   const percent = maxCarga > 0 ? (tecnico.count / maxCarga) * 100 : 0
   const visual = getCargaStyle(tecnico.count, media)
@@ -596,6 +734,15 @@ function TecnicoCargaCard({
               style={{ width: `${Math.max(percent, 5)}%` }}
             />
           </div>
+
+          <button
+            type="button"
+            onClick={onSelect}
+            className="mt-3 inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-500 transition hover:text-cyan-300"
+          >
+            Ver escolas atribuídas
+            <span aria-hidden="true">→</span>
+          </button>
         </div>
       </div>
     </article>
@@ -797,6 +944,52 @@ function Badge({
     >
       {children}
     </span>
+  )
+}
+
+function CargaFilterButton({
+  children,
+  active,
+  onClick,
+}: {
+  children: ReactNode
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`shrink-0 rounded-xl border px-3.5 py-2 text-[10px] font-black uppercase tracking-widest transition ${
+        active
+          ? "border-cyan-500/35 bg-cyan-500/15 text-cyan-200"
+          : "border-slate-800 bg-slate-950 text-slate-500 hover:border-slate-700 hover:text-slate-300"
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
+function CargaResumo({
+  label,
+  value,
+  detail,
+}: {
+  label: string
+  value: string | number
+  detail: string
+}) {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+      <p className="text-[9px] font-black uppercase tracking-widest text-slate-600">
+        {label}
+      </p>
+      <p className="mt-1 text-xl font-black text-white">{value}</p>
+      <p className="mt-0.5 truncate text-[9px] font-bold uppercase tracking-wider text-slate-600">
+        {detail}
+      </p>
+    </div>
   )
 }
 

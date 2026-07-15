@@ -196,6 +196,37 @@ function calcularPanorama(logs: EquipamentoLog[]): PanoramaAlteracoes {
   }
 }
 
+async function buscarTodosLogs(escola?: string) {
+  const tamanhoPagina = 1000
+  const todosLogs: EquipamentoLog[] = []
+  let inicio = 0
+
+  while (true) {
+    let query = supabase
+      .from("equipamentos_recebidos_logs")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .range(inicio, inicio + tamanhoPagina - 1)
+
+    if (escola) {
+      query = query.eq("escola_nome", escola)
+    }
+
+    const { data, error } = await query
+
+    if (error) throw error
+
+    const lote = (data || []) as EquipamentoLog[]
+    todosLogs.push(...lote)
+
+    if (lote.length < tamanhoPagina) break
+
+    inicio += tamanhoPagina
+  }
+
+  return todosLogs
+}
+
 export default function GestaoEquipamentosPage() {
   const [usuarioAtual, setUsuarioAtual] = useState<UsuarioAtual | null>(null)
   const [escolas, setEscolas] = useState<string[]>([])
@@ -349,50 +380,44 @@ export default function GestaoEquipamentosPage() {
       setLoadingLogs(true)
 
       try {
-        let queryHistorico = supabase
-          .from("equipamentos_recebidos_logs")
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(escola ? 10 : 8)
+        if (!escola) {
+          const todosLogs = await buscarTodosLogs()
 
-        let queryPanorama = supabase
-          .from("equipamentos_recebidos_logs")
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(300)
-
-        if (escola) {
-          queryHistorico = queryHistorico.eq("escola_nome", escola)
-          queryPanorama = queryPanorama.eq("escola_nome", escola)
+          setLogsDisponiveis(true)
+          setLogs(todosLogs)
+          setLogsPanorama(todosLogs)
+          return
         }
 
-        const [historicoResult, panoramaResult] = await Promise.all([
-          queryHistorico,
-          queryPanorama,
+        const [historicoResult, panoramaCompleto] = await Promise.all([
+          supabase
+            .from("equipamentos_recebidos_logs")
+            .select("*")
+            .eq("escola_nome", escola)
+            .order("created_at", { ascending: false })
+            .limit(10),
+          buscarTodosLogs(escola),
         ])
 
         if (historicoResult.error) {
-          const message = historicoResult.error.message?.toLowerCase() || ""
-
-          if (message.includes("does not exist") || message.includes("schema cache")) {
-            setLogsDisponiveis(false)
-            setLogs([])
-            setLogsPanorama([])
-            return
-          }
-
           throw historicoResult.error
-        }
-
-        if (panoramaResult.error) {
-          throw panoramaResult.error
         }
 
         setLogsDisponiveis(true)
         setLogs((historicoResult.data || []) as EquipamentoLog[])
-        setLogsPanorama((panoramaResult.data || []) as EquipamentoLog[])
-      } catch (error) {
+        setLogsPanorama(panoramaCompleto)
+      } catch (error: any) {
         console.error("[Gestão de Equipamentos] Erro ao carregar logs:", error)
+
+        const message = String(error?.message || "").toLowerCase()
+
+        if (
+          message.includes("does not exist") ||
+          message.includes("schema cache")
+        ) {
+          setLogsDisponiveis(false)
+        }
+
         setLogs([])
         setLogsPanorama([])
       } finally {
@@ -1264,7 +1289,7 @@ export default function GestaoEquipamentosPage() {
               <p className="mt-2 max-w-xl text-sm font-medium leading-relaxed text-slate-500">
                 Após selecionar a unidade, serão exibidos os recebimentos, indicadores e últimas
                 alterações vinculadas à escola. Enquanto nenhuma escola estiver selecionada, o
-                histórico abaixo exibe o panorama geral de registros recentes.
+                histórico abaixo exibe todos os registros gerais de rastreabilidade.
               </p>
             </div>
           </Panel>
@@ -1278,23 +1303,36 @@ export default function GestaoEquipamentosPage() {
                 <div>
                   <h2 className="text-lg font-black text-white">Alterações gerais</h2>
                   <p className="text-xs font-medium text-slate-500">
-                    Últimos registros de rastreabilidade de todas as escolas.
+                    Todos os registros de rastreabilidade de todas as escolas.
                   </p>
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => carregarLogs("")}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-800 bg-slate-950 px-4 py-3 text-xs font-black uppercase tracking-widest text-slate-400 transition hover:text-cyan-300"
-                title="Atualizar histórico geral"
-              >
-                <RefreshCw size={16} className={loadingLogs ? "animate-spin" : ""} />
-                Atualizar
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center justify-center rounded-xl border border-cyan-500/25 bg-cyan-500/10 px-4 py-3 text-xs font-black uppercase tracking-widest text-cyan-300">
+                  {loadingLogs ? "Carregando..." : `${logs.length} registro(s)`}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => carregarLogs("")}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-800 bg-slate-950 px-4 py-3 text-xs font-black uppercase tracking-widest text-slate-400 transition hover:text-cyan-300"
+                  title="Atualizar histórico geral"
+                >
+                  <RefreshCw size={16} className={loadingLogs ? "animate-spin" : ""} />
+                  Atualizar
+                </button>
+              </div>
             </div>
 
-            <HistoricoAlteracoes logs={logs} loading={loadingLogs} logsDisponiveis={logsDisponiveis} variant="grid" />
+            <div className="max-h-[920px] overflow-y-auto pr-1 [scrollbar-color:#334155_transparent] [scrollbar-width:thin]">
+              <HistoricoAlteracoes
+                logs={logs}
+                loading={loadingLogs}
+                logsDisponiveis={logsDisponiveis}
+                variant="grid"
+              />
+            </div>
           </Panel>
         </section>
       )}
@@ -1655,7 +1693,10 @@ function HistoricoAlteracoes({
   return (
     <div className={variant === "grid" ? "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3" : "space-y-3"}>
       {logs.map((log) => (
-        <div key={log.id} className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4">
+        <div
+          key={log.id}
+          className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4 [contain-intrinsic-size:0_190px] [content-visibility:auto]"
+        >
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${getAcaoClass(log.acao)}`}>
               {getAcaoLabel(log.acao)}

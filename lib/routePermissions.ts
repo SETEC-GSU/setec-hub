@@ -36,5 +36,7 @@ export const routePermissions: Record<string, Permission> = {
   "/fields/credenciais-escolas": "credenciais.escolas.view",
   "/fields/credenciais-escolas/gestao": "credenciais.escolas.manage",
   "/saresp": "saresp.view",
-  "/saresp/gestao": "gestao.saresp"
+  "/saresp/gestao": "gestao.saresp",
+  "/apoio-usuario/gestao": "gestao.apoiousuario",
+  "/fields/relatorio-redes":"fields.relatorio"
 }

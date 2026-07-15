@@ -60,6 +60,22 @@ function formatarDataBR(dateStr: string | null) {
   return d.toLocaleDateString("pt-BR", { timeZone: "UTC" })
 }
 
+function calcularDiasSemVisita(dateStr: string | null) {
+  const data = parseDateLocal(dateStr)
+
+  if (!data) return null
+
+  const hoje = parseDateLocal(getHojeInput())
+
+  if (!hoje) return null
+
+  const diff = Math.floor(
+    (hoje.getTime() - data.getTime()) / (1000 * 60 * 60 * 24)
+  )
+
+  return Math.max(0, diff)
+}
+
 function normalizarDataKey(dateStr: string | null) {
   if (!dateStr) return ""
 
@@ -247,8 +263,10 @@ export default function FieldsPage() {
   const [filtroMesTabela, setFiltroMesTabela] = useState("Todos")
   const [filtroEscolaTabela, setFiltroEscolaTabela] = useState("Todas")
   const [filtroTecnicoTabela, setFiltroTecnicoTabela] = useState("Todos")
+  const [filtroCategoriaTabela, setFiltroCategoriaTabela] = useState("Todas")
 
   const [chamadoSelecionado, setChamadoSelecionado] = useState<any | null>(null)
+  const [escolaHistoricoSelecionada, setEscolaHistoricoSelecionada] = useState<string | null>(null)
 
   const [modalListaAberto, setModalListaAberto] = useState(false)
   const [dataLista, setDataLista] = useState(getHojeInput())
@@ -387,12 +405,6 @@ export default function FieldsPage() {
       })
       .sort((a, b) => b.total - a.total || ordenarTexto(a.nome, b.nome))
 
-    const tecnicosAtivosSemAtendimento = tecnicosAtivos
-      .map((item) => textoSeguro(item.nome, ""))
-      .filter(Boolean)
-      .filter((nome) => !visitas.some((v) => normalizarTexto(v.tecnico) === normalizarTexto(nome)))
-      .sort(ordenarTexto)
-
     const rankingEscolas = Object.entries(
       filtradas.reduce((acc: any, v) => {
         if (v.escola) acc[v.escola] = (acc[v.escola] || 0) + 1
@@ -446,10 +458,75 @@ export default function FieldsPage() {
     const totalEscolasRede =
       escolasValidasRede.length > 0 ? escolasValidasRede.length : 82
 
-    const escolasNaoAtendidas = escolasValidasRede
-      .filter((e) => !escolasAtendidasSet.has(e.nome_escola))
-      .map((e) => e.nome_escola)
-      .sort(ordenarTexto)
+    const visitasPorEscola = new Map<string, any[]>()
+
+    visitas.forEach((visita) => {
+      const escolaKey = normalizarTexto(visita.escola)
+
+      if (!escolaKey) return
+
+      const listaAtual = visitasPorEscola.get(escolaKey) || []
+      listaAtual.push(visita)
+      visitasPorEscola.set(escolaKey, listaAtual)
+    })
+
+    const escolasBase =
+      escolasValidasRede.length > 0
+        ? escolasValidasRede.map((item) => String(item.nome_escola))
+        : Array.from(
+            new Set(
+              visitas
+                .map((visita) => textoSeguro(visita.escola, ""))
+                .filter(Boolean)
+            )
+          )
+
+    const rankingTempoSemVisita = escolasBase
+      .map((escola) => {
+        const historico = visitasPorEscola.get(normalizarTexto(escola)) || []
+
+        const ultimaVisitaRegistro = historico
+          .map((visita) => ({
+            visita,
+            data:
+              parseDateLocal(visita.data_visita) ||
+              (isStatusFinalizado(visita.status)
+                ? parseDateLocal(visita.data_finalizacao)
+                : null),
+          }))
+          .filter((item) => item.data)
+          .sort(
+            (a, b) =>
+              (b.data?.getTime() || 0) -
+              (a.data?.getTime() || 0)
+          )[0]
+
+        const ultimaVisita =
+          ultimaVisitaRegistro?.visita?.data_visita ||
+          ultimaVisitaRegistro?.visita?.data_finalizacao ||
+          null
+
+        const pendentesEscola = historico.filter((visita) =>
+          isStatusPendente(visita.status)
+        ).length
+
+        return {
+          escola,
+          ultimaVisita,
+          diasSemVisita: calcularDiasSemVisita(ultimaVisita),
+          totalChamados: historico.length,
+          pendentes: pendentesEscola,
+        }
+      })
+      .sort((a, b) => {
+        if (a.diasSemVisita === null && b.diasSemVisita !== null) return -1
+        if (a.diasSemVisita !== null && b.diasSemVisita === null) return 1
+
+        const diasA = a.diasSemVisita ?? Number.MAX_SAFE_INTEGER
+        const diasB = b.diasSemVisita ?? Number.MAX_SAFE_INTEGER
+
+        return diasB - diasA || ordenarTexto(a.escola, b.escola)
+      })
 
     const pendentes = filtradas.filter((v) => isStatusPendente(v.status)).length
     const finalizados = filtradas.filter((v) => isStatusFinalizado(v.status)).length
@@ -468,7 +545,6 @@ export default function FieldsPage() {
       totalVisitas: filtradas.length,
       tecnicosAtivos: tecnicosAtivos.length,
       tecnicosHistorico,
-      tecnicosAtivosSemAtendimento,
       slaMedio,
       mediaAval,
       rankingTecnicos: tecnicosHistorico,
@@ -476,7 +552,7 @@ export default function FieldsPage() {
       graficoMes,
       coberturaEscolas,
       totalEscolasRede,
-      escolasNaoAtendidas,
+      rankingTempoSemVisita,
       pendentes,
       finalizados,
       taxaConclusao,
@@ -500,6 +576,85 @@ export default function FieldsPage() {
     })
   }, [stats.rankingTecnicos, tecnicosAtivos, tecnicosAtivosSet])
 
+  const categoriasChamados = useMemo(() => {
+    return Array.from(
+      new Set(
+        stats.filtradas
+          .map((visita) => textoSeguro(visita.categoria, ""))
+          .filter(Boolean)
+      )
+    ).sort(ordenarTexto)
+  }, [stats.filtradas])
+
+  const historicoEscolaSelecionada = useMemo(() => {
+    if (!escolaHistoricoSelecionada) return []
+
+    const escolaKey = normalizarTexto(escolaHistoricoSelecionada)
+
+    return visitas
+      .filter(
+        (visita) => normalizarTexto(visita.escola) === escolaKey
+      )
+      .sort((a, b) => {
+        const dataA = normalizarDataKey(
+          a.data_visita ||
+            a.data_finalizacao ||
+            a.data_prevista ||
+            a.data_abertura
+        )
+        const dataB = normalizarDataKey(
+          b.data_visita ||
+            b.data_finalizacao ||
+            b.data_prevista ||
+            b.data_abertura
+        )
+
+        if (dataA !== dataB) return dataB.localeCompare(dataA)
+
+        return String(b.chamado || "").localeCompare(
+          String(a.chamado || ""),
+          undefined,
+          { numeric: true }
+        )
+      })
+  }, [escolaHistoricoSelecionada, visitas])
+
+  const resumoHistoricoEscola = useMemo(() => {
+    const ultimaVisita = historicoEscolaSelecionada
+      .map(
+        (visita) =>
+          visita.data_visita ||
+          (isStatusFinalizado(visita.status)
+            ? visita.data_finalizacao
+            : null)
+      )
+      .filter(Boolean)
+      .sort((a, b) =>
+        normalizarDataKey(String(b)).localeCompare(
+          normalizarDataKey(String(a))
+        )
+      )[0]
+
+    return {
+      total: historicoEscolaSelecionada.length,
+      pendentes: historicoEscolaSelecionada.filter((visita) =>
+        isStatusPendente(visita.status)
+      ).length,
+      finalizados: historicoEscolaSelecionada.filter((visita) =>
+        isStatusFinalizado(visita.status)
+      ).length,
+      categorias: new Set(
+        historicoEscolaSelecionada
+          .map((visita) => textoSeguro(visita.categoria, ""))
+          .filter(Boolean)
+      ).size,
+      ultimaVisita: ultimaVisita || null,
+      diasSemVisita: calcularDiasSemVisita(
+        ultimaVisita ? String(ultimaVisita) : null
+      ),
+    }
+  }, [historicoEscolaSelecionada])
+
   const chamadosTabela = useMemo(() => {
     return stats.filtradas.filter((v) => {
       const matchEscola =
@@ -507,6 +662,10 @@ export default function FieldsPage() {
 
       const matchTecnico =
         filtroTecnicoTabela === "Todos" || v.tecnico === filtroTecnicoTabela
+
+      const matchCategoria =
+        filtroCategoriaTabela === "Todas" ||
+        v.categoria === filtroCategoriaTabela
 
       const termo = normalizarTexto(buscaChamado)
 
@@ -546,12 +705,19 @@ export default function FieldsPage() {
         }
       }
 
-      return matchEscola && matchTecnico && matchBusca && matchMes
+      return (
+        matchEscola &&
+        matchTecnico &&
+        matchCategoria &&
+        matchBusca &&
+        matchMes
+      )
     })
   }, [
     stats.filtradas,
     filtroEscolaTabela,
     filtroTecnicoTabela,
+    filtroCategoriaTabela,
     filtroMesTabela,
     buscaChamado,
   ])
@@ -939,60 +1105,53 @@ export default function FieldsPage() {
         />
       </section>
 
-      {/* GRÁFICO + ALERTAS */}
-      <section className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_420px]">
-        <Glass title="Volume de atendimentos mensais" subtitle="Evolução baseada na data de visita">
-          <div className="mt-5 h-[340px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={stats.graficoMes}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                <XAxis
-                  dataKey="name"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: "#64748b", fontSize: 12, fontWeight: 700 }}
-                />
-                <YAxis
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: "#64748b", fontSize: 12, fontWeight: 700 }}
-                  allowDecimals={false}
-                />
-                <Tooltip
-                  content={<SafeTooltip />}
-                  cursor={{ fill: "rgba(255,255,255,0.035)" }}
-                />
-                <Bar dataKey="value" fill="#3b82f6" radius={[10, 10, 0, 0]} barSize={52} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Glass>
-
-        <Glass title="Leitura rápida" subtitle="Pontos que merecem acompanhamento">
-          <div className="space-y-3">
-            <QuickNote
-              icon="📌"
-              title="Chamados previstos hoje"
-              description={`${chamadosPrevistosParaData.length} chamado(s) pendente(s) com data prevista para ${formatarDataBR(dataLista)}.`}
-              tone="blue"
-            />
-
-            <QuickNote
-              icon="🟡"
-              title="Escolas não contempladas"
-              description={`${stats.escolasNaoAtendidas.length} escola(s) ainda não aparecem como atendidas no recorte atual.`}
-              tone="yellow"
-            />
-
-            <QuickNote
-              icon="🟢"
-              title="Técnicos ativos sem histórico"
-              description={`${stats.tecnicosAtivosSemAtendimento.length} técnico(s) ativo(s) ainda sem chamados registrados no histórico carregado.`}
-              tone="emerald"
-            />
-          </div>
-        </Glass>
-      </section>
+      {/* GRÁFICO */}
+      <Glass
+        title="Volume de atendimentos mensais"
+        subtitle="Evolução baseada na data de visita"
+      >
+        <div className="mt-5 h-[340px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={stats.graficoMes}>
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="#1e293b"
+                vertical={false}
+              />
+              <XAxis
+                dataKey="name"
+                axisLine={false}
+                tickLine={false}
+                tick={{
+                  fill: "#64748b",
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}
+              />
+              <YAxis
+                axisLine={false}
+                tickLine={false}
+                tick={{
+                  fill: "#64748b",
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}
+                allowDecimals={false}
+              />
+              <Tooltip
+                content={<SafeTooltip />}
+                cursor={{ fill: "rgba(255,255,255,0.035)" }}
+              />
+              <Bar
+                dataKey="value"
+                fill="#3b82f6"
+                radius={[10, 10, 0, 0]}
+                barSize={52}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </Glass>
 
       {/* RANKINGS */}
       <section className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
@@ -1091,29 +1250,80 @@ export default function FieldsPage() {
           </div>
         </Glass>
 
-        <Glass title="Pendentes de cobertura" subtitle="Escolas ainda não contempladas no recorte">
+        <Glass
+          title="Maior tempo sem visita"
+          subtitle="Ranking completo da rede."
+        >
           <div className="custom-scrollbar mt-2 max-h-[420px] divide-y divide-slate-800/50 overflow-y-auto pr-2">
-            {stats.escolasNaoAtendidas.length === 0 ? (
+            {stats.rankingTempoSemVisita.length === 0 ? (
               <EmptyState
-                icon="🎉"
-                title="Cobertura completa"
-                description="Todas as escolas aparecem como atendidas no recorte atual."
-                success
+                icon="🏫"
+                title="Sem escolas disponíveis"
+                description="Não foi possível montar o ranking da rede."
               />
             ) : (
-              stats.escolasNaoAtendidas.map((escola: string) => (
-                <div
-                  key={escola}
-                  className="flex items-center rounded-2xl px-3 py-4 transition hover:bg-slate-800/25"
-                >
-                  <span className="relative mr-4 h-2.5 w-2.5 shrink-0 rounded-full bg-yellow-400">
-                    <span className="absolute -inset-1 animate-ping rounded-full bg-yellow-400 opacity-20" />
-                  </span>
-                  <span className="truncate text-sm font-semibold text-slate-300">
-                    {escola}
-                  </span>
-                </div>
-              ))
+              stats.rankingTempoSemVisita.map(
+                (item: any, index: number) => (
+                  <button
+                    type="button"
+                    key={item.escola}
+                    onClick={() =>
+                      setEscolaHistoricoSelecionada(item.escola)
+                    }
+                    className="group flex w-full items-center justify-between gap-4 rounded-2xl px-3 py-4 text-left transition hover:bg-slate-800/35"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span
+                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border text-[11px] font-black ${
+                          index < 3
+                            ? "border-amber-500/25 bg-amber-500/10 text-amber-300"
+                            : "border-slate-700 bg-slate-900 text-slate-400"
+                        }`}
+                      >
+                        {index + 1}
+                      </span>
+
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-black text-slate-200 transition group-hover:text-cyan-300">
+                          {item.escola}
+                        </p>
+
+                        <div className="mt-1 flex flex-wrap gap-2">
+                          <span className="text-[10px] font-semibold text-slate-500">
+                            Última visita:{" "}
+                            {item.ultimaVisita
+                              ? formatarDataBR(item.ultimaVisita)
+                              : "sem registro"}
+                          </span>
+
+                          <span className="text-[10px] font-semibold text-slate-600">
+                            {item.totalChamados} chamado(s)
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="shrink-0 text-right">
+                      <p
+                        className={`text-lg font-black ${
+                          item.diasSemVisita === null
+                            ? "text-red-300"
+                            : item.diasSemVisita >= 90
+                              ? "text-amber-300"
+                              : "text-blue-300"
+                        }`}
+                      >
+                        {item.diasSemVisita === null
+                          ? "Sem visita"
+                          : `${item.diasSemVisita}d`}
+                      </p>
+                      <p className="text-[8px] font-black uppercase tracking-widest text-slate-600">
+                        sem atendimento
+                      </p>
+                    </div>
+                  </button>
+                )
+              )
             )}
           </div>
         </Glass>
@@ -1145,6 +1355,21 @@ export default function FieldsPage() {
             {stats.graficoMes.map((m) => (
               <option key={m.name} value={String(m.name)}>
                 {String(m.name)}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={filtroCategoriaTabela}
+            onChange={(e) =>
+              setFiltroCategoriaTabela(e.target.value)
+            }
+            className="min-w-[210px] rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 text-sm font-bold text-slate-300 outline-none transition focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50"
+          >
+            <option value="Todas">🗂️ Todas as categorias</option>
+            {categoriasChamados.map((categoria) => (
+              <option key={categoria} value={categoria}>
+                {categoria}
               </option>
             ))}
           </select>
@@ -1621,6 +1846,263 @@ export default function FieldsPage() {
         </div>
       )}
 
+      {/* MODAL HISTÓRICO DA ESCOLA */}
+      {escolaHistoricoSelecionada && (
+        <div
+          className="fixed inset-0 z-[9998] flex items-center justify-center bg-[#020617]/90 p-3 backdrop-blur-md animate-fade-in sm:p-5"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setEscolaHistoricoSelecionada(null)
+            }
+          }}
+        >
+          <div className="relative flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[2rem] border border-slate-700 bg-[#0f172a] shadow-2xl shadow-slate-950/70">
+            <div className="relative shrink-0 overflow-hidden border-b border-slate-800 bg-slate-950 px-5 py-5 sm:px-7 sm:py-6">
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.22),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(6,182,212,0.10),transparent_32%)]" />
+
+              <div className="relative z-10 flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    <Badge className="border-cyan-500/25 bg-cyan-500/10 text-cyan-300">
+                      Histórico completo
+                    </Badge>
+                    <Badge className="border-blue-500/25 bg-blue-500/10 text-blue-300">
+                      {resumoHistoricoEscola.total} chamado(s)
+                    </Badge>
+                  </div>
+
+                  <h2 className="break-words text-xl font-black leading-tight text-white sm:text-3xl">
+                    {escolaHistoricoSelecionada}
+                  </h2>
+
+                  <p className="mt-2 text-sm font-medium text-slate-500">
+                    Todos os registros de atendimento vinculados à unidade.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setEscolaHistoricoSelecionada(null)}
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-800 bg-slate-900 text-lg font-black text-slate-400 transition hover:border-red-500/30 hover:bg-red-500/20 hover:text-red-300"
+                  aria-label="Fechar histórico da escola"
+                >
+                  X
+                </button>
+              </div>
+            </div>
+
+            <div className="grid shrink-0 grid-cols-2 gap-3 border-b border-slate-800 bg-[#020617] p-4 sm:grid-cols-5 sm:p-5">
+              <HistoryMetric
+                label="Chamados"
+                value={resumoHistoricoEscola.total}
+                tone="blue"
+              />
+              <HistoryMetric
+                label="Finalizados"
+                value={resumoHistoricoEscola.finalizados}
+                tone="emerald"
+              />
+              <HistoryMetric
+                label="Pendentes"
+                value={resumoHistoricoEscola.pendentes}
+                tone="yellow"
+              />
+              <HistoryMetric
+                label="Categorias"
+                value={resumoHistoricoEscola.categorias}
+                tone="slate"
+              />
+              <HistoryMetric
+                label="Sem visita"
+                value={
+                  resumoHistoricoEscola.diasSemVisita === null
+                    ? "N/A"
+                    : `${resumoHistoricoEscola.diasSemVisita}d`
+                }
+                tone="cyan"
+              />
+            </div>
+
+            <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+              {historicoEscolaSelecionada.length === 0 ? (
+                <EmptyState
+                  icon="📭"
+                  title="Sem chamados registrados"
+                  description="Não foram localizados atendimentos vinculados a esta escola."
+                />
+              ) : (
+                <div className="space-y-4">
+                  {historicoEscolaSelecionada.map(
+                    (visita: any, index: number) => (
+                      <article
+                        key={visita.id || `${visita.chamado}-${index}`}
+                        className="overflow-hidden rounded-2xl border border-slate-800 bg-[#020617]"
+                      >
+                        <div className="flex flex-col gap-4 border-b border-slate-800 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setChamadoSelecionado(visita)
+                                }
+                                className="text-sm font-black text-blue-400 transition hover:text-cyan-300 hover:underline"
+                              >
+                                {textoSeguro(visita.chamado, "N/A")}
+                              </button>
+
+                              <span
+                                className={`rounded-full border px-3 py-1 text-[9px] font-black uppercase tracking-widest ${getStatusClasses(
+                                  visita.status
+                                )}`}
+                              >
+                                {textoSeguro(
+                                  visita.status,
+                                  "Pendente"
+                                )}
+                              </span>
+
+                              <span className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-slate-400">
+                                {textoSeguro(
+                                  visita.categoria,
+                                  "Geral"
+                                )}
+                              </span>
+                            </div>
+
+                            <p className="mt-3 text-sm font-black text-white">
+                              {textoSeguro(
+                                visita.subcategoria,
+                                "Sem subcategoria"
+                              )}
+                            </p>
+
+                            <p className="mt-1 text-xs font-semibold text-slate-500">
+                              Técnico:{" "}
+                              <span className="text-slate-300">
+                                {textoSeguro(
+                                  visita.tecnico,
+                                  "Não atribuído"
+                                )}
+                              </span>
+                              {" · "}
+                              Aberto por:{" "}
+                              <span className="text-slate-300">
+                                {textoSeguro(
+                                  visita.abertura_por,
+                                  "Não informado"
+                                )}
+                              </span>
+                            </p>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setChamadoSelecionado(visita)
+                            }
+                            className="shrink-0 rounded-xl border border-blue-500/20 bg-blue-500/10 px-4 py-2.5 text-[10px] font-black uppercase tracking-widest text-blue-300 transition hover:bg-blue-500/20"
+                          >
+                            Ver detalhes
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4 sm:p-5">
+                          <HistoryDate
+                            label="Abertura"
+                            value={formatarDataBR(
+                              visita.data_abertura
+                            )}
+                          />
+                          <HistoryDate
+                            label="Prevista"
+                            value={formatarDataBR(
+                              visita.data_prevista
+                            )}
+                          />
+                          <HistoryDate
+                            label="Visita"
+                            value={formatarDataBR(
+                              visita.data_visita
+                            )}
+                          />
+                          <HistoryDate
+                            label="Finalização"
+                            value={formatarDataBR(
+                              visita.data_finalizacao
+                            )}
+                          />
+                        </div>
+
+                        <details className="group border-t border-slate-800 bg-slate-950/45">
+                          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500 transition hover:text-slate-300 sm:px-5">
+                            Descrição e resolução do atendimento
+                            <span className="text-base transition group-open:rotate-180">
+                              ▾
+                            </span>
+                          </summary>
+
+                          <div className="grid grid-cols-1 gap-4 border-t border-slate-800 p-4 sm:grid-cols-2 sm:p-5">
+                            <div className="rounded-2xl border border-slate-800 bg-[#020617] p-4">
+                              <p className="text-[9px] font-black uppercase tracking-widest text-slate-600">
+                                Descrição
+                              </p>
+                              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-300">
+                                {textoSeguro(
+                                  visita.descricao,
+                                  "Sem descrição registrada."
+                                )}
+                              </p>
+                            </div>
+
+                            <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-4">
+                              <p className="text-[9px] font-black uppercase tracking-widest text-blue-300">
+                                Resolução
+                              </p>
+                              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-blue-100/80">
+                                {textoSeguro(
+                                  visita.resolucao,
+                                  "Sem resolução registrada."
+                                )}
+                              </p>
+                            </div>
+                          </div>
+                        </details>
+                      </article>
+                    )
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="shrink-0 border-t border-slate-800 bg-slate-950/95 px-5 py-4 sm:px-7">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs font-semibold text-slate-600">
+                  Última visita registrada:{" "}
+                  <span className="font-black text-slate-400">
+                    {formatarDataBR(
+                      resumoHistoricoEscola.ultimaVisita
+                        ? String(
+                            resumoHistoricoEscola.ultimaVisita
+                          )
+                        : null
+                    )}
+                  </span>
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() => setEscolaHistoricoSelecionada(null)}
+                  className="rounded-xl bg-slate-800 px-7 py-3 text-xs font-black uppercase tracking-widest text-white transition hover:bg-slate-700"
+                >
+                  Fechar histórico
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL DETALHES DO CHAMADO */}
       {chamadoSelecionado && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#020617]/90 p-4 backdrop-blur-md animate-fade-in">
@@ -1995,39 +2477,52 @@ function InsightCard({
   )
 }
 
-function QuickNote({
-  icon,
-  title,
-  description,
+function HistoryMetric({
+  label,
+  value,
   tone,
 }: {
-  icon: string
-  title: string
-  description: string
-  tone: "blue" | "yellow" | "emerald"
+  label: string
+  value: string | number
+  tone: "blue" | "cyan" | "emerald" | "yellow" | "slate"
 }) {
   const styles = {
-    blue: "border-blue-500/25 bg-blue-500/10 text-blue-300",
-    yellow: "border-yellow-500/25 bg-yellow-500/10 text-yellow-300",
-    emerald: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
+    blue: "border-blue-500/20 bg-blue-500/10 text-blue-300",
+    cyan: "border-cyan-500/20 bg-cyan-500/10 text-cyan-300",
+    emerald:
+      "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
+    yellow:
+      "border-yellow-500/20 bg-yellow-500/10 text-yellow-300",
+    slate: "border-slate-800 bg-slate-900 text-slate-300",
   }
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-      <div className="flex gap-3">
-        <div
-          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-lg ${styles[tone]}`}
-        >
-          {icon}
-        </div>
+    <div className={`rounded-2xl border p-3 sm:p-4 ${styles[tone]}`}>
+      <p className="text-[8px] font-black uppercase tracking-widest opacity-75">
+        {label}
+      </p>
+      <p className="mt-1 text-2xl font-black text-white">
+        {value}
+      </p>
+    </div>
+  )
+}
 
-        <div>
-          <p className="text-sm font-black text-white">{title}</p>
-          <p className="mt-1 text-xs font-medium leading-relaxed text-slate-500">
-            {description}
-          </p>
-        </div>
-      </div>
+function HistoryDate({
+  label,
+  value,
+}: {
+  label: string
+  value: string
+}) {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+      <p className="text-[8px] font-black uppercase tracking-widest text-slate-600">
+        {label}
+      </p>
+      <p className="mt-1 text-xs font-black text-slate-300">
+        {value}
+      </p>
     </div>
   )
 }

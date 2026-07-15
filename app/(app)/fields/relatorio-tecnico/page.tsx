@@ -78,6 +78,7 @@ type ParecerHistorico = {
   status: "rascunho" | "finalizado";
   created_by_auth?: string | null;
   created_at?: string | null;
+  updated_at?: string | null;
   finalized_at?: string | null;
   pareceres_tecnicos_itens?: Array<{
     id: string;
@@ -126,6 +127,14 @@ type SplashValidacao = {
   pendencias: PendenciaValidacao[];
 } | null;
 
+type RealtimeStatus = "conectando" | "online" | "erro";
+
+type RascunhoConflito = {
+  parecerId: string;
+  mensagem: string;
+  atualizadoEm?: string | null;
+} | null;
+
 type DashboardGestaoDados = {
   totalPareceres: number;
   finalizados: number;
@@ -155,6 +164,40 @@ type DashboardGestaoDados = {
   }>;
 };
 
+type PeriodoIndicadoresPreset =
+  | "7d"
+  | "30d"
+  | "90d"
+  | "ano"
+  | "todos"
+  | "personalizado";
+
+type AutosaveStatus = "aguardando" | "salvando" | "salvo" | "erro";
+
+type ModeloRapido = {
+  rotulo: string;
+  texto: string;
+};
+
+type FormularioEstado = {
+  editandoParecerId: string | null;
+  escolaDigitada: string;
+  dataAtendimento: string;
+  turno: string;
+  chamadoReferencia: string;
+  resumoAtendimento: string;
+  observacoesGerais: string;
+  itens: ItemParecer[];
+};
+
+type FormularioLocalSnapshot = FormularioEstado & {
+  version: 1;
+  savedAt: string;
+  userId: string;
+  rascunhoVersaoCarregada: string | null;
+  baselineSignature: string;
+};
+
 const RESULTADOS = [
   "Resolvido",
   "Resolvido parcialmente",
@@ -166,6 +209,157 @@ const RESULTADOS = [
   "Orientação realizada",
   "Pendente de nova visita",
 ];
+
+const AUTOSAVE_VERSION = 1 as const;
+const AUTOSAVE_DELAY_MS = 1000;
+
+const MODELOS_PROBLEMA: ModeloRapido[] = [
+  {
+    rotulo: "Não liga",
+    texto: "O equipamento não liga e não apresenta sinais de inicialização.",
+  },
+  {
+    rotulo: "Lentidão",
+    texto: "O equipamento apresenta lentidão durante a inicialização e o uso.",
+  },
+  {
+    rotulo: "Sistema não inicia",
+    texto: "O sistema operacional não inicializa corretamente.",
+  },
+  {
+    rotulo: "Sem rede",
+    texto: "O equipamento não estabelece conexão com a rede institucional.",
+  },
+  {
+    rotulo: "Componente ausente",
+    texto: "Foram identificados componentes ou acessórios ausentes no equipamento.",
+  },
+  {
+    rotulo: "Dano físico",
+    texto: "Foi identificado dano físico aparente no equipamento.",
+  },
+  {
+    rotulo: "Imagem desatualizada",
+    texto: "O equipamento possui imagem desatualizada ou fora do padrão das políticas organizacionais da SEDUC.",
+  },
+];
+
+const MODELOS_ACAO: ModeloRapido[] = [
+  {
+    rotulo: "Testes gerais",
+    texto: "Foram realizados testes de funcionamento e validação dos componentes do equipamento.",
+  },
+  {
+    rotulo: "Limpeza e reconexão",
+    texto: "Foi realizada limpeza técnica, organização e reconexão dos componentes.",
+  },
+  {
+    rotulo: "Formatação",
+    texto: "Foi realizada formatação, configuração e atualização do sistema operacional.",
+  },
+  {
+    rotulo: "Manutenção de Hardware",
+    texto: "Foi realizada a manutenção de hardware do equipamento. Componentes envolvidos: ",
+  },
+  {
+    rotulo: "Garantia",
+    texto: "O equipamento foi orientado para abertura de garantia ou tratativa especializada.",
+  },
+  {
+    rotulo: "Orientação à escola",
+    texto: "A equipe escolar foi orientada quanto ao uso adequado e aos próximos procedimentos.",
+  },
+  {
+    rotulo: "BlueMonitor",
+    texto: "O registro do equipamento foi validado ou atualizado no BlueMonitor/DATAMOB.",
+  },
+];
+
+function dataIsoLocal(data: Date) {
+  const year = data.getFullYear();
+  const month = String(data.getMonth() + 1).padStart(2, "0");
+  const day = String(data.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function dataDiasAtrasIso(dias: number) {
+  const data = new Date();
+  data.setHours(12, 0, 0, 0);
+  data.setDate(data.getDate() - dias);
+  return dataIsoLocal(data);
+}
+
+function inicioAnoIso() {
+  return `${new Date().getFullYear()}-01-01`;
+}
+
+function resolverPeriodoPreset(preset: PeriodoIndicadoresPreset) {
+  const fim = hojeIso();
+
+  if (preset === "7d") return { inicio: dataDiasAtrasIso(6), fim };
+  if (preset === "30d") return { inicio: dataDiasAtrasIso(29), fim };
+  if (preset === "90d") return { inicio: dataDiasAtrasIso(89), fim };
+  if (preset === "ano") return { inicio: inicioAnoIso(), fim };
+  if (preset === "todos") return { inicio: "", fim: "" };
+
+  return null;
+}
+
+function criarAssinaturaFormulario(estado: FormularioEstado) {
+  return JSON.stringify({
+    editandoParecerId: estado.editandoParecerId,
+    escolaDigitada: estado.escolaDigitada,
+    dataAtendimento: estado.dataAtendimento,
+    turno: estado.turno,
+    chamadoReferencia: estado.chamadoReferencia,
+    resumoAtendimento: estado.resumoAtendimento,
+    observacoesGerais: estado.observacoesGerais,
+    itens: estado.itens,
+  });
+}
+
+function formularioTemConteudo(estado: FormularioEstado) {
+  const itemTemConteudo = estado.itens.some((item) =>
+    Boolean(
+      item.modelo_id.trim() ||
+        item.equipamento.trim() ||
+        item.numero_serie.trim() ||
+        item.patrimonio.trim() ||
+        item.problema_relatado.trim() ||
+        item.acao_realizada.trim() ||
+        item.resultado.trim() ||
+        item.problema_fisico_descricao.trim() ||
+        item.observacao.trim() ||
+        item.possui_problema_fisico ||
+        item.precisa_garantia ||
+        item.registrado_bluemonitor,
+    ),
+  );
+
+  return Boolean(
+    estado.editandoParecerId ||
+      estado.escolaDigitada.trim() ||
+      estado.turno.trim() ||
+      estado.chamadoReferencia.trim() ||
+      estado.resumoAtendimento.trim() ||
+      estado.observacoesGerais.trim() ||
+      itemTemConteudo,
+  );
+}
+
+function adicionarModeloAoTexto(atual: string, texto: string) {
+  const atualLimpo = atual.trim();
+  const textoLimpo = texto.trim();
+
+  if (!textoLimpo) return atual;
+  if (!atualLimpo) return textoLimpo;
+  if (normalizarTexto(atualLimpo).includes(normalizarTexto(textoLimpo))) {
+    return atual;
+  }
+
+  return `${atualLimpo}
+${textoLimpo}`;
+}
 
 function novoItem(): ItemParecer {
   return {
@@ -185,6 +379,26 @@ function novoItem(): ItemParecer {
     registrado_bluemonitor: false,
     observacao: "",
   };
+}
+
+function itemPossuiDadosReaproveitaveis(item?: ItemParecer | null) {
+  if (!item) return false;
+
+  return Boolean(
+    item.modelo_id.trim() ||
+      item.equipamento.trim() ||
+      item.marca_modelo.trim() ||
+      item.patrimonio.trim() ||
+      item.problema_relatado.trim() ||
+      item.problema_fisico_descricao.trim() ||
+      item.diagnostico.trim() ||
+      item.acao_realizada.trim() ||
+      item.resultado.trim() ||
+      item.observacao.trim() ||
+      item.possui_problema_fisico ||
+      item.precisa_garantia ||
+      item.registrado_bluemonitor,
+  );
 }
 
 function hojeIso() {
@@ -281,6 +495,27 @@ function nl2br(value: unknown) {
   return escapeHtml(value).replaceAll("\n", "<br />");
 }
 
+function getVersaoParecer(parecer?: ParecerHistorico | null) {
+  if (!parecer) return null;
+
+  return parecer.updated_at || parecer.finalized_at || parecer.created_at || null;
+}
+
+function parecerPertenceAoUsuario(
+  parecer: ParecerHistorico,
+  usuario?: UsuarioPerfil | null,
+) {
+  if (!usuario?.auth_user_id || !usuario.email) return false;
+
+  if (parecer.created_by_auth) {
+    return parecer.created_by_auth === usuario.auth_user_id;
+  }
+
+  return (
+    normalizarTexto(parecer.tecnico_email) === normalizarTexto(usuario.email)
+  );
+}
+
 function getInitials(nome: string) {
   const clean = String(nome || "").trim();
 
@@ -340,6 +575,10 @@ function montarHtmlPdf(parecer: ParecerHistorico) {
     normalizarTexto(item.resultado).includes("resolvido"),
   ).length;
   const nomeArquivoPdf = getNomeArquivoParecer(parecer);
+  const logoUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/brand/setec-hub-icon.png`
+      : "/brand/setec-hub-icon.png";
 
   const itensHtml = itens
     .map((item, index) => {
@@ -480,18 +719,11 @@ function montarHtmlPdf(parecer: ParecerHistorico) {
       min-width: 0;
     }
 
-    .logo {
+    .logo-image {
       width: 42px;
       height: 42px;
-      border-radius: 12px;
-      background: linear-gradient(135deg, #1d4ed8 0%, #06b6d4 100%);
-      color: #ffffff;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 13px;
-      font-weight: 900;
-      letter-spacing: -0.6px;
+      display: block;
+      object-fit: contain;
       flex: 0 0 auto;
     }
 
@@ -860,7 +1092,11 @@ function montarHtmlPdf(parecer: ParecerHistorico) {
   <main class="page">
     <header class="header">
       <div class="brand">
-        <div class="logo">SH</div>
+        <img
+          class="logo-image"
+          src="${escapeHtml(logoUrl)}"
+          alt="SETEC Hub"
+        />
 
         <div class="brand-title">
           <h1>Parecer Técnico de Atendimento</h1>
@@ -990,7 +1226,7 @@ function montarHtmlPdf(parecer: ParecerHistorico) {
     </footer>
 
     <p class="note">
-      Documento gerado pelo SETEC Hub. Este parecer registra as informações técnicas declaradas no atendimento realizado pela equipe responsável.
+      Documento gerado pelo SETEC Hub. Este relatório registra as informações técnicas declaradas no atendimento realizado pela equipe responsável.
     </p>
   </main>
 
@@ -1002,14 +1238,27 @@ function montarHtmlPdf(parecer: ParecerHistorico) {
 
   <script>
     window.addEventListener("load", function () {
-      window.setTimeout(function () {
-        try {
-          window.focus();
-          window.print();
-        } catch (error) {
-          console.error("Falha ao abrir impressão automática:", error);
-        }
-      }, 700);
+      var imagens = Array.from(document.images || []);
+
+      Promise.all(
+        imagens.map(function (imagem) {
+          if (imagem.complete) return Promise.resolve();
+
+          return new Promise(function (resolve) {
+            imagem.addEventListener("load", resolve, { once: true });
+            imagem.addEventListener("error", resolve, { once: true });
+          });
+        }),
+      ).then(function () {
+        window.setTimeout(function () {
+          try {
+            window.focus();
+            window.print();
+          } catch (error) {
+            console.error("Falha ao abrir impressão automática:", error);
+          }
+        }, 450);
+      });
     });
   </script>
 </body>
@@ -1035,17 +1284,6 @@ function abrirHtmlEmJanelaPdf(
     printWindow.document.close();
     printWindow.document.title = titulo;
     printWindow.focus();
-
-    window.setTimeout(() => {
-      try {
-        if (!printWindow.closed) {
-          printWindow.focus();
-          printWindow.print();
-        }
-      } catch (error) {
-        console.error("Erro ao acionar impressão do PDF:", error);
-      }
-    }, 900);
 
     return true;
   } catch (error) {
@@ -1128,17 +1366,56 @@ export default function ParecerTecnicoPage() {
   const [loading, setLoading] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const salvandoRef = useRef(false);
+  const realtimeRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const realtimeRefreshInFlightRef = useRef(false);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autosaveInicializadoRef = useRef(false);
+  const [realtimeStatus, setRealtimeStatus] =
+    useState<RealtimeStatus>("conectando");
+  const [rascunhoVersaoCarregada, setRascunhoVersaoCarregada] = useState<
+    string | null
+  >(null);
+  const [rascunhoConflito, setRascunhoConflito] =
+    useState<RascunhoConflito>(null);
+  const [carregandoRascunhoId, setCarregandoRascunhoId] = useState<
+    string | null
+  >(null);
   const [deletandoItemId, setDeletandoItemId] = useState<string | null>(null);
   const [mensagem, setMensagem] = useState<MensagemTela>(null);
   const [pdfPronto, setPdfPronto] = useState<PdfPronto>(null);
   const [retornoChamadoModal, setRetornoChamadoModal] =
     useState<RetornoChamadoModal>(null);
   const [splashValidacao, setSplashValidacao] = useState<SplashValidacao>(null);
+  const [autosaveStatus, setAutosaveStatus] =
+    useState<AutosaveStatus>("aguardando");
+  const [ultimoAutosaveLocal, setUltimoAutosaveLocal] = useState<string | null>(
+    null,
+  );
+  const [recuperacaoLocal, setRecuperacaoLocal] =
+    useState<FormularioLocalSnapshot | null>(null);
+  const [autosavePronto, setAutosavePronto] = useState(false);
+  const [baselineSignature, setBaselineSignature] = useState("");
+
+  const [periodoPreset, setPeriodoPreset] =
+    useState<PeriodoIndicadoresPreset>("30d");
+  const [periodoInicio, setPeriodoInicio] = useState(() =>
+    dataDiasAtrasIso(29),
+  );
+  const [periodoFim, setPeriodoFim] = useState(hojeIso());
 
   const [usuario, setUsuario] = useState<UsuarioPerfil | null>(null);
   const [escolas, setEscolas] = useState<Escola[]>([]);
   const [modelos, setModelos] = useState<EquipamentoModelo[]>([]);
   const [historico, setHistorico] = useState<ParecerHistorico[]>([]);
+  const [historicoAberto, setHistoricoAberto] = useState(false);
+  const [adicionarItemModalAberto, setAdicionarItemModalAberto] =
+    useState(false);
+  const [buscaHistorico, setBuscaHistorico] = useState("");
+  const [statusHistorico, setStatusHistorico] = useState<
+    "todos" | "rascunho" | "finalizado"
+  >("todos");
 
   const [editandoParecerId, setEditandoParecerId] = useState<string | null>(
     null,
@@ -1152,8 +1429,53 @@ export default function ParecerTecnicoPage() {
   const [observacoesGerais, setObservacoesGerais] = useState("");
   const [itens, setItens] = useState<ItemParecer[]>([novoItem()]);
 
+  const ultimoItemRegistrado = itens[itens.length - 1] || null;
+  const podeReaproveitarUltimoItem =
+    itemPossuiDadosReaproveitaveis(ultimoItemRegistrado);
+
   const roleNormalizada = normalizarTexto(usuario?.role);
   const isGestao = roleNormalizada === "admin" || roleNormalizada === "seintec";
+
+  const formularioEstadoAtual = useMemo<FormularioEstado>(
+    () => ({
+      editandoParecerId,
+      escolaDigitada,
+      dataAtendimento,
+      turno,
+      chamadoReferencia,
+      resumoAtendimento,
+      observacoesGerais,
+      itens,
+    }),
+    [
+      editandoParecerId,
+      escolaDigitada,
+      dataAtendimento,
+      turno,
+      chamadoReferencia,
+      resumoAtendimento,
+      observacoesGerais,
+      itens,
+    ],
+  );
+
+  const assinaturaFormulario = useMemo(
+    () => criarAssinaturaFormulario(formularioEstadoAtual),
+    [formularioEstadoAtual],
+  );
+
+  const possuiAlteracoesNaoSalvas = Boolean(
+    baselineSignature && assinaturaFormulario !== baselineSignature,
+  );
+
+  const periodoDescricao = useMemo(() => {
+    if (!periodoInicio && !periodoFim) return "Todo o histórico carregado";
+    if (periodoInicio && periodoFim) {
+      return `${formatarData(periodoInicio)} a ${formatarData(periodoFim)}`;
+    }
+    if (periodoInicio) return `A partir de ${formatarData(periodoInicio)}`;
+    return `Até ${formatarData(periodoFim)}`;
+  }, [periodoFim, periodoInicio]);
 
   const modelosPorId = useMemo(() => {
     return new Map(modelos.map((modelo) => [modelo.id, modelo]));
@@ -1198,8 +1520,53 @@ export default function ParecerTecnicoPage() {
     );
   }, [editandoParecerId, historico]);
 
+  const resumoHistorico = useMemo(() => {
+    const finalizados = historico.filter(
+      (parecer) => parecer.status === "finalizado",
+    ).length;
+    const rascunhos = historico.filter(
+      (parecer) => parecer.status === "rascunho",
+    ).length;
+
+    return { total: historico.length, finalizados, rascunhos };
+  }, [historico]);
+
+  const historicoFiltrado = useMemo(() => {
+    const termo = normalizarTexto(buscaHistorico);
+
+    return historico.filter((parecer) => {
+      const correspondeStatus =
+        statusHistorico === "todos" || parecer.status === statusHistorico;
+
+      if (!correspondeStatus) return false;
+      if (!termo) return true;
+
+      return normalizarTexto(
+        [
+          parecer.escola_nome,
+          parecer.tecnico_nome,
+          parecer.tecnico_email,
+          parecer.chamado_referencia,
+          parecer.resumo_atendimento,
+          parecer.data_atendimento,
+          parecer.status,
+        ].join(" "),
+      ).includes(termo);
+    });
+  }, [buscaHistorico, historico, statusHistorico]);
+
+  const historicoIndicadores = useMemo(() => {
+    return historico.filter((parecer) => {
+      const data = parecer.data_atendimento;
+      if (!data) return false;
+      if (periodoInicio && data < periodoInicio) return false;
+      if (periodoFim && data > periodoFim) return false;
+      return true;
+    });
+  }, [historico, periodoFim, periodoInicio]);
+
   const dashboardGestao = useMemo<DashboardGestaoDados>(() => {
-    const itensComParecer = historico.flatMap((parecer) =>
+    const itensComParecer = historicoIndicadores.flatMap((parecer) =>
       (parecer.pareceres_tecnicos_itens || []).map((item) => ({
         ...item,
         parecer,
@@ -1271,11 +1638,11 @@ export default function ParecerTecnicoPage() {
       );
 
     return {
-      totalPareceres: historico.length,
-      finalizados: historico.filter(
+      totalPareceres: historicoIndicadores.length,
+      finalizados: historicoIndicadores.filter(
         (parecer) => parecer.status === "finalizado",
       ).length,
-      rascunhos: historico.filter((parecer) => parecer.status === "rascunho")
+      rascunhos: historicoIndicadores.filter((parecer) => parecer.status === "rascunho")
         .length,
       totalItens: itensComParecer.length,
       garantia: itensComParecer.filter((item) => item.precisa_garantia).length,
@@ -1293,7 +1660,109 @@ export default function ParecerTecnicoPage() {
       topEscolas,
       todosItens,
     };
-  }, [historico]);
+  }, [historicoIndicadores]);
+
+  const buscarHistorico = useCallback(
+    async (authUserId: string, email: string, isGestaoLocal: boolean) => {
+      let pareceresQuery = supabase
+        .from("pareceres_tecnicos")
+        .select(
+          `
+          *,
+          pareceres_tecnicos_itens (*)
+        `,
+        )
+        .order("created_at", { ascending: false });
+
+      if (!isGestaoLocal) {
+        pareceresQuery = pareceresQuery
+          .or(`created_by_auth.eq.${authUserId},tecnico_email.eq.${email}`)
+          .limit(50);
+      }
+
+      const { data: pareceresData, error: pareceresError } =
+        await pareceresQuery;
+
+      if (pareceresError) throw pareceresError;
+
+      const pareceresCarregados = (pareceresData || []) as ParecerHistorico[];
+
+      return isGestaoLocal
+        ? pareceresCarregados
+        : pareceresCarregados.filter(
+            (parecer) =>
+              parecer.created_by_auth === authUserId ||
+              normalizarTexto(parecer.tecnico_email) === normalizarTexto(email),
+          );
+    },
+    [supabase],
+  );
+
+  const aplicarHistorico = useCallback(
+    (pareceresVisiveis: ParecerHistorico[]) => {
+      if (editandoParecerId && !salvandoRef.current) {
+        const rascunhoServidor = pareceresVisiveis.find(
+          (parecer) => parecer.id === editandoParecerId,
+        );
+
+        if (!rascunhoServidor) {
+          setRascunhoConflito({
+            parecerId: editandoParecerId,
+            mensagem:
+              "O rascunho em edição não está mais disponível no servidor. Cancele a edição ou atualize a página antes de continuar.",
+          });
+        } else if (rascunhoServidor.status !== "rascunho") {
+          setRascunhoConflito({
+            parecerId: editandoParecerId,
+            mensagem:
+              "Este relatório foi finalizado ou alterado em outra sessão enquanto você o editava.",
+            atualizadoEm: getVersaoParecer(rascunhoServidor),
+          });
+        } else {
+          const versaoServidor = getVersaoParecer(rascunhoServidor);
+
+          if (
+            rascunhoVersaoCarregada &&
+            rascunhoServidor.updated_at &&
+            versaoServidor &&
+            versaoServidor !== rascunhoVersaoCarregada
+          ) {
+            setRascunhoConflito({
+              parecerId: editandoParecerId,
+              mensagem:
+                "Uma versão mais recente deste rascunho foi salva em outra aba ou sessão. Recarregue a versão do servidor para evitar sobrescrever alterações.",
+              atualizadoEm: versaoServidor,
+            });
+          }
+        }
+      }
+
+      setHistorico(pareceresVisiveis);
+    },
+    [editandoParecerId, rascunhoVersaoCarregada],
+  );
+
+  const atualizarHistoricoSilencioso = useCallback(async () => {
+    if (!usuario?.auth_user_id || !usuario.email) return;
+    if (realtimeRefreshInFlightRef.current) return;
+
+    realtimeRefreshInFlightRef.current = true;
+
+    try {
+      const pareceresVisiveis = await buscarHistorico(
+        usuario.auth_user_id,
+        usuario.email,
+        isGestao,
+      );
+
+      aplicarHistorico(pareceresVisiveis);
+    } catch (error) {
+      console.error("Erro ao atualizar relatórios em tempo real:", error);
+      setRealtimeStatus("erro");
+    } finally {
+      realtimeRefreshInFlightRef.current = false;
+    }
+  }, [aplicarHistorico, buscarHistorico, isGestao, usuario]);
 
   const carregar = useCallback(async () => {
     try {
@@ -1344,67 +1813,297 @@ export default function ParecerTecnicoPage() {
         normalizarTexto(rolePerfil) === "admin" ||
         normalizarTexto(rolePerfil) === "seintec";
 
-      setUsuario({
+      const usuarioAtual: UsuarioPerfil = {
         id: perfil?.id || user.id,
         auth_user_id: user.id,
         nome: perfil?.nome || user.email,
         email: user.email,
         role: rolePerfil,
         setor: perfil?.setor || null,
-      });
+      };
 
+      setUsuario(usuarioAtual);
       setEscolas((escolasData || []) as Escola[]);
       setModelos((modelosData || []) as EquipamentoModelo[]);
 
-      let pareceresQuery = supabase
-        .from("pareceres_tecnicos")
-        .select(
-          `
-          *,
-          pareceres_tecnicos_itens (*)
-        `,
-        )
-        .order("created_at", { ascending: false });
-
-      if (!isGestaoLocal) {
-        pareceresQuery = pareceresQuery
-          .or(`created_by_auth.eq.${user.id},tecnico_email.eq.${user.email}`)
-          .limit(50);
-      }
-
-      const { data: pareceresData, error: pareceresError } =
-        await pareceresQuery;
-
-      if (pareceresError) throw pareceresError;
-
-      const pareceresCarregados = (pareceresData || []) as ParecerHistorico[];
-      const pareceresVisiveis = isGestaoLocal
-        ? pareceresCarregados
-        : pareceresCarregados.filter(
-            (parecer) =>
-              parecer.created_by_auth === user.id ||
-              normalizarTexto(parecer.tecnico_email) ===
-                normalizarTexto(user.email),
-          );
+      const pareceresVisiveis = await buscarHistorico(
+        user.id,
+        user.email,
+        isGestaoLocal,
+      );
 
       setHistorico(pareceresVisiveis);
     } catch (error: any) {
-      console.error("Erro ao carregar parecer técnico:", error);
+      console.error("Erro ao carregar relatório técnico:", error);
 
       setMensagem({
         tipo: "error",
         texto:
           error?.message ||
-          "Não foi possível carregar a página de parecer técnico.",
+          "Não foi possível carregar a página de relatório técnico.",
       });
     } finally {
       setLoading(false);
     }
-  }, [supabase]);
+  }, [buscarHistorico, supabase]);
 
   useEffect(() => {
     carregar();
   }, [carregar]);
+
+  useEffect(() => {
+    if (!usuario?.auth_user_id || !usuario.email) return;
+
+    setRealtimeStatus("conectando");
+
+    const agendarAtualizacao = (
+      payload?: {
+        eventType?: string;
+        new?: Record<string, unknown>;
+        old?: Record<string, unknown>;
+      },
+      origem: "parecer" | "item" = "parecer",
+    ) => {
+      if (salvandoRef.current) return;
+
+      const registro = payload?.new || payload?.old || {};
+      const registroId = String(registro.id || "");
+      const parecerId =
+        origem === "item"
+          ? String(registro.parecer_id || "")
+          : registroId;
+
+      if (editandoParecerId && parecerId === editandoParecerId) {
+        setRascunhoConflito({
+          parecerId: editandoParecerId,
+          mensagem:
+            origem === "item"
+              ? "Os equipamentos deste rascunho foram alterados em outra aba ou sessão. Recarregue a versão do servidor antes de salvar."
+              : "Este rascunho foi alterado em outra aba ou sessão. Recarregue a versão do servidor antes de salvar.",
+        });
+      }
+
+      if (realtimeRefreshTimerRef.current) {
+        clearTimeout(realtimeRefreshTimerRef.current);
+      }
+
+      realtimeRefreshTimerRef.current = setTimeout(() => {
+        atualizarHistoricoSilencioso();
+      }, 850);
+    };
+
+    let channel = supabase.channel(
+      `relatorios-tecnicos-${usuario.auth_user_id}-${isGestao ? "gestao" : "usuario"}`,
+    );
+
+    if (isGestao) {
+      channel = channel.on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "pareceres_tecnicos" },
+        (payload) => agendarAtualizacao(payload as any, "parecer"),
+      );
+    } else {
+      channel = channel
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "pareceres_tecnicos",
+            filter: `created_by_auth=eq.${usuario.auth_user_id}`,
+          },
+          (payload) => agendarAtualizacao(payload as any, "parecer"),
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "pareceres_tecnicos",
+            filter: `tecnico_email=eq.${usuario.email}`,
+          },
+          (payload) => agendarAtualizacao(payload as any, "parecer"),
+        );
+    }
+
+    channel = channel
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "pareceres_tecnicos_itens" },
+        (payload) => agendarAtualizacao(payload as any, "item"),
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          setRealtimeStatus("online");
+          return;
+        }
+
+        if (
+          status === "CHANNEL_ERROR" ||
+          status === "TIMED_OUT" ||
+          status === "CLOSED"
+        ) {
+          setRealtimeStatus("erro");
+          return;
+        }
+
+        setRealtimeStatus("conectando");
+      });
+
+    return () => {
+      if (realtimeRefreshTimerRef.current) {
+        clearTimeout(realtimeRefreshTimerRef.current);
+        realtimeRefreshTimerRef.current = null;
+      }
+
+      supabase.removeChannel(channel);
+    };
+  }, [
+    atualizarHistoricoSilencioso,
+    editandoParecerId,
+    isGestao,
+    supabase,
+    usuario?.auth_user_id,
+    usuario?.email,
+  ]);
+
+  useEffect(() => {
+    if (!usuario?.auth_user_id || autosaveInicializadoRef.current) return;
+
+    autosaveInicializadoRef.current = true;
+    const chave = `setec-hub-relatorio-equipamentos-autosave:${usuario.auth_user_id}`;
+
+    try {
+      const salvo = window.localStorage.getItem(chave);
+
+      if (salvo) {
+        const dados = JSON.parse(salvo) as FormularioLocalSnapshot;
+
+        if (
+          dados?.version === AUTOSAVE_VERSION &&
+          dados.userId === usuario.auth_user_id &&
+          formularioTemConteudo(dados)
+        ) {
+          setRecuperacaoLocal(dados);
+          setUltimoAutosaveLocal(dados.savedAt || null);
+          setAutosavePronto(false);
+          return;
+        }
+      }
+    } catch (error) {
+      console.warn("Não foi possível recuperar o backup local:", error);
+    }
+
+    setBaselineSignature(assinaturaFormulario);
+    setAutosavePronto(true);
+  }, [assinaturaFormulario, usuario?.auth_user_id]);
+
+  useEffect(() => {
+    if (
+      !autosavePronto ||
+      !usuario?.auth_user_id ||
+      salvandoRef.current ||
+      !possuiAlteracoesNaoSalvas
+    ) {
+      if (!possuiAlteracoesNaoSalvas && autosavePronto) {
+        setAutosaveStatus("aguardando");
+      }
+      return;
+    }
+
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+    }
+
+    setAutosaveStatus("salvando");
+
+    autosaveTimerRef.current = setTimeout(() => {
+      const salvoEm = new Date().toISOString();
+      const chave = `setec-hub-relatorio-equipamentos-autosave:${usuario.auth_user_id}`;
+      const payload: FormularioLocalSnapshot = {
+        ...formularioEstadoAtual,
+        version: AUTOSAVE_VERSION,
+        savedAt: salvoEm,
+        userId: usuario.auth_user_id,
+        rascunhoVersaoCarregada,
+        baselineSignature,
+      };
+
+      try {
+        window.localStorage.setItem(chave, JSON.stringify(payload));
+        setUltimoAutosaveLocal(salvoEm);
+        setAutosaveStatus("salvo");
+      } catch (error) {
+        console.warn("Não foi possível salvar o backup local:", error);
+        setAutosaveStatus("erro");
+      }
+    }, AUTOSAVE_DELAY_MS);
+
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+    };
+  }, [
+    autosavePronto,
+    baselineSignature,
+    formularioEstadoAtual,
+    possuiAlteracoesNaoSalvas,
+    rascunhoVersaoCarregada,
+    usuario?.auth_user_id,
+  ]);
+
+  useEffect(() => {
+    if (!possuiAlteracoesNaoSalvas || salvando) return;
+
+    const avisarSaida = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    const protegerLinks = (event: MouseEvent) => {
+      const alvo = event.target as Element | null;
+      const link = alvo?.closest("a[href]") as HTMLAnchorElement | null;
+
+      if (!link || link.target === "_blank" || link.hasAttribute("download")) {
+        return;
+      }
+
+      const href = link.getAttribute("href") || "";
+      if (!href || href.startsWith("#") || href.startsWith("javascript:")) {
+        return;
+      }
+
+      const destino = new URL(link.href, window.location.href);
+      const atual = new URL(window.location.href);
+
+      if (
+        destino.origin === atual.origin &&
+        destino.pathname === atual.pathname &&
+        destino.search === atual.search
+      ) {
+        return;
+      }
+
+      const confirmar = window.confirm(
+        "Existem alterações ainda não salvas no relatório. Deseja sair mesmo assim?",
+      );
+
+      if (!confirmar) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+
+    window.addEventListener("beforeunload", avisarSaida);
+    document.addEventListener("click", protegerLinks, true);
+
+    return () => {
+      window.removeEventListener("beforeunload", avisarSaida);
+      document.removeEventListener("click", protegerLinks, true);
+    };
+  }, [possuiAlteracoesNaoSalvas, salvando]);
 
   useEffect(() => {
     if (!mensagem) return;
@@ -1415,6 +2114,100 @@ export default function ParecerTecnicoPage() {
 
     return () => window.clearTimeout(timer);
   }, [mensagem]);
+
+  useEffect(() => {
+    if (!historicoAberto) return;
+
+    const overflowAnterior = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const fecharComEsc = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !retornoChamadoModal) {
+        setHistoricoAberto(false);
+      }
+    };
+
+    window.addEventListener("keydown", fecharComEsc);
+
+    return () => {
+      document.body.style.overflow = overflowAnterior;
+      window.removeEventListener("keydown", fecharComEsc);
+    };
+  }, [historicoAberto, retornoChamadoModal]);
+
+  function limparBackupLocal() {
+    if (!usuario?.auth_user_id) return;
+
+    try {
+      const chave = `setec-hub-relatorio-equipamentos-autosave:${usuario.auth_user_id}`;
+      window.localStorage.removeItem(chave);
+    } catch {
+      // O bloqueio do localStorage não deve interromper o fluxo principal.
+    }
+
+    setUltimoAutosaveLocal(null);
+    setAutosaveStatus("aguardando");
+  }
+
+  function restaurarBackupLocal() {
+    if (!recuperacaoLocal) return;
+
+    const itensRestaurados = recuperacaoLocal.itens?.length
+      ? recuperacaoLocal.itens.map((item) => ({
+          ...item,
+          tempId: item.tempId || crypto.randomUUID(),
+        }))
+      : [novoItem()];
+
+    setEditandoParecerId(recuperacaoLocal.editandoParecerId || null);
+    setRascunhoVersaoCarregada(
+      recuperacaoLocal.rascunhoVersaoCarregada || null,
+    );
+    setRascunhoConflito(null);
+    setEscolaDigitada(recuperacaoLocal.escolaDigitada || "");
+    setDataAtendimento(recuperacaoLocal.dataAtendimento || hojeIso());
+    setTurno(recuperacaoLocal.turno || "");
+    setChamadoReferencia(recuperacaoLocal.chamadoReferencia || "");
+    setResumoAtendimento(recuperacaoLocal.resumoAtendimento || "");
+    setObservacoesGerais(recuperacaoLocal.observacoesGerais || "");
+    setItens(itensRestaurados);
+    setBaselineSignature(
+      recuperacaoLocal.baselineSignature || "__backup_local_restaurado__",
+    );
+    setRecuperacaoLocal(null);
+    setAutosavePronto(true);
+    setAutosaveStatus("salvo");
+    setMensagem({
+      tipo: "info",
+      texto:
+        "O preenchimento local foi restaurado. Revise os dados e salve o rascunho no sistema quando estiver pronto.",
+    });
+
+    window.setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }, 80);
+  }
+
+  function descartarBackupLocal() {
+    limparBackupLocal();
+    setRecuperacaoLocal(null);
+    setBaselineSignature(assinaturaFormulario);
+    setAutosavePronto(true);
+    setMensagem({
+      tipo: "info",
+      texto: "O preenchimento local anterior foi descartado.",
+    });
+  }
+
+  function alterarPeriodoPreset(preset: PeriodoIndicadoresPreset) {
+    setPeriodoPreset(preset);
+
+    const periodo = resolverPeriodoPreset(preset);
+    if (!periodo) return;
+
+    setPeriodoInicio(periodo.inicio);
+    setPeriodoFim(periodo.fim);
+  }
 
   function atualizarItem(
     tempId: string,
@@ -1445,16 +2238,60 @@ export default function ParecerTecnicoPage() {
     );
   }
 
-  function adicionarItem() {
-    const itemCriado = novoItem();
-
+  function inserirNovoItemENavegar(itemCriado: ItemParecer) {
     setItens((atual) => [...atual, itemCriado]);
+    setAdicionarItemModalAberto(false);
 
     window.setTimeout(() => {
       document
         .getElementById(`equipamento-card-${itemCriado.tempId}`)
         ?.scrollIntoView({ behavior: "smooth", block: "center" });
     }, 120);
+  }
+
+  function adicionarItemEmBranco() {
+    inserirNovoItemENavegar(novoItem());
+  }
+
+  function adicionarItemReaproveitandoAnterior() {
+    const itemAnterior = itens[itens.length - 1];
+
+    if (!itemPossuiDadosReaproveitaveis(itemAnterior)) {
+      setAdicionarItemModalAberto(false);
+      adicionarItemEmBranco();
+
+      setMensagem({
+        tipo: "info",
+        texto:
+          "O equipamento anterior ainda não possui dados suficientes. Um novo equipamento em branco foi adicionado.",
+      });
+
+      return;
+    }
+
+    const itemCriado: ItemParecer = {
+      ...itemAnterior,
+      tempId: crypto.randomUUID(),
+      numero_serie: "",
+      patrimonio: "",
+    };
+
+    inserirNovoItemENavegar(itemCriado);
+
+    setMensagem({
+      tipo: "info",
+      texto:
+        "Os dados do equipamento anterior foram reaproveitados. Informe o novo número de série e o patrimônio antes de continuar.",
+    });
+  }
+
+  function adicionarItem() {
+    if (podeReaproveitarUltimoItem) {
+      setAdicionarItemModalAberto(true);
+      return;
+    }
+
+    adicionarItemEmBranco();
   }
 
   function removerItem(tempId: string) {
@@ -1464,20 +2301,55 @@ export default function ParecerTecnicoPage() {
     });
   }
 
-  function limparFormulario() {
+  function limparFormulario(forcar = false) {
+    if (
+      !forcar &&
+      possuiAlteracoesNaoSalvas &&
+      !window.confirm(
+        "Existem alterações ainda não salvas. Deseja limpar o formulário mesmo assim?",
+      )
+    ) {
+      return;
+    }
+
+    const itemInicial = novoItem();
+    const estadoLimpo: FormularioEstado = {
+      editandoParecerId: null,
+      escolaDigitada: "",
+      dataAtendimento: hojeIso(),
+      turno: "",
+      chamadoReferencia: "",
+      resumoAtendimento: "",
+      observacoesGerais: "",
+      itens: [itemInicial],
+    };
+
     setEditandoParecerId(null);
-    setEscolaDigitada("");
-    setDataAtendimento(hojeIso());
-    setTurno("");
-    setChamadoReferencia("");
-    setResumoAtendimento("");
-    setObservacoesGerais("");
-    setItens([novoItem()]);
+    setRascunhoVersaoCarregada(null);
+    setRascunhoConflito(null);
+    setEscolaDigitada(estadoLimpo.escolaDigitada);
+    setDataAtendimento(estadoLimpo.dataAtendimento);
+    setTurno(estadoLimpo.turno);
+    setChamadoReferencia(estadoLimpo.chamadoReferencia);
+    setResumoAtendimento(estadoLimpo.resumoAtendimento);
+    setObservacoesGerais(estadoLimpo.observacoesGerais);
+    setItens(estadoLimpo.itens);
     setSplashValidacao(null);
+    setBaselineSignature(criarAssinaturaFormulario(estadoLimpo));
+    limparBackupLocal();
   }
 
   function cancelarEdicao() {
-    limparFormulario();
+    if (
+      possuiAlteracoesNaoSalvas &&
+      !window.confirm(
+        "Existem alterações ainda não salvas neste rascunho. Deseja cancelar a edição?",
+      )
+    ) {
+      return;
+    }
+
+    limparFormulario(true);
     setMensagem({
       tipo: "info",
       texto: "Edição do rascunho cancelada.",
@@ -1485,7 +2357,19 @@ export default function ParecerTecnicoPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function carregarRascunho(parecer: ParecerHistorico) {
+  async function carregarRascunho(
+    parecer: ParecerHistorico,
+    forcarSubstituicao = false,
+  ) {
+    if (
+      !forcarSubstituicao &&
+      possuiAlteracoesNaoSalvas &&
+      !window.confirm(
+        "Existem alterações ainda não salvas no formulário atual. Deseja substituí-las pelo rascunho selecionado?",
+      )
+    ) {
+      return;
+    }
     if (parecer.status !== "rascunho") {
       setMensagem({
         tipo: "error",
@@ -1494,11 +2378,7 @@ export default function ParecerTecnicoPage() {
       return;
     }
 
-    if (
-      usuario?.auth_user_id &&
-      parecer.created_by_auth &&
-      parecer.created_by_auth !== usuario.auth_user_id
-    ) {
+    if (!parecerPertenceAoUsuario(parecer, usuario)) {
       setMensagem({
         tipo: "error",
         texto:
@@ -1507,47 +2387,104 @@ export default function ParecerTecnicoPage() {
       return;
     }
 
-    setEditandoParecerId(parecer.id);
-    setEscolaDigitada(parecer.escola_nome || "");
-    setDataAtendimento(parecer.data_atendimento || hojeIso());
-    setTurno(parecer.turno === "Noite" ? "" : parecer.turno || "");
-    setChamadoReferencia(parecer.chamado_referencia || "");
-    setResumoAtendimento(parecer.resumo_atendimento || "");
-    setObservacoesGerais(parecer.observacoes_gerais || "");
+    try {
+      setCarregandoRascunhoId(parecer.id);
 
-    const itensDoParecer = parecer.pareceres_tecnicos_itens || [];
+      const { data: rascunhoAtual, error } = await supabase
+        .from("pareceres_tecnicos")
+        .select(
+          `
+          *,
+          pareceres_tecnicos_itens (*)
+        `,
+        )
+        .eq("id", parecer.id)
+        .maybeSingle();
 
-    if (itensDoParecer.length > 0) {
-      setItens(
-        itensDoParecer.map((item) => ({
-          tempId: crypto.randomUUID(),
-          modelo_id: item.modelo_id || "",
-          equipamento: item.equipamento || "",
-          marca_modelo: item.marca_modelo || "",
-          numero_serie: item.numero_serie || "",
-          patrimonio: item.patrimonio || "",
-          problema_relatado: item.problema_relatado || "",
-          possui_problema_fisico: Boolean(item.possui_problema_fisico),
-          problema_fisico_descricao: item.problema_fisico_descricao || "",
-          diagnostico: item.diagnostico || "",
-          acao_realizada: item.acao_realizada || "",
-          resultado: item.resultado || "",
-          precisa_garantia: Boolean(item.precisa_garantia),
-          registrado_bluemonitor: Boolean(item.registrado_bluemonitor),
-          observacao: item.observacao || "",
-        })),
+      if (error) throw error;
+
+      if (!rascunhoAtual) {
+        throw new Error("O rascunho não foi encontrado no servidor.");
+      }
+
+      const rascunho = rascunhoAtual as ParecerHistorico;
+
+      if (rascunho.status !== "rascunho") {
+        throw new Error(
+          "Este relatório não está mais em rascunho e não pode ser editado.",
+        );
+      }
+
+      if (!parecerPertenceAoUsuario(rascunho, usuario)) {
+        throw new Error(
+          "Este rascunho pertence a outro usuário e não pode ser editado por esta sessão.",
+        );
+      }
+
+      setEditandoParecerId(rascunho.id);
+      setRascunhoVersaoCarregada(getVersaoParecer(rascunho));
+      setRascunhoConflito(null);
+      setEscolaDigitada(rascunho.escola_nome || "");
+      setDataAtendimento(rascunho.data_atendimento || hojeIso());
+      setTurno(rascunho.turno === "Noite" ? "" : rascunho.turno || "");
+      setChamadoReferencia(rascunho.chamado_referencia || "");
+      setResumoAtendimento(rascunho.resumo_atendimento || "");
+      setObservacoesGerais(rascunho.observacoes_gerais || "");
+
+      const itensDoParecer = rascunho.pareceres_tecnicos_itens || [];
+      const itensMapeados: ItemParecer[] = itensDoParecer.length
+        ? itensDoParecer.map((item) => ({
+            tempId: crypto.randomUUID(),
+            modelo_id: item.modelo_id || "",
+            equipamento: item.equipamento || "",
+            marca_modelo: item.marca_modelo || "",
+            numero_serie: item.numero_serie || "",
+            patrimonio: item.patrimonio || "",
+            problema_relatado: item.problema_relatado || "",
+            possui_problema_fisico: Boolean(item.possui_problema_fisico),
+            problema_fisico_descricao: item.problema_fisico_descricao || "",
+            diagnostico: item.diagnostico || "",
+            acao_realizada: item.acao_realizada || "",
+            resultado: item.resultado || "",
+            precisa_garantia: Boolean(item.precisa_garantia),
+            registrado_bluemonitor: Boolean(item.registrado_bluemonitor),
+            observacao: item.observacao || "",
+          }))
+        : [novoItem()];
+
+      setItens(itensMapeados);
+      setBaselineSignature(
+        criarAssinaturaFormulario({
+          editandoParecerId: rascunho.id,
+          escolaDigitada: rascunho.escola_nome || "",
+          dataAtendimento: rascunho.data_atendimento || hojeIso(),
+          turno: rascunho.turno === "Noite" ? "" : rascunho.turno || "",
+          chamadoReferencia: rascunho.chamado_referencia || "",
+          resumoAtendimento: rascunho.resumo_atendimento || "",
+          observacoesGerais: rascunho.observacoes_gerais || "",
+          itens: itensMapeados,
+        }),
       );
-    } else {
-      setItens([novoItem()]);
+      limparBackupLocal();
+      setAutosavePronto(true);
+
+      setMensagem({
+        tipo: "info",
+        texto:
+          "Rascunho atualizado carregado para edição. Ele está vinculado ao seu usuário e será protegido contra alterações concorrentes.",
+      });
+
+      setHistoricoAberto(false);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (error: any) {
+      console.error("Erro ao carregar rascunho:", error);
+      setMensagem({
+        tipo: "error",
+        texto: error?.message || "Não foi possível carregar o rascunho.",
+      });
+    } finally {
+      setCarregandoRascunhoId(null);
     }
-
-    setMensagem({
-      tipo: "info",
-      texto:
-        "Rascunho carregado para edição. Após ajustar, salve novamente ou finalize para gerar o PDF.",
-    });
-
-    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function itemPossuiConteudo(item: ItemParecer) {
@@ -1728,6 +2665,15 @@ export default function ParecerTecnicoPage() {
   async function salvarParecer(status: "rascunho" | "finalizado") {
     if (salvandoRef.current) return;
 
+    if (editandoParecerId && rascunhoConflito) {
+      setMensagem({
+        tipo: "error",
+        texto:
+          "Este rascunho possui uma alteração mais recente no servidor. Recarregue a versão atual antes de salvar ou finalizar.",
+      });
+      return;
+    }
+
     const finalizar = status === "finalizado";
 
     if (!validarFormulario(finalizar)) {
@@ -1793,26 +2739,120 @@ export default function ParecerTecnicoPage() {
       };
 
       let parecerCriado: any = null;
+      let itensAnteriores: any[] = [];
 
       if (editandoParecerId) {
+        const { data: rascunhoAtualData, error: rascunhoAtualError } =
+          await supabase
+            .from("pareceres_tecnicos")
+            .select("*")
+            .eq("id", editandoParecerId)
+            .maybeSingle();
+
+        if (rascunhoAtualError) throw rascunhoAtualError;
+
+        if (!rascunhoAtualData) {
+          throw new Error(
+            "O rascunho não foi encontrado. Ele pode ter sido excluído em outra sessão.",
+          );
+        }
+
+        const rascunhoAtual = rascunhoAtualData as ParecerHistorico;
+
+        if (rascunhoAtual.status !== "rascunho") {
+          setRascunhoConflito({
+            parecerId: editandoParecerId,
+            mensagem:
+              "O relatório foi finalizado ou alterado em outra sessão enquanto você o editava.",
+            atualizadoEm: getVersaoParecer(rascunhoAtual),
+          });
+          throw new Error(
+            "Este relatório não está mais em rascunho. Atualize a página antes de continuar.",
+          );
+        }
+
+        if (!parecerPertenceAoUsuario(rascunhoAtual, usuario)) {
+          throw new Error(
+            "Este rascunho pertence a outro usuário e não pode ser alterado por esta sessão.",
+          );
+        }
+
+        const versaoAtual = getVersaoParecer(rascunhoAtual);
+
+        if (
+          rascunhoVersaoCarregada &&
+          rascunhoAtual.updated_at &&
+          versaoAtual &&
+          versaoAtual !== rascunhoVersaoCarregada
+        ) {
+          setRascunhoConflito({
+            parecerId: editandoParecerId,
+            mensagem:
+              "Uma versão mais recente deste rascunho já existe no servidor.",
+            atualizadoEm: versaoAtual,
+          });
+          throw new Error(
+            "Conflito de edição detectado. Recarregue a versão atual do rascunho antes de salvar.",
+          );
+        }
+
+        const { data: itensAtuaisData, error: itensAtuaisError } =
+          await supabase
+            .from("pareceres_tecnicos_itens")
+            .select("*")
+            .eq("parecer_id", editandoParecerId);
+
+        if (itensAtuaisError) throw itensAtuaisError;
+        itensAnteriores = itensAtuaisData || [];
+
+        let updateQuery = supabase
+          .from("pareceres_tecnicos")
+          .update(parecerPayload)
+          .eq("id", editandoParecerId)
+          .eq("status", "rascunho");
+
+        if (rascunhoAtual.created_by_auth) {
+          updateQuery = updateQuery.eq(
+            "created_by_auth",
+            usuario?.auth_user_id || "",
+          );
+        } else {
+          updateQuery = updateQuery
+            .is("created_by_auth", null)
+            .eq("tecnico_email", usuario?.email || "");
+        }
+
+        if (rascunhoVersaoCarregada && rascunhoAtual.updated_at) {
+          updateQuery = updateQuery.eq(
+            "updated_at",
+            rascunhoVersaoCarregada,
+          );
+        }
+
+        const { data: parecerAtualizado, error: updateError } =
+          await updateQuery.select("*").maybeSingle();
+
+        if (updateError) throw updateError;
+
+        if (!parecerAtualizado) {
+          setRascunhoConflito({
+            parecerId: editandoParecerId,
+            mensagem:
+              "O rascunho foi modificado em outra sessão antes da confirmação desta gravação.",
+          });
+          throw new Error(
+            "Não foi possível salvar porque o rascunho foi alterado em outra sessão.",
+          );
+        }
+
+        parecerCriado = parecerAtualizado;
+
         const { error: deleteItensError } = await supabase
           .from("pareceres_tecnicos_itens")
           .delete()
           .eq("parecer_id", editandoParecerId);
 
         if (deleteItensError) throw deleteItensError;
-
-        const { data: parecerAtualizado, error: updateError } = await supabase
-          .from("pareceres_tecnicos")
-          .update(parecerPayload)
-          .eq("id", editandoParecerId)
-          .eq("status", "rascunho")
-          .select("*")
-          .single();
-
-        if (updateError) throw updateError;
-
-        parecerCriado = parecerAtualizado;
       } else {
         const { data: parecerNovo, error: parecerError } = await supabase
           .from("pareceres_tecnicos")
@@ -1850,7 +2890,46 @@ export default function ParecerTecnicoPage() {
         .insert(itensPayload)
         .select("*");
 
-      if (itensError) throw itensError;
+      if (itensError) {
+        if (editandoParecerId && itensAnteriores.length > 0) {
+          const itensRestauracao = itensAnteriores.map((item) => ({
+            parecer_id: editandoParecerId,
+            modelo_id: item.modelo_id || null,
+            equipamento: item.equipamento || "Equipamento não informado",
+            marca_modelo: item.marca_modelo || null,
+            numero_serie: item.numero_serie || null,
+            patrimonio: item.patrimonio || null,
+            problema_relatado: item.problema_relatado || null,
+            possui_problema_fisico: Boolean(item.possui_problema_fisico),
+            problema_fisico_descricao:
+              item.problema_fisico_descricao || null,
+            diagnostico: item.diagnostico || null,
+            acao_realizada: item.acao_realizada || null,
+            resultado: item.resultado || null,
+            precisa_garantia: Boolean(item.precisa_garantia),
+            registrado_bluemonitor: Boolean(item.registrado_bluemonitor),
+            observacao: item.observacao || null,
+          }));
+
+          const { error: restauracaoError } = await supabase
+            .from("pareceres_tecnicos_itens")
+            .insert(itensRestauracao);
+
+          if (restauracaoError) {
+            console.error(
+              "Falha ao restaurar os itens anteriores do rascunho:",
+              restauracaoError,
+            );
+          }
+        } else if (!editandoParecerId && parecerCriado?.id) {
+          await supabase
+            .from("pareceres_tecnicos")
+            .delete()
+            .eq("id", parecerCriado.id);
+        }
+
+        throw itensError;
+      }
 
       const parecerCompleto: ParecerHistorico = {
         ...(parecerCriado as ParecerHistorico),
@@ -1888,7 +2967,7 @@ export default function ParecerTecnicoPage() {
         }
       }
 
-      limparFormulario();
+      limparFormulario(true);
       await carregar();
     } catch (error: any) {
       console.error("Erro ao salvar parecer técnico:", error);
@@ -2066,6 +3145,79 @@ export default function ParecerTecnicoPage() {
                   Visão SEINTEC/Admin
                 </span>
               )}
+
+              <span
+                title={
+                  realtimeStatus === "online"
+                    ? "Atualização em tempo real ativa"
+                    : realtimeStatus === "erro"
+                      ? "O Realtime está indisponível. Os dados continuam sendo salvos normalmente."
+                      : "Conectando ao Realtime"
+                }
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${
+                  realtimeStatus === "online"
+                    ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+                    : realtimeStatus === "erro"
+                      ? "border-red-500/25 bg-red-500/10 text-red-300"
+                      : "border-yellow-500/25 bg-yellow-500/10 text-yellow-300"
+                }`}
+              >
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    realtimeStatus === "online"
+                      ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.85)]"
+                      : realtimeStatus === "erro"
+                        ? "bg-red-400"
+                        : "animate-pulse bg-yellow-400"
+                  }`}
+                />
+                Realtime {
+                  realtimeStatus === "online"
+                    ? "ativo"
+                    : realtimeStatus === "erro"
+                      ? "offline"
+                      : "conectando"
+                }
+              </span>
+
+              {autosavePronto && (
+                <span
+                  title={
+                    ultimoAutosaveLocal
+                      ? `Último backup local: ${formatarDataHora(ultimoAutosaveLocal)}`
+                      : "O preenchimento será salvo automaticamente neste navegador."
+                  }
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${
+                    autosaveStatus === "erro"
+                      ? "border-red-500/25 bg-red-500/10 text-red-300"
+                      : autosaveStatus === "salvando"
+                        ? "border-yellow-500/25 bg-yellow-500/10 text-yellow-300"
+                        : "border-blue-500/25 bg-blue-500/10 text-blue-300"
+                  }`}
+                >
+                  <span aria-hidden="true">
+                    {autosaveStatus === "salvando"
+                      ? "◌"
+                      : autosaveStatus === "erro"
+                        ? "!"
+                        : "✓"}
+                  </span>
+                  {autosaveStatus === "salvando"
+                    ? "Salvando localmente"
+                    : autosaveStatus === "erro"
+                      ? "Falha no backup local"
+                      : ultimoAutosaveLocal
+                        ? "Backup local salvo"
+                        : "Backup local ativo"}
+                </span>
+              )}
+
+              {possuiAlteracoesNaoSalvas && (
+                <span className="inline-flex items-center gap-2 rounded-full border border-orange-500/25 bg-orange-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-orange-300">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-orange-400" />
+                  Alterações não salvas
+                </span>
+              )}
             </div>
 
             <h1 className="text-2xl font-black tracking-tight text-white md:text-4xl">
@@ -2081,15 +3233,14 @@ export default function ParecerTecnicoPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <button
               type="button"
-              onClick={() =>
-                document
-                  .getElementById("meus-relatorios")
-                  ?.scrollIntoView({ behavior: "smooth", block: "start" })
-              }
-              className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-2xl border border-blue-500/25 bg-blue-500/10 px-5 text-xs font-black uppercase tracking-widest text-blue-300 transition hover:border-blue-500/45 hover:bg-blue-500/20"
+              onClick={() => setHistoricoAberto(true)}
+              className="inline-flex min-h-[48px] items-center justify-center gap-3 rounded-2xl border border-blue-500/30 bg-blue-500/10 px-5 text-xs font-black uppercase tracking-widest text-blue-200 transition hover:border-blue-400/50 hover:bg-blue-500/20"
             >
               <span aria-hidden="true">📁</span>
-              {isGestao ? "Relatórios" : "Meus relatórios"}
+              <span>{isGestao ? "Abrir relatórios" : "Meus relatórios"}</span>
+              <span className="rounded-full border border-blue-400/25 bg-blue-500/15 px-2 py-0.5 text-[10px] text-blue-100">
+                {historico.length}
+              </span>
             </button>
 
             <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3">
@@ -2124,12 +3275,110 @@ export default function ParecerTecnicoPage() {
         </div>
       )}
 
+      {recuperacaoLocal && (
+        <section className="rounded-[1.75rem] border border-blue-500/30 bg-blue-500/10 p-5 shadow-lg shadow-blue-950/15">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-300">
+                Preenchimento local encontrado
+              </p>
+              <h2 className="mt-2 text-lg font-black text-white">
+                Recuperar informações não salvas?
+              </h2>
+              <p className="mt-1 text-sm font-medium leading-relaxed text-blue-100/70">
+                Foi localizado um backup deste usuário salvo em {formatarDataHora(
+                  recuperacaoLocal.savedAt,
+                )}. Ele fica somente neste navegador e não altera o rascunho do Supabase até você salvar.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={restaurarBackupLocal}
+                className="rounded-2xl bg-blue-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white transition hover:bg-blue-500"
+              >
+                Restaurar preenchimento
+              </button>
+              <button
+                type="button"
+                onClick={descartarBackupLocal}
+                className="rounded-2xl border border-blue-500/30 bg-[#020617] px-5 py-3 text-xs font-black uppercase tracking-widest text-blue-300 transition hover:bg-blue-500/10"
+              >
+                Descartar backup
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
       {isGestao && (
         <DashboardGestao
           dados={dashboardGestao}
           onDeleteItem={excluirEquipamentoGestao}
           deletingItemId={deletandoItemId}
+          periodoPreset={periodoPreset}
+          periodoInicio={periodoInicio}
+          periodoFim={periodoFim}
+          periodoDescricao={periodoDescricao}
+          onPeriodoPresetChange={alterarPeriodoPreset}
+          onPeriodoInicioChange={(value) => {
+            setPeriodoPreset("personalizado");
+            setPeriodoInicio(value);
+          }}
+          onPeriodoFimChange={(value) => {
+            setPeriodoPreset("personalizado");
+            setPeriodoFim(value);
+          }}
         />
+      )}
+
+      {rascunhoConflito && editandoParecerId && (
+        <div className="rounded-2xl border border-red-500/35 bg-red-500/10 p-5 shadow-lg shadow-red-950/10">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-black uppercase tracking-widest text-red-300">
+                Conflito de edição detectado
+              </p>
+              <p className="mt-1 text-sm font-medium leading-relaxed text-red-100/80">
+                {rascunhoConflito.mensagem}
+              </p>
+              {rascunhoConflito.atualizadoEm && (
+                <p className="mt-2 text-xs font-bold text-red-300/70">
+                  Alteração identificada em {formatarDataHora(rascunhoConflito.atualizadoEm)}
+                </p>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => {
+                  const rascunhoServidor = historico.find(
+                    (parecer) => parecer.id === editandoParecerId,
+                  );
+
+                  if (rascunhoServidor) {
+                    carregarRascunho(rascunhoServidor, true);
+                  } else {
+                    carregar();
+                  }
+                }}
+                className="rounded-xl bg-red-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white transition hover:bg-red-500"
+              >
+                Recarregar versão do servidor
+              </button>
+
+              <button
+                type="button"
+                onClick={cancelarEdicao}
+                className="rounded-xl border border-red-500/30 bg-[#020617] px-5 py-3 text-xs font-black uppercase tracking-widest text-red-300 transition hover:bg-red-500/10"
+              >
+                Cancelar edição
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {editandoParecerId && (
@@ -2140,9 +3389,9 @@ export default function ParecerTecnicoPage() {
                 Rascunho carregado para edição
               </p>
               <p className="mt-1 text-sm font-medium text-yellow-200/80">
-                Você está editando um rascunho salvo anteriormente. Ao
-                finalizar, ele será transformado em parecer finalizado e o PDF
-                será gerado.
+                Você está editando um rascunho exclusivo do seu usuário.
+                Alterações de outras abas ou sessões serão bloqueadas para evitar
+                sobrescrita. Ao finalizar, o PDF será gerado normalmente.
               </p>
             </div>
 
@@ -2171,15 +3420,62 @@ export default function ParecerTecnicoPage() {
         </div>
       </section>
 
-      <form className="grid grid-cols-1 gap-7 xl:grid-cols-12">
-        <section className="xl:col-span-8">
-          <Panel>
-            <div className="mb-6">
-              <h2 className="text-xl font-black text-white">
+      <button
+        id="meus-relatorios"
+        type="button"
+        onClick={() => setHistoricoAberto(true)}
+        className="group relative w-full overflow-hidden rounded-[1.6rem] border border-blue-500/20 bg-[#020617] p-4 text-left shadow-lg shadow-slate-950/20 transition hover:border-blue-400/35 hover:bg-slate-950/90 sm:p-5"
+      >
+        <div className="pointer-events-none absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-cyan-400 via-blue-500 to-indigo-500" />
+
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-blue-500/25 bg-blue-500/10 text-xl shadow-inner shadow-blue-950/20">
+              📚
+            </div>
+
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-300">
+                {isGestao ? "Consulta geral" : "Acesso pessoal"}
+              </p>
+              <h2 className="mt-1 text-lg font-black text-white sm:text-xl">
+                {isGestao ? "Relatórios registrados" : "Meus relatórios"}
+              </h2>
+              <p className="mt-1 line-clamp-2 text-xs font-medium leading-relaxed text-slate-500 sm:text-sm">
+                Clique para abrir uma área ampla de consulta.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+            <div className="rounded-xl border border-slate-800 bg-slate-950/75 px-3 py-2 text-center">
+              <p className="text-lg font-black text-white">{resumoHistorico.total}</p>
+              <p className="text-[8px] font-black uppercase tracking-widest text-slate-600">Total</p>
+            </div>
+            <div className="hidden rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] px-3 py-2 text-center sm:block">
+              <p className="text-lg font-black text-emerald-300">{resumoHistorico.finalizados}</p>
+              <p className="text-[8px] font-black uppercase tracking-widest text-emerald-500/70">Finalizados</p>
+            </div>
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-blue-500/25 bg-blue-500/10 text-xl font-black text-blue-300 transition group-hover:translate-x-1 group-hover:bg-blue-500/20">
+              →
+            </div>
+          </div>
+        </div>
+      </button>
+
+      <form className="space-y-7">
+        <section>
+          <Panel className="border-blue-500/30 bg-[linear-gradient(145deg,rgba(8,20,46,0.98),rgba(2,6,23,1))] shadow-blue-950/20">
+            <div className="mb-6 rounded-2xl border border-blue-500/25 bg-blue-500/[0.08] p-4 sm:p-5">
+              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-300">
+                Etapa inicial
+              </p>
+
+              <h2 className="mt-2 text-xl font-black text-white">
                 Dados do atendimento
               </h2>
 
-              <p className="mt-1 text-sm font-medium text-slate-500">
+              <p className="mt-2 text-sm font-medium leading-relaxed text-blue-100/60">
                 Selecione a escola, informe a data e descreva o resumo geral da
                 visita técnica.
               </p>
@@ -2532,7 +3828,7 @@ export default function ParecerTecnicoPage() {
                           </div>
 
                           <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
-                            <div className="h-full [&>div]:flex [&>div]:h-full [&>div]:flex-col [&_textarea]:min-h-[170px] [&_textarea]:flex-1">
+                            <div className="flex h-full min-w-0 flex-col [&_textarea]:min-h-[170px]">
                               <Area
                                 id={`item-${index}-problema`}
                                 label="Problema apresentado/identificado *"
@@ -2546,9 +3842,24 @@ export default function ParecerTecnicoPage() {
                                 }
                                 placeholder="Descreva o problema apresentado pela escola ou identificado durante a análise."
                               />
+
+                              <ModelosRapidos
+                                titulo="Modelos de problema"
+                                modelos={MODELOS_PROBLEMA}
+                                onSelecionar={(texto) =>
+                                  atualizarItem(
+                                    item.tempId,
+                                    "problema_relatado",
+                                    adicionarModeloAoTexto(
+                                      item.problema_relatado,
+                                      texto,
+                                    ),
+                                  )
+                                }
+                              />
                             </div>
 
-                            <div className="h-full [&>div]:flex [&>div]:h-full [&>div]:flex-col [&_textarea]:min-h-[170px] [&_textarea]:flex-1">
+                            <div className="flex h-full min-w-0 flex-col [&_textarea]:min-h-[170px]">
                               <Area
                                 id={`item-${index}-acao`}
                                 label="Ação realizada *"
@@ -2561,6 +3872,21 @@ export default function ParecerTecnicoPage() {
                                   )
                                 }
                                 placeholder="Informe objetivamente o procedimento executado no equipamento."
+                              />
+
+                              <ModelosRapidos
+                                titulo="Modelos de ação"
+                                modelos={MODELOS_ACAO}
+                                onSelecionar={(texto) =>
+                                  atualizarItem(
+                                    item.tempId,
+                                    "acao_realizada",
+                                    adicionarModeloAoTexto(
+                                      item.acao_realizada,
+                                      texto,
+                                    ),
+                                  )
+                                }
                               />
                             </div>
                           </div>
@@ -2706,7 +4032,7 @@ export default function ParecerTecnicoPage() {
           </div>
         </section>
 
-        <aside className="space-y-7 xl:col-span-4">
+        <section className="space-y-7">
           <div id="finalizacao-relatorio" className="scroll-mt-24">
             <Panel className="border-cyan-500/30 shadow-cyan-950/20">
             <div className="mb-5 rounded-2xl border border-cyan-500/25 bg-cyan-500/10 p-4">
@@ -2782,7 +4108,7 @@ export default function ParecerTecnicoPage() {
 
               <button
                 type="button"
-                onClick={limparFormulario}
+                onClick={() => limparFormulario()}
                 disabled={salvando}
                 className="rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-4 text-sm font-black uppercase tracking-widest text-red-300 transition-all hover:bg-red-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -2792,121 +4118,383 @@ export default function ParecerTecnicoPage() {
             </Panel>
           </div>
 
-          <Panel id="meus-relatorios">
-            <div className="mb-5 flex items-end justify-between gap-3">
-              <div>
-                <p className="mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-blue-300">
-                  {isGestao ? "Consulta geral" : "Acesso pessoal"}
-                </p>
-                <h2 className="text-xl font-black text-white">
-                  {isGestao ? "Relatórios registrados" : "Meus relatórios"}
-                </h2>
+        </section>
+      </form>
 
-                <p className="mt-1 text-sm font-medium text-slate-500">
-                  {isGestao
-                    ? "Relatórios de todos os técnicos, com PDF e retorno padronizado."
-                    : "Somente os relatórios produzidos por você, com acesso rápido ao PDF e ao texto de retorno."}
-                </p>
-              </div>
+      {adicionarItemModalAberto && (
+        <div
+          className="fixed inset-0 z-[10002] flex items-center justify-center bg-[#020617]/90 p-4 backdrop-blur-md"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setAdicionarItemModalAberto(false);
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="titulo-adicionar-equipamento"
+            className="w-full max-w-2xl overflow-hidden rounded-[2rem] border border-blue-500/30 bg-[#020617] shadow-2xl shadow-blue-950/40"
+          >
+            <div className="relative overflow-hidden border-b border-slate-800 p-5 sm:p-6">
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(59,130,246,0.18),transparent_42%)]" />
 
-              <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-xs font-black text-cyan-300">
-                {historico.length}
-              </span>
-            </div>
-
-            <div className="max-h-[620px] space-y-3 overflow-y-auto pr-1">
-              {historico.length === 0 ? (
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5 text-center">
-                  <p className="text-3xl opacity-70">📭</p>
-                  <p className="mt-2 text-sm font-black text-slate-400">
-                    Nenhum relatório encontrado
+              <div className="relative z-10 flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-300">
+                    Novo equipamento
                   </p>
-                  <p className="mt-1 text-xs font-medium text-slate-600">
-                    Os relatórios salvos aparecerão aqui.
+
+                  <h2
+                    id="titulo-adicionar-equipamento"
+                    className="mt-2 text-2xl font-black tracking-tight text-white"
+                  >
+                    Como deseja adicionar?
+                  </h2>
+
+                  <p className="mt-2 max-w-xl text-sm font-medium leading-relaxed text-slate-500">
+                    Comece um registro vazio ou reaproveite os dados do último
+                    equipamento para agilizar atendimentos repetitivos.
                   </p>
                 </div>
-              ) : (
-                historico.map((parecer) => {
-                  const podeEditar =
-                    parecer.status === "rascunho" &&
-                    (!parecer.created_by_auth ||
-                      parecer.created_by_auth === usuario?.auth_user_id);
 
-                  return (
-                    <div
-                      key={parecer.id}
-                      className={`rounded-2xl border p-4 ${
-                        editandoParecerId === parecer.id
-                          ? "border-yellow-500/40 bg-yellow-500/10"
-                          : "border-slate-800 bg-slate-900/60"
-                      }`}
+                <button
+                  type="button"
+                  onClick={() => setAdicionarItemModalAberto(false)}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-800 bg-slate-900 text-lg font-black text-slate-500 transition hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-300"
+                  aria-label="Fechar"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2 sm:p-6">
+              <button
+                type="button"
+                onClick={adicionarItemEmBranco}
+                className="group rounded-2xl border border-slate-700 bg-slate-900/70 p-5 text-left transition hover:-translate-y-0.5 hover:border-cyan-500/40 hover:bg-cyan-500/[0.06]"
+              >
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-cyan-500/25 bg-cyan-500/10 text-xl text-cyan-300">
+                  +
+                </div>
+
+                <h3 className="mt-4 text-base font-black text-white">
+                  Adicionar em branco
+                </h3>
+
+                <p className="mt-2 text-xs font-medium leading-relaxed text-slate-500">
+                  Cria um equipamento vazio para preenchimento totalmente novo.
+                </p>
+
+                <span className="mt-4 inline-flex text-[10px] font-black uppercase tracking-widest text-cyan-300">
+                  Novo preenchimento →
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={adicionarItemReaproveitandoAnterior}
+                className="group rounded-2xl border border-blue-500/30 bg-blue-500/[0.08] p-5 text-left transition hover:-translate-y-0.5 hover:border-blue-400/50 hover:bg-blue-500/[0.13]"
+              >
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-blue-500/30 bg-blue-500/10 text-xl text-blue-300">
+                  ↻
+                </div>
+
+                <h3 className="mt-4 text-base font-black text-white">
+                  Reaproveitar o anterior
+                </h3>
+
+                <p className="mt-2 text-xs font-medium leading-relaxed text-slate-400">
+                  Copia modelo, marca, problema, ação, resultado e sinalizações.
+                  O número de série e o patrimônio serão limpos.
+                </p>
+
+                <div className="mt-4 rounded-xl border border-blue-500/20 bg-[#020617]/60 p-3">
+                  <p className="truncate text-xs font-black text-blue-200">
+                    {ultimoItemRegistrado?.equipamento ||
+                      "Equipamento anterior"}
+                  </p>
+
+                  <p className="mt-1 truncate text-[10px] font-semibold text-slate-600">
+                    {ultimoItemRegistrado?.marca_modelo ||
+                      "Marca/modelo não informado"}
+                  </p>
+                </div>
+
+                <span className="mt-4 inline-flex text-[10px] font-black uppercase tracking-widest text-blue-300">
+                  Reaproveitar dados →
+                </span>
+              </button>
+            </div>
+
+            <div className="border-t border-slate-800 bg-slate-950/60 px-5 py-4 sm:px-6">
+              <p className="text-[10px] font-semibold leading-relaxed text-slate-600">
+                O número de série e o patrimônio não são reaproveitados, pois
+                identificam individualmente cada equipamento.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {historicoAberto && (
+        <div
+          className="fixed inset-0 z-[9998] flex justify-end bg-[#020617]/[0.82] backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setHistoricoAberto(false);
+            }
+          }}
+        >
+          <aside
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="titulo-historico-relatorios"
+            onMouseDown={(event) => event.stopPropagation()}
+            className="flex h-full w-full max-w-[980px] flex-col border-l border-slate-800 bg-[#020617] shadow-2xl shadow-black/60"
+          >
+            <div className="relative shrink-0 overflow-hidden border-b border-slate-800 p-5 sm:p-6">
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.18),transparent_40%)]" />
+
+              <div className="relative z-10 flex items-start justify-between gap-4">
+                <div className="flex min-w-0 items-start gap-4">
+                  <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-blue-500/25 bg-blue-500/10 text-xl sm:flex">
+                    📚
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-300">
+                      {isGestao ? "Consulta geral" : "Acesso pessoal"}
+                    </p>
+                    <h2
+                      id="titulo-historico-relatorios"
+                      className="mt-1 text-2xl font-black tracking-tight text-white sm:text-3xl"
                     >
-                      <div className="mb-3 flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="line-clamp-2 text-sm font-black text-white">
-                            {parecer.escola_nome}
-                          </p>
+                      {isGestao ? "Relatórios registrados" : "Meus relatórios"}
+                    </h2>
+                    <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-slate-500">
+                      {isGestao
+                        ? "Consulte relatórios de todos os técnicos, abra o PDF, gere o retorno ou localize rascunhos próprios."
+                        : "Consulte seus relatórios, abra documentos finalizados e retome seus rascunhos sem perder o preenchimento atual."}
+                    </p>
+                  </div>
+                </div>
 
-                          <p className="mt-1 text-xs font-bold text-slate-500">
-                            {formatarData(parecer.data_atendimento)} •{" "}
-                            {parecer.tecnico_nome}
-                          </p>
+                <button
+                  type="button"
+                  onClick={() => setHistoricoAberto(false)}
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-800 bg-slate-950 text-lg font-black text-slate-400 transition hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-300"
+                  aria-label="Fechar relatórios"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="relative z-10 mt-5 grid grid-cols-3 gap-2 sm:max-w-md">
+                <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+                  <p className="text-lg font-black text-white">{resumoHistorico.total}</p>
+                  <p className="text-[8px] font-black uppercase tracking-widest text-slate-600">Total</p>
+                </div>
+                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] px-3 py-2">
+                  <p className="text-lg font-black text-emerald-300">{resumoHistorico.finalizados}</p>
+                  <p className="text-[8px] font-black uppercase tracking-widest text-emerald-500/70">Finalizados</p>
+                </div>
+                <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/[0.06] px-3 py-2">
+                  <p className="text-lg font-black text-yellow-300">{resumoHistorico.rascunhos}</p>
+                  <p className="text-[8px] font-black uppercase tracking-widest text-yellow-500/70">Rascunhos</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="shrink-0 border-b border-slate-800 bg-slate-950/[0.55] p-4 sm:p-5">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+                <label className="relative block">
+                  <span className="pointer-events-none absolute inset-y-0 left-4 flex items-center text-slate-600">
+                    🔎
+                  </span>
+                  <input
+                    type="text"
+                    value={buscaHistorico}
+                    onChange={(event) => setBuscaHistorico(event.target.value)}
+                    placeholder="Buscar escola, técnico, chamado ou resumo..."
+                    className="h-12 w-full rounded-xl border border-slate-700 bg-[#020617] pl-11 pr-4 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  />
+                </label>
+
+                <select
+                  value={statusHistorico}
+                  onChange={(event) =>
+                    setStatusHistorico(
+                      event.target.value as "todos" | "rascunho" | "finalizado",
+                    )
+                  }
+                  className="h-12 rounded-xl border border-slate-700 bg-[#020617] px-4 text-sm font-bold text-slate-300 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="todos">Todos os status</option>
+                  <option value="finalizado">Finalizados</option>
+                  <option value="rascunho">Rascunhos</option>
+                </select>
+              </div>
+
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-600">
+                  {historicoFiltrado.length} resultado(s)
+                </p>
+
+                {(buscaHistorico || statusHistorico !== "todos") && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBuscaHistorico("");
+                      setStatusHistorico("todos");
+                    }}
+                    className="text-[10px] font-black uppercase tracking-widest text-blue-300 transition hover:text-blue-200"
+                  >
+                    Limpar filtros
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-4 sm:p-5 lg:p-6">
+              {historico.length === 0 ? (
+                <div className="flex min-h-[360px] flex-col items-center justify-center rounded-[1.75rem] border border-dashed border-slate-800 bg-slate-950/40 p-8 text-center">
+                  <p className="text-4xl opacity-70">📭</p>
+                  <p className="mt-4 text-lg font-black text-white">Nenhum relatório encontrado</p>
+                  <p className="mt-2 max-w-md text-sm font-medium leading-relaxed text-slate-500">
+                    Os relatórios salvos aparecerão nesta área de consulta.
+                  </p>
+                </div>
+              ) : historicoFiltrado.length === 0 ? (
+                <div className="flex min-h-[320px] flex-col items-center justify-center rounded-[1.75rem] border border-dashed border-slate-800 bg-slate-950/40 p-8 text-center">
+                  <p className="text-3xl opacity-70">🔎</p>
+                  <p className="mt-4 text-lg font-black text-white">Nenhum resultado com estes filtros</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBuscaHistorico("");
+                      setStatusHistorico("todos");
+                    }}
+                    className="mt-5 rounded-xl border border-blue-500/25 bg-blue-500/10 px-5 py-3 text-xs font-black uppercase tracking-widest text-blue-300 transition hover:bg-blue-500/20"
+                  >
+                    Limpar filtros
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  {historicoFiltrado.map((parecer) => {
+                    const podeEditar =
+                      parecer.status === "rascunho" &&
+                      parecerPertenceAoUsuario(parecer, usuario);
+                    const quantidadeItens =
+                      parecer.pareceres_tecnicos_itens?.length || 0;
+
+                    return (
+                      <article
+                        key={parecer.id}
+                        className={`flex h-full flex-col rounded-[1.4rem] border p-4 transition sm:p-5 ${
+                          editandoParecerId === parecer.id
+                            ? "border-yellow-500/45 bg-yellow-500/[0.08]"
+                            : "border-slate-800 bg-slate-950/[0.65] hover:border-slate-700"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="line-clamp-2 text-base font-black leading-snug text-white">
+                              {parecer.escola_nome}
+                            </p>
+                            <p className="mt-1 text-xs font-bold text-slate-500">
+                              {formatarData(parecer.data_atendimento)} • {parecer.tecnico_nome}
+                            </p>
+                          </div>
+
+                          <span
+                            className={`shrink-0 rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-widest ${getStatusClass(
+                              parecer.status,
+                            )}`}
+                          >
+                            {parecer.status}
+                          </span>
                         </div>
 
-                        <span
-                          className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${getStatusClass(
-                            parecer.status,
-                          )}`}
-                        >
-                          {parecer.status}
-                        </span>
-                      </div>
+                        <p className="mt-4 line-clamp-3 text-xs font-medium leading-relaxed text-slate-500">
+                          {parecer.resumo_atendimento || "Sem resumo informado."}
+                        </p>
 
-                      <p className="line-clamp-2 text-xs leading-relaxed text-slate-500">
-                        {parecer.resumo_atendimento || "Sem resumo informado."}
-                      </p>
-
-                      {(parecer.status === "finalizado" || podeEditar) && (
-                        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          {parecer.status === "finalizado" && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => gerarPdfParecer(parecer)}
-                                className="min-h-[42px] rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-black uppercase tracking-widest text-cyan-300 transition-all hover:bg-cyan-500 hover:text-cyan-950"
-                              >
-                                Abrir PDF
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => abrirRetornoChamado(parecer)}
-                                className="min-h-[42px] rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-black uppercase tracking-widest text-blue-300 transition-all hover:bg-blue-500 hover:text-white"
-                              >
-                                Gerar retorno
-                              </button>
-                            </>
-                          )}
-
-                          {podeEditar && (
-                            <button
-                              type="button"
-                              onClick={() => carregarRascunho(parecer)}
-                              className="min-h-[42px] rounded-xl border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-xs font-black uppercase tracking-widest text-yellow-300 transition-all hover:bg-yellow-500 hover:text-yellow-950 sm:col-span-2"
-                            >
-                              Editar rascunho
-                            </button>
-                          )}
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                          <div className="rounded-xl border border-slate-800 bg-[#020617] p-3">
+                            <p className="text-[8px] font-black uppercase tracking-widest text-slate-600">Equipamentos</p>
+                            <p className="mt-1 text-sm font-black text-slate-200">{quantidadeItens}</p>
+                          </div>
+                          <div className="min-w-0 rounded-xl border border-slate-800 bg-[#020617] p-3">
+                            <p className="text-[8px] font-black uppercase tracking-widest text-slate-600">Referência</p>
+                            <p className="mt-1 truncate text-xs font-black text-slate-300">
+                              {parecer.chamado_referencia || "Sem referência"}
+                            </p>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  );
-                })
+
+                        {(parecer.status === "finalizado" || podeEditar) && (
+                          <div className="mt-auto grid grid-cols-1 gap-2 pt-4 sm:grid-cols-2">
+                            {parecer.status === "finalizado" && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => gerarPdfParecer(parecer)}
+                                  className="min-h-[44px] rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 text-[10px] font-black uppercase tracking-widest text-cyan-300 transition hover:bg-cyan-500 hover:text-cyan-950"
+                                >
+                                  Abrir PDF
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => abrirRetornoChamado(parecer)}
+                                  className="min-h-[44px] rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 text-[10px] font-black uppercase tracking-widest text-blue-300 transition hover:bg-blue-500 hover:text-white"
+                                >
+                                  Gerar retorno
+                                </button>
+                              </>
+                            )}
+
+                            {podeEditar && (
+                              <button
+                                type="button"
+                                onClick={() => carregarRascunho(parecer)}
+                                disabled={carregandoRascunhoId === parecer.id}
+                                className="min-h-[44px] rounded-xl border border-yellow-500/30 bg-yellow-500/10 px-3 text-[10px] font-black uppercase tracking-widest text-yellow-300 transition hover:bg-yellow-500 hover:text-yellow-950 disabled:opacity-50 sm:col-span-2"
+                              >
+                                {carregandoRascunhoId === parecer.id
+                                  ? "Carregando..."
+                                  : "Editar rascunho"}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
               )}
             </div>
-          </Panel>
-        </aside>
-      </form>
+
+            <div className="shrink-0 border-t border-slate-800 bg-slate-950/80 p-4 sm:p-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs font-medium text-slate-600">
+                  O preenchimento técnico permanece preservado enquanto esta consulta estiver aberta.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setHistoricoAberto(false)}
+                  className="rounded-xl border border-slate-700 bg-slate-900 px-6 py-3 text-xs font-black uppercase tracking-widest text-slate-300 transition hover:bg-slate-800 hover:text-white"
+                >
+                  Voltar ao relatório
+                </button>
+              </div>
+            </div>
+          </aside>
+        </div>
+      )}
 
       {splashValidacao && (
         <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-[#020617]/95 p-4 backdrop-blur-md">
@@ -3159,10 +4747,24 @@ function DashboardGestao({
   dados,
   onDeleteItem,
   deletingItemId,
+  periodoPreset,
+  periodoInicio,
+  periodoFim,
+  periodoDescricao,
+  onPeriodoPresetChange,
+  onPeriodoInicioChange,
+  onPeriodoFimChange,
 }: {
   dados: DashboardGestaoDados;
   onDeleteItem: (itemId: string) => void;
   deletingItemId: string | null;
+  periodoPreset: PeriodoIndicadoresPreset;
+  periodoInicio: string;
+  periodoFim: string;
+  periodoDescricao: string;
+  onPeriodoPresetChange: (preset: PeriodoIndicadoresPreset) => void;
+  onPeriodoInicioChange: (value: string) => void;
+  onPeriodoFimChange: (value: string) => void;
 }) {
   const [aberto, setAberto] = useState(false);
   const [visualizacao, setVisualizacao] = useState<"lista" | "dashboard">(
@@ -3278,6 +4880,74 @@ function DashboardGestao({
               ↓
             </span>
           </button>
+        </div>
+
+        <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-300">
+                Período dos indicadores
+              </p>
+              <p className="mt-1 text-sm font-bold text-white">
+                {periodoDescricao}
+              </p>
+              <p className="mt-1 text-xs font-medium text-slate-600">
+                Os rankings, métricas e a relação de equipamentos abaixo respeitam este intervalo.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 xl:min-w-[700px]">
+              <label>
+                <span className="mb-1.5 block text-[9px] font-black uppercase tracking-widest text-slate-600">
+                  Atalho
+                </span>
+                <select
+                  value={periodoPreset}
+                  onChange={(event) =>
+                    onPeriodoPresetChange(
+                      event.target.value as PeriodoIndicadoresPreset,
+                    )
+                  }
+                  className="min-h-[44px] w-full rounded-xl border border-slate-700 bg-[#020617] px-3 text-xs font-bold text-slate-200 outline-none transition focus:border-cyan-500"
+                >
+                  <option value="7d">Últimos 7 dias</option>
+                  <option value="30d">Últimos 30 dias</option>
+                  <option value="90d">Últimos 90 dias</option>
+                  <option value="ano">Ano atual</option>
+                  <option value="todos">Todo o histórico</option>
+                  <option value="personalizado">Personalizado</option>
+                </select>
+              </label>
+
+              <label>
+                <span className="mb-1.5 block text-[9px] font-black uppercase tracking-widest text-slate-600">
+                  Data inicial
+                </span>
+                <input
+                  type="date"
+                  value={periodoInicio}
+                  onChange={(event) =>
+                    onPeriodoInicioChange(event.target.value)
+                  }
+                  className="min-h-[44px] w-full rounded-xl border border-slate-700 bg-[#020617] px-3 text-xs font-bold text-slate-200 outline-none transition focus:border-cyan-500"
+                  style={{ colorScheme: "dark" }}
+                />
+              </label>
+
+              <label>
+                <span className="mb-1.5 block text-[9px] font-black uppercase tracking-widest text-slate-600">
+                  Data final
+                </span>
+                <input
+                  type="date"
+                  value={periodoFim}
+                  onChange={(event) => onPeriodoFimChange(event.target.value)}
+                  className="min-h-[44px] w-full rounded-xl border border-slate-700 bg-[#020617] px-3 text-xs font-bold text-slate-200 outline-none transition focus:border-cyan-500"
+                  style={{ colorScheme: "dark" }}
+                />
+              </label>
+            </div>
+          </div>
         </div>
 
         <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -3902,6 +5572,43 @@ function Area({
         placeholder={placeholder}
         className="w-full resize-none rounded-2xl border border-slate-700/90 bg-slate-900/60 px-4 py-4 text-sm font-medium text-white outline-none transition-all placeholder:text-slate-600 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 focus:shadow-[0_0_0_4px_rgba(6,182,212,0.08)]"
       />
+    </div>
+  );
+}
+
+function ModelosRapidos({
+  titulo,
+  modelos,
+  onSelecionar,
+}: {
+  titulo: string;
+  modelos: ModeloRapido[];
+  onSelecionar: (texto: string) => void;
+}) {
+  return (
+    <div className="relative z-0 mt-3 min-w-0 shrink-0 overflow-hidden rounded-2xl border border-slate-800 bg-[#020617]/70 p-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-600">
+          {titulo}
+        </p>
+        <span className="text-[9px] font-bold uppercase tracking-widest text-cyan-400/70">
+          Clique para inserir
+        </span>
+      </div>
+
+      <div className="custom-scrollbar flex gap-2 overflow-x-auto pb-1">
+        {modelos.map((modelo) => (
+          <button
+            key={modelo.rotulo}
+            type="button"
+            onClick={() => onSelecionar(modelo.texto)}
+            title={modelo.texto}
+            className="shrink-0 rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-slate-400 transition hover:border-cyan-500/40 hover:bg-cyan-500/10 hover:text-cyan-300"
+          >
+            {modelo.rotulo}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

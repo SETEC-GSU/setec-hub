@@ -106,7 +106,7 @@ export default async function Sidebar() {
           href: "/saresp",
           label: "SARESP Digital",
           icon: "📝",
-          permission: "inventario.view",
+          permission: "saresp.view",
         },
       ],
     },
@@ -132,8 +132,14 @@ export default async function Sidebar() {
         },
         {
           href: "/fields/relatorio-tecnico",
-          label: "Relatórios Técnicos",
+          label: "Relatório - Equipamentos",
           icon: "📋",
+          permission: "fields.relatorio",
+        },
+        {
+          href: "/fields/relatorio-redes",
+          label: "Relatório - Redes",
+          icon: "🛜",
           permission: "fields.relatorio",
         },
         {
@@ -247,6 +253,12 @@ export default async function Sidebar() {
           label: "Setorização - FIELD",
           icon: "📋",
           permission: "fields.setorizacao",
+        },
+        {
+          href: "/apoio-usuario/gestao",
+          label: "Gestão do Apoio ao Usuário",
+          icon: "📚",
+          permission: "gestao.apoiousuario",
         },
         {
           href: "/avisos",
