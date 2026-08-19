@@ -137,7 +137,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "edu.monitor",
     "segundo.link",
     "fields.painel",
-    "fields.mapa"
+    "fields.mapa",
+    "inventario.vgeral",
   ],
 
   gestao_escolas: [

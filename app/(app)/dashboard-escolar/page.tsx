@@ -34,6 +34,7 @@ type EscolaRow = {
   created_at?: string | null
   total_equipamentos_funcionando?: number | null
   ultima_atualizacao?: string | null
+  ultima_atualizacao_inventario?: string | null
   tecnico_atribuido?: string | null
 }
 
@@ -53,6 +54,33 @@ type EscolaComMetricas = EscolaRow & {
   criticidadeCalculada: "critica" | "atencao" | "saudavel"
   alunosPorEquip: number
   salasPorAP: number
+  ultimaAtualizacaoInventario: string | null
+  inventarioResponsavel: string | null
+  inventarioCargo: string | null
+  diasSemInventario: number | null
+  statusInventario: "em_dia" | "atencao" | "vencido" | "sem_dados"
+  funcionamentoEstimado: boolean
+  recebidosVinculados: boolean
+}
+
+type InventarioResumoRow = {
+  escola_nome: string | null
+  created_at: string | null
+  responsavel_nome: string | null
+  responsavel_cargo: string | null
+}
+
+type EquipamentoRecebidoResumoRow = {
+  escola_nome: string | null
+  quantidade_recebida: number | null
+}
+
+type EnriquecimentoEscola = {
+  totalRecebidos?: number
+  recebidosVinculados?: boolean
+  inventarioData?: string | null
+  inventarioResponsavel?: string | null
+  inventarioCargo?: string | null
 }
 
 type Tone =
@@ -70,14 +98,78 @@ function toNumber(value: unknown) {
   return Number.isFinite(n) ? n : 0
 }
 
-function calcMetrics(e: EscolaRow): EscolaComMetricas {
+function diasDesde(value?: string | null) {
+  if (!value) return null
+
+  const data = new Date(value)
+  if (Number.isNaN(data.getTime())) return null
+
+  const diff = Date.now() - data.getTime()
+  return Math.max(0, Math.floor(diff / 86_400_000))
+}
+
+function getStatusInventario(
+  value?: string | null
+): EscolaComMetricas["statusInventario"] {
+  const dias = diasDesde(value)
+
+  if (dias === null) return "sem_dados"
+  if (dias <= 90) return "em_dia"
+  if (dias <= 120) return "atencao"
+  return "vencido"
+}
+
+function getInventarioTone(
+  status: EscolaComMetricas["statusInventario"]
+): Tone {
+  if (status === "em_dia") return "emerald"
+  if (status === "atencao") return "yellow"
+  if (status === "vencido") return "red"
+  return "slate"
+}
+
+function getInventarioLabel(
+  status: EscolaComMetricas["statusInventario"]
+) {
+  if (status === "em_dia") return "Em dia"
+  if (status === "atencao") return "Atenção"
+  if (status === "vencido") return "Vencido"
+  return "Sem inventário"
+}
+
+function calcMetrics(
+  e: EscolaRow,
+  enriquecimento: EnriquecimentoEscola = {}
+): EscolaComMetricas {
   const salas = toNumber(e.qtd_salas)
   const aps = toNumber(e.aps_instalados)
   const alunos = toNumber(e.total_alunos)
-  const equipRecebidos = toNumber(e.total_equipamentos_recebidos)
+
+  const recebidosVinculados = enriquecimento.recebidosVinculados === true
+  const equipRecebidos = recebidosVinculados
+    ? toNumber(enriquecimento.totalRecebidos)
+    : toNumber(e.total_equipamentos_recebidos)
+
+  /*
+   * Mantém compatibilidade com o comportamento anterior:
+   * quando ainda não existe total de funcionamento registrado, o painel usa
+   * recebidos como estimativa. A UI passa a sinalizar esse dado como estimado.
+   */
+  const funcionamentoEstimado =
+    e.total_equipamentos_funcionando === null ||
+    e.total_equipamentos_funcionando === undefined
+
   const equipFuncionando = toNumber(
-    e.total_equipamentos_funcionando ?? e.total_equipamentos_recebidos ?? 0
+    e.total_equipamentos_funcionando ?? equipRecebidos
   )
+
+  const ultimaAtualizacaoInventario =
+    enriquecimento.inventarioData ||
+    e.ultima_atualizacao_inventario ||
+    null
+
+  const statusInventario = getStatusInventario(ultimaAtualizacaoInventario)
+  const diasSemInventario = diasDesde(ultimaAtualizacaoInventario)
 
   const equipInativos = Math.max(equipRecebidos - equipFuncionando, 0)
   const wifiIdeal = Math.max(Math.ceil(salas / 2), 1)
@@ -88,7 +180,8 @@ function calcMetrics(e: EscolaRow): EscolaComMetricas {
 
   const score = indiceEquip * 0.6 + indiceAP * 0.4
 
-  let criticidadeCalculada: EscolaComMetricas["criticidadeCalculada"] = "saudavel"
+  let criticidadeCalculada: EscolaComMetricas["criticidadeCalculada"] =
+    "saudavel"
 
   if (score < 0.6) criticidadeCalculada = "critica"
   else if (score < 0.8) criticidadeCalculada = "atencao"
@@ -112,6 +205,13 @@ function calcMetrics(e: EscolaRow): EscolaComMetricas {
     deficitEquip,
     alunosPorEquip: equipFuncionando > 0 ? alunos / equipFuncionando : 0,
     salasPorAP: aps > 0 ? salas / aps : 0,
+    ultimaAtualizacaoInventario,
+    inventarioResponsavel: enriquecimento.inventarioResponsavel || null,
+    inventarioCargo: enriquecimento.inventarioCargo || null,
+    diasSemInventario,
+    statusInventario,
+    funcionamentoEstimado,
+    recebidosVinculados,
   }
 }
 
@@ -191,6 +291,7 @@ function DashboardContent() {
   const [erro, setErro] = useState("")
   const [busca, setBusca] = useState("")
   const [filtroCriticidade, setFiltroCriticidade] = useState("todas")
+  const [filtroInventario, setFiltroInventario] = useState("todos")
 
   const carregar = useCallback(
     async (silent = false) => {
@@ -200,14 +301,91 @@ function DashboardContent() {
       setErro("")
 
       try {
-        const { data, error } = await supabase
-          .from("escolas")
-          .select("*")
-          .order("nome_escola", { ascending: true })
+        const [escolasResult, recebidosResult, inventariosResult] =
+          await Promise.all([
+            supabase
+              .from("escolas")
+              .select("*")
+              .order("nome_escola", { ascending: true }),
+            supabase
+              .from("equipamentos_recebidos")
+              .select("escola_nome, quantidade_recebida"),
+            supabase
+              .from("inventario_respostas")
+              .select(
+                "escola_nome, created_at, responsavel_nome, responsavel_cargo"
+              )
+              .order("created_at", { ascending: false }),
+          ])
 
-        if (error) throw error
+        if (escolasResult.error) throw escolasResult.error
 
-        const enriched = ((data || []) as EscolaRow[]).map((e) => calcMetrics(e))
+        if (recebidosResult.error) {
+          console.warn(
+            "[Dashboard Escolar] Não foi possível vincular equipamentos recebidos:",
+            recebidosResult.error
+          )
+        }
+
+        if (inventariosResult.error) {
+          console.warn(
+            "[Dashboard Escolar] Não foi possível vincular inventários:",
+            inventariosResult.error
+          )
+        }
+
+        const mapaRecebidos = new Map<string, number>()
+
+        if (!recebidosResult.error) {
+          ;(
+            (recebidosResult.data || []) as EquipamentoRecebidoResumoRow[]
+          ).forEach((item) => {
+            const chave = normalizarTexto(item.escola_nome)
+            if (!chave) return
+
+            mapaRecebidos.set(
+              chave,
+              (mapaRecebidos.get(chave) || 0) +
+                Math.max(toNumber(item.quantidade_recebida), 0)
+            )
+          })
+        }
+
+        const mapaInventarios = new Map<string, InventarioResumoRow>()
+
+        if (!inventariosResult.error) {
+          ;((inventariosResult.data || []) as InventarioResumoRow[]).forEach(
+            (item) => {
+              const chave = normalizarTexto(item.escola_nome)
+              if (!chave || mapaInventarios.has(chave)) return
+
+              // A consulta vem ordenada do mais recente para o mais antigo.
+              mapaInventarios.set(chave, item)
+            }
+          )
+        }
+
+        const enriched = ((escolasResult.data || []) as EscolaRow[]).map(
+          (escola) => {
+            const chave = normalizarTexto(escola.nome_escola)
+            const ultimoInventario = mapaInventarios.get(chave)
+            const possuiRecebidosVinculados = mapaRecebidos.has(chave)
+
+            return calcMetrics(escola, {
+              totalRecebidos: possuiRecebidosVinculados
+                ? mapaRecebidos.get(chave)
+                : undefined,
+              recebidosVinculados: possuiRecebidosVinculados,
+              inventarioData:
+                ultimoInventario?.created_at ||
+                escola.ultima_atualizacao_inventario ||
+                null,
+              inventarioResponsavel:
+                ultimoInventario?.responsavel_nome || null,
+              inventarioCargo: ultimoInventario?.responsavel_cargo || null,
+            })
+          }
+        )
 
         setEscolas(enriched)
       } catch (error) {
@@ -261,8 +439,18 @@ function DashboardContent() {
       base = base.filter((e) => e.criticidadeCalculada === filtroCriticidade)
     }
 
+    if (filtroInventario !== "todos") {
+      base = base.filter((e) => e.statusInventario === filtroInventario)
+    }
+
     return base
-  }, [escolas, escolaFiltro, busca, filtroCriticidade])
+  }, [
+    escolas,
+    escolaFiltro,
+    busca,
+    filtroCriticidade,
+    filtroInventario,
+  ])
 
   function handleFiltroEscola(nome: string) {
     const params = new URLSearchParams(searchParams.toString())
@@ -276,7 +464,19 @@ function DashboardContent() {
   function limparFiltros() {
     setBusca("")
     setFiltroCriticidade("todas")
+    setFiltroInventario("todos")
     handleFiltroEscola("")
+  }
+
+  function analisarEscola(escola: EscolaComMetricas) {
+    if (!escola.nome_escola) return
+    handleFiltroEscola(escola.nome_escola)
+
+    window.setTimeout(() => {
+      document
+        .getElementById("detalhe-escola-dashboard")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" })
+    }, 80)
   }
 
   const metrics = useMemo(() => {
@@ -313,9 +513,45 @@ function DashboardContent() {
 
     const salasPorAP = totalAP > 0 ? totalSalas / totalAP : 0
 
-    const criticas = escolasFiltradas.filter((e) => e.criticidadeCalculada === "critica").length
-    const atencao = escolasFiltradas.filter((e) => e.criticidadeCalculada === "atencao").length
-    const saudavel = escolasFiltradas.filter((e) => e.criticidadeCalculada === "saudavel").length
+    const criticas = escolasFiltradas.filter(
+      (e) => e.criticidadeCalculada === "critica"
+    ).length
+    const atencao = escolasFiltradas.filter(
+      (e) => e.criticidadeCalculada === "atencao"
+    ).length
+    const saudavel = escolasFiltradas.filter(
+      (e) => e.criticidadeCalculada === "saudavel"
+    ).length
+
+    const inventarioEmDia = escolasFiltradas.filter(
+      (e) => e.statusInventario === "em_dia"
+    ).length
+    const inventarioAtencao = escolasFiltradas.filter(
+      (e) => e.statusInventario === "atencao"
+    ).length
+    const inventarioVencido = escolasFiltradas.filter(
+      (e) => e.statusInventario === "vencido"
+    ).length
+    const inventarioSemDados = escolasFiltradas.filter(
+      (e) => e.statusInventario === "sem_dados"
+    ).length
+
+    const inventarioCobertura =
+      totalEscolas > 0 ? inventarioEmDia / totalEscolas : 0
+
+    const conectividadeNormal = escolasFiltradas.filter(
+      (e) => getConectividadeTone(e.status_conectividade) === "emerald"
+    ).length
+    const conectividadeAtencao = escolasFiltradas.filter(
+      (e) => getConectividadeTone(e.status_conectividade) === "yellow"
+    ).length
+    const conectividadeCritica = escolasFiltradas.filter(
+      (e) => getConectividadeTone(e.status_conectividade) === "red"
+    ).length
+
+    const equipamentosComFonteVinculada = escolasFiltradas.filter(
+      (e) => e.recebidosVinculados
+    ).length
 
     return {
       totalEscolas,
@@ -336,6 +572,15 @@ function DashboardContent() {
       criticas,
       atencao,
       saudavel,
+      inventarioEmDia,
+      inventarioAtencao,
+      inventarioVencido,
+      inventarioSemDados,
+      inventarioCobertura,
+      conectividadeNormal,
+      conectividadeAtencao,
+      conectividadeCritica,
+      equipamentosComFonteVinculada,
     }
   }, [escolasFiltradas])
 
@@ -383,16 +628,30 @@ function DashboardContent() {
 
             <p className="mt-4 max-w-4xl text-sm font-medium leading-relaxed text-slate-400 md:text-base">
               {escolaFiltro
-                ? `Análise individual da infraestrutura tecnológica da unidade ${escolaFiltro}.`
-                : "Visão estratégica da infraestrutura tecnológica, equipamentos, conectividade, APs, déficit operacional e criticidade das unidades escolares."}
+                ? `Análise integrada da infraestrutura tecnológica da unidade ${escolaFiltro}.`
+                : "Visão integrada de equipamentos, inventário, conectividade, APs, atendimento Field e indicadores operacionais das unidades escolares."}
             </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3 rounded-[1.5rem] border border-slate-800 bg-slate-950/70 p-4 sm:grid-cols-4 xl:min-w-[620px]">
             <MiniHeroStat label="Score" value={percent(metrics.scoreMedio)} tone={getScoreTone(metrics.scoreMedio)} />
             <MiniHeroStat label="Escolas" value={metrics.totalEscolas} tone="blue" />
-            <MiniHeroStat label="Alunos" value={formatNumber(metrics.totalAlunos)} tone="cyan" />
-            <MiniHeroStat label="Equip. ativos" value={formatNumber(metrics.totalEquipFuncionando)} tone="emerald" />
+            <MiniHeroStat
+              label="Inventário"
+              value={percent(metrics.inventarioCobertura)}
+              tone={
+                metrics.inventarioCobertura >= 0.8
+                  ? "emerald"
+                  : metrics.inventarioCobertura >= 0.5
+                    ? "yellow"
+                    : "red"
+              }
+            />
+            <MiniHeroStat
+              label="Equip. ativos"
+              value={formatNumber(metrics.totalEquipFuncionando)}
+              tone="emerald"
+            />
           </div>
         </div>
       </section>
@@ -417,7 +676,7 @@ function DashboardContent() {
       )}
 
       <section className="rounded-[2rem] border border-slate-800 bg-[#020617] p-4 shadow-xl md:p-5">
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.4fr_1fr_0.7fr_auto_auto]">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[1.35fr_1fr_0.72fr_0.72fr_auto_auto]">
           <div className="flex items-center gap-3 rounded-2xl border border-slate-700 bg-slate-900/60 px-4 py-3.5 transition-all focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500">
             <SearchIcon className="h-5 w-5 shrink-0 text-slate-500" />
 
@@ -464,6 +723,18 @@ function DashboardContent() {
             <option value="saudavel">Saudáveis</option>
           </select>
 
+          <select
+            value={filtroInventario}
+            onChange={(event) => setFiltroInventario(event.target.value)}
+            className="rounded-2xl border border-slate-700 bg-slate-900/60 px-4 py-3.5 text-sm font-semibold text-white outline-none transition-all focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="todos">Todos os inventários</option>
+            <option value="em_dia">Inventário em dia</option>
+            <option value="atencao">Inventário em atenção</option>
+            <option value="vencido">Inventário vencido</option>
+            <option value="sem_dados">Sem inventário</option>
+          </select>
+
           <button
             type="button"
             onClick={() => carregar(true)}
@@ -474,7 +745,10 @@ function DashboardContent() {
             Atualizar
           </button>
 
-          {(busca || escolaFiltro || filtroCriticidade !== "todas") && (
+          {(busca ||
+            escolaFiltro ||
+            filtroCriticidade !== "todas" ||
+            filtroInventario !== "todos") && (
             <button
               type="button"
               onClick={limparFiltros}
@@ -508,6 +782,58 @@ function DashboardContent() {
           tone="emerald"
           icon={<CheckIcon className="h-7 w-7" />}
         />
+      </section>
+
+      <section className="rounded-[2rem] border border-slate-800 bg-[#020617] p-5 shadow-xl md:p-6">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone="cyan">Inventário</Badge>
+              <Badge
+                tone={
+                  metrics.inventarioCobertura >= 0.8
+                    ? "emerald"
+                    : metrics.inventarioCobertura >= 0.5
+                      ? "yellow"
+                      : "red"
+                }
+              >
+                {percent(metrics.inventarioCobertura)} em dia
+              </Badge>
+            </div>
+
+            <h2 className="mt-3 text-xl font-bold text-white">
+              Recertificação tecnológica das unidades
+            </h2>
+            <p className="mt-1 text-sm font-medium text-slate-500">
+              Vinculação com o último registro de inventário de cada escola,
+              considerando o ciclo operacional de 90 dias.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:min-w-[650px]">
+            <InventoryMini
+              label="Em dia"
+              value={metrics.inventarioEmDia}
+              tone="emerald"
+            />
+            <InventoryMini
+              label="Atenção"
+              value={metrics.inventarioAtencao}
+              tone="yellow"
+            />
+            <InventoryMini
+              label="Vencido"
+              value={metrics.inventarioVencido}
+              tone="red"
+            />
+            <InventoryMini
+              label="Sem envio"
+              value={metrics.inventarioSemDados}
+              tone="slate"
+            />
+          </div>
+        </div>
       </section>
 
       <section className="grid grid-cols-2 gap-4 xl:grid-cols-4">
@@ -576,31 +902,151 @@ function DashboardContent() {
         />
       </section>
 
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <CompactInfoCard
+          title="Conectividade normal"
+          value={metrics.conectividadeNormal}
+          detail={`${metrics.conectividadeAtencao} em atenção • ${metrics.conectividadeCritica} crítica(s)`}
+          tone="emerald"
+          icon={<WifiIcon className="h-5 w-5" />}
+        />
+        <CompactInfoCard
+          title="Base de recebimentos vinculada"
+          value={`${metrics.equipamentosComFonteVinculada}/${metrics.totalEscolas}`}
+          detail="Totais obtidos diretamente de equipamentos_recebidos"
+          tone="blue"
+          icon={<ComputerIcon className="h-5 w-5" />}
+        />
+        <CompactInfoCard
+          title="Média operacional"
+          value={`${formatDecimal(metrics.alunosPorEquip)} aluno(s)/equip.`}
+          detail={`${formatDecimal(metrics.salasPorAP)} sala(s) por AP no recorte`}
+          tone="cyan"
+          icon={<TrendIcon className="h-5 w-5" />}
+        />
+      </section>
+
       {escolaSelecionada && (
-        <section className="rounded-[2rem] border border-blue-500/20 bg-blue-500/5 p-5 shadow-xl md:p-7">
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+        <section
+          id="detalhe-escola-dashboard"
+          className="scroll-mt-6 overflow-hidden rounded-[2rem] border border-blue-500/20 bg-[#020617] shadow-xl"
+        >
+          <div className="border-b border-slate-800 bg-gradient-to-r from-blue-500/[0.08] via-transparent to-cyan-500/[0.05] p-5 md:p-7">
+            <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap gap-2">
+                  <Badge tone={getScoreTone(escolaSelecionada.score)}>
+                    Score {percent(escolaSelecionada.score)}
+                  </Badge>
+                  <Badge tone={getInventarioTone(escolaSelecionada.statusInventario)}>
+                    Inventário {getInventarioLabel(escolaSelecionada.statusInventario)}
+                  </Badge>
+                  <Badge tone={getConectividadeTone(escolaSelecionada.status_conectividade)}>
+                    {escolaSelecionada.status_conectividade || "Conectividade N/I"}
+                  </Badge>
+                </div>
+
+                <h2 className="mt-4 text-2xl font-bold text-white md:text-3xl">
+                  {escolaSelecionada.nome_escola}
+                </h2>
+
+                <p className="mt-2 max-w-4xl text-sm font-medium leading-relaxed text-slate-400">
+                  {escolaSelecionada.endereco || "Endereço não cadastrado."}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:w-auto">
+                <SchoolMetric
+                  label="Recebidos"
+                  value={formatNumber(escolaSelecionada.equipRecebidos)}
+                  tone="blue"
+                />
+                <SchoolMetric
+                  label={escolaSelecionada.funcionamentoEstimado ? "Ativos*" : "Ativos"}
+                  value={formatNumber(escolaSelecionada.equipFuncionando)}
+                  tone="emerald"
+                />
+                <SchoolMetric
+                  label="Inativos"
+                  value={formatNumber(escolaSelecionada.equipInativos)}
+                  tone={escolaSelecionada.equipInativos > 0 ? "orange" : "emerald"}
+                />
+                <SchoolMetric
+                  label="APs"
+                  value={formatNumber(escolaSelecionada.aps)}
+                  tone="purple"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-6 p-5 md:p-7 xl:grid-cols-[1fr_330px]">
             <div>
-              <Badge tone={getScoreTone(escolaSelecionada.score)}>
-                Score {percent(escolaSelecionada.score)}
-              </Badge>
-
-              <h2 className="mt-4 text-2xl font-bold text-white md:text-3xl">
-                {escolaSelecionada.nome_escola}
-              </h2>
-
-              <p className="mt-2 text-sm font-medium leading-relaxed text-slate-400">
-                {escolaSelecionada.endereco || "Endereço não cadastrado."}
-              </p>
-
-              <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                 <InfoMini label="CIE" value={escolaSelecionada.cie || "N/I"} />
-                <InfoMini label="Técnico" value={escolaSelecionada.tecnico_atribuido || "N/I"} />
-                <InfoMini label="Diretor(a)" value={escolaSelecionada.diretor || "N/I"} />
-                <InfoMini label="Atualização" value={formatDate(escolaSelecionada.ultima_atualizacao)} />
+                <InfoMini
+                  label="Técnico Field"
+                  value={escolaSelecionada.tecnico_atribuido || "Não atribuído"}
+                />
+                <InfoMini
+                  label="Diretor(a)"
+                  value={escolaSelecionada.diretor || "N/I"}
+                />
+                <InfoMini
+                  label="Último inventário"
+                  value={formatDate(escolaSelecionada.ultimaAtualizacaoInventario)}
+                />
+                <InfoMini
+                  label="Responsável inventário"
+                  value={escolaSelecionada.inventarioResponsavel || "N/I"}
+                />
+                <InfoMini
+                  label="Cargo"
+                  value={escolaSelecionada.inventarioCargo || "N/I"}
+                />
+                <InfoMini
+                  label="Alunos / salas"
+                  value={`${formatNumber(escolaSelecionada.alunos)} / ${formatNumber(
+                    escolaSelecionada.salas
+                  )}`}
+                />
+                <InfoMini
+                  label="Funcionamento"
+                  value={
+                    escolaSelecionada.horario_abertura ||
+                    escolaSelecionada.horario_fechamento
+                      ? `${escolaSelecionada.horario_abertura || "?"} às ${
+                          escolaSelecionada.horario_fechamento || "?"
+                        }`
+                      : "N/I"
+                  }
+                />
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-widest text-slate-600">
+                <span>
+                  Recebimentos:{" "}
+                  {escolaSelecionada.recebidosVinculados
+                    ? "vinculados à tabela equipamentos_recebidos"
+                    : "valor de referência da tabela escolas"}
+                </span>
+                {escolaSelecionada.funcionamentoEstimado && (
+                  <span className="rounded-full border border-yellow-500/20 bg-yellow-500/10 px-2.5 py-1 text-yellow-300">
+                    *Ativos estimados por ausência de inventário consolidado
+                  </span>
+                )}
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 xl:grid-cols-1">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-1">
+              <button
+                type="button"
+                onClick={() => router.push(`/escolas/${encodeURIComponent(escolaSelecionada.id)}`)}
+                className="rounded-2xl bg-blue-600 px-5 py-4 text-center text-sm font-bold text-white transition-all hover:bg-blue-500"
+              >
+                Abrir ficha completa
+              </button>
+
               {escolaSelecionada.endereco && (
                 <a
                   href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
@@ -619,7 +1065,7 @@ function DashboardContent() {
                   href={`tel:${escolaSelecionada.telefone}`}
                   className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-5 py-4 text-center text-sm font-bold text-emerald-300 transition-all hover:bg-emerald-500 hover:text-white"
                 >
-                  Ligar
+                  Ligar para a unidade
                 </a>
               )}
 
@@ -675,6 +1121,7 @@ function DashboardContent() {
                   value={percent(e.score)}
                   tone={getScoreTone(e.score)}
                   hideIndex={Boolean(escolaFiltro)}
+                  onClick={() => analisarEscola(e)}
                 />
               ))
             )}
@@ -702,6 +1149,7 @@ function DashboardContent() {
                   value={formatNumber(e.deficitEquip)}
                   tone={e.deficitEquip > 0 ? "red" : "emerald"}
                   hideIndex={Boolean(escolaFiltro)}
+                  onClick={() => analisarEscola(e)}
                 />
               ))
             )}
@@ -729,6 +1177,7 @@ function DashboardContent() {
                   value={formatNumber(e.equipInativos)}
                   tone={e.equipInativos > 0 ? "orange" : "emerald"}
                   hideIndex={Boolean(escolaFiltro)}
+                  onClick={() => analisarEscola(e)}
                 />
               ))
             )}
@@ -775,6 +1224,19 @@ function DashboardContent() {
               )}, com média de ${formatDecimal(metrics.salasPorAP)} sala(s) por AP.`}
             />
 
+            <InsightCard
+              tone={
+                metrics.inventarioCobertura >= 0.8
+                  ? "emerald"
+                  : metrics.inventarioCobertura >= 0.5
+                    ? "yellow"
+                    : "red"
+              }
+              icon={<ClipboardIcon className="h-5 w-5" />}
+              title="Recertificação de inventário"
+              description={`${metrics.inventarioEmDia} de ${metrics.totalEscolas} unidade(s) estão com inventário dentro do ciclo de 90 dias. ${metrics.inventarioVencido} vencida(s) e ${metrics.inventarioSemDados} sem envio localizado.`}
+            />
+
             {!escolaFiltro && maiorDeficit && (
               <InsightCard
                 tone="orange"
@@ -805,7 +1267,7 @@ function DashboardContent() {
           <div>
             <h2 className="text-xl font-bold text-white">Resumo das escolas</h2>
             <p className="mt-1 text-sm font-medium text-slate-500">
-              Lista operacional com os principais indicadores do recorte.
+              Consulte os principais indicadores e abra rapidamente a análise de cada unidade.
             </p>
           </div>
 
@@ -813,24 +1275,26 @@ function DashboardContent() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1100px] border-separate border-spacing-y-2 text-left">
+          <table className="w-full min-w-[1450px] border-separate border-spacing-y-2 text-left">
             <thead>
               <tr className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-600">
                 <th className="px-4 py-2">Escola</th>
                 <th className="px-4 py-2">Score</th>
                 <th className="px-4 py-2">Alunos</th>
-                <th className="px-4 py-2">Equip. ativos</th>
-                <th className="px-4 py-2">Déficit</th>
+                <th className="px-4 py-2">Equipamentos</th>
+                <th className="px-4 py-2">Inativos</th>
                 <th className="px-4 py-2">APs</th>
+                <th className="px-4 py-2">Inventário</th>
                 <th className="px-4 py-2">Conectividade</th>
-                <th className="px-4 py-2">Atualização</th>
+                <th className="px-4 py-2">Técnico</th>
+                <th className="px-4 py-2 text-right">Ação</th>
               </tr>
             </thead>
 
             <tbody>
               {escolasFiltradas.length === 0 ? (
                 <tr>
-                  <td colSpan={8}>
+                  <td colSpan={10}>
                     <EmptyState message="Nenhuma escola localizada com os filtros atuais." />
                   </td>
                 </tr>
@@ -848,25 +1312,55 @@ function DashboardContent() {
                     <td className="px-4 py-4">
                       <Badge tone={getScoreTone(e.score)}>{percent(e.score)}</Badge>
                     </td>
-                    <td className="px-4 py-4 font-semibold">{formatNumber(e.alunos)}</td>
                     <td className="px-4 py-4 font-semibold">
-                      {formatNumber(e.equipFuncionando)} / {formatNumber(e.equipIdeal)}
+                      {formatNumber(e.alunos)}
                     </td>
                     <td className="px-4 py-4">
-                      <Badge tone={e.deficitEquip > 0 ? "red" : "emerald"}>
-                        {formatNumber(e.deficitEquip)}
+                      <p className="font-semibold text-slate-200">
+                        {formatNumber(e.equipFuncionando)} ativos
+                      </p>
+                      <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                        {formatNumber(e.equipRecebidos)} recebidos
+                      </p>
+                    </td>
+                    <td className="px-4 py-4">
+                      <Badge tone={e.equipInativos > 0 ? "orange" : "emerald"}>
+                        {formatNumber(e.equipInativos)}
                       </Badge>
                     </td>
                     <td className="px-4 py-4 font-semibold">
                       {formatNumber(e.aps)} / {formatNumber(e.wifiIdeal)}
                     </td>
                     <td className="px-4 py-4">
+                      <Badge tone={getInventarioTone(e.statusInventario)}>
+                        {getInventarioLabel(e.statusInventario)}
+                      </Badge>
+                      <p className="mt-1 text-[10px] font-semibold text-slate-600">
+                        {formatDate(e.ultimaAtualizacaoInventario)}
+                      </p>
+                    </td>
+                    <td className="px-4 py-4">
                       <Badge tone={getConectividadeTone(e.status_conectividade)}>
                         {e.status_conectividade || "N/I"}
                       </Badge>
                     </td>
-                    <td className="rounded-r-2xl px-4 py-4 text-slate-500">
-                      {formatDate(e.ultima_atualizacao)}
+                    <td className="px-4 py-4">
+                      <p
+                        className="max-w-[180px] truncate text-xs font-semibold text-slate-400"
+                        title={e.tecnico_atribuido || "Sem técnico"}
+                      >
+                        {e.tecnico_atribuido || "Sem técnico"}
+                      </p>
+                    </td>
+                    <td className="rounded-r-2xl px-4 py-4 text-right">
+                      <button
+                        type="button"
+                        onClick={() => analisarEscola(e)}
+                        className="inline-flex items-center gap-2 rounded-xl border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-blue-300 transition hover:bg-blue-500 hover:text-white"
+                      >
+                        Analisar
+                        <ChevronIcon className="h-3.5 w-3.5" />
+                      </button>
                     </td>
                   </tr>
                 ))
@@ -1067,6 +1561,7 @@ function RankingItem({
   value,
   tone,
   hideIndex = false,
+  onClick,
 }: {
   index: number
   title: string
@@ -1074,9 +1569,14 @@ function RankingItem({
   value: string | number
   tone: Tone
   hideIndex?: boolean
+  onClick?: () => void
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-slate-900/50 p-4 transition-all hover:border-slate-700 hover:bg-slate-900">
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-slate-900/50 p-4 text-left transition-all hover:border-blue-500/30 hover:bg-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+    >
       <div className="flex min-w-0 items-center gap-3">
         {!hideIndex && (
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-slate-800 bg-[#020617] text-xs font-bold text-slate-500">
@@ -1095,8 +1595,11 @@ function RankingItem({
         </div>
       </div>
 
-      <Badge tone={tone}>{value}</Badge>
-    </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <Badge tone={tone}>{value}</Badge>
+        <ChevronIcon className="h-4 w-4 text-slate-600" />
+      </div>
+    </button>
   )
 }
 
@@ -1139,6 +1642,75 @@ function InfoMini({ label, value }: { label: string; value: string }) {
       <p className="mt-1 truncate text-sm font-bold text-white" title={value}>
         {value}
       </p>
+    </div>
+  )
+}
+
+function CompactInfoCard({
+  title,
+  value,
+  detail,
+  tone,
+  icon,
+}: {
+  title: string
+  value: string | number
+  detail: string
+  tone: Tone
+  icon: ReactNode
+}) {
+  return (
+    <div className="flex items-center gap-4 rounded-[1.5rem] border border-slate-800 bg-[#020617] p-5 shadow-lg">
+      <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border ${tonePanel(tone)}`}>
+        {icon}
+      </div>
+      <div className="min-w-0">
+        <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+          {title}
+        </p>
+        <p className="mt-1 truncate text-xl font-bold text-white">{value}</p>
+        <p className="mt-1 truncate text-xs font-medium text-slate-500" title={detail}>
+          {detail}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function InventoryMini({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: number
+  tone: Tone
+}) {
+  return (
+    <div className={`rounded-2xl border p-4 ${tonePanel(tone)}`}>
+      <p className="text-[9px] font-semibold uppercase tracking-[0.18em] opacity-75">
+        {label}
+      </p>
+      <p className="mt-2 text-2xl font-bold text-white">{value}</p>
+    </div>
+  )
+}
+
+function SchoolMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: string | number
+  tone: Tone
+}) {
+  return (
+    <div className={`min-w-[112px] rounded-2xl border p-3.5 ${tonePanel(tone)}`}>
+      <p className="text-[9px] font-semibold uppercase tracking-widest opacity-75">
+        {label}
+      </p>
+      <p className="mt-1 text-xl font-bold text-white">{value}</p>
     </div>
   )
 }
@@ -1313,6 +1885,30 @@ function WifiIcon({ className = "" }: { className?: string }) {
   return (
     <SvgBase className={className}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M8.288 15.038a5.25 5.25 0 0 1 7.424 0M5.106 11.856c3.807-3.808 9.98-3.808 13.788 0M1.924 8.674c5.565-5.565 14.587-5.565 20.152 0M12 18.75h.008v.008H12v-.008Z" />
+    </SvgBase>
+  )
+}
+
+function ClipboardIcon({ className = "" }: { className?: string }) {
+  return (
+    <SvgBase className={className}>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M9 5.25h6m-6 4.5h6m-6 4.5h3.75M8.25 3.75h7.5A2.25 2.25 0 0 1 18 6v13.5H6V6a2.25 2.25 0 0 1 2.25-2.25Z"
+      />
+    </SvgBase>
+  )
+}
+
+function ChevronIcon({ className = "" }: { className?: string }) {
+  return (
+    <SvgBase className={className}>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="m9 5.25 6.75 6.75L9 18.75"
+      />
     </SvgBase>
   )
 }

@@ -1064,10 +1064,15 @@ export default function GestaoDemandasFields() {
     setFormularioAberto(true)
     setAbaAtiva("operacao")
 
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    })
+    // Aguarda o React abrir/preencher o formulário e então posiciona
+    // a página no início dele. O formulário permanece no fluxo normal
+    // da página, sem scroll interno e sem altura travada.
+    window.setTimeout(() => {
+      document.getElementById("formulario-demanda-field")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      })
+    }, 80)
   }
 
   function handleLimparFormulario() {
@@ -1659,7 +1664,11 @@ export default function GestaoDemandasFields() {
           }`}
         >
           {formularioAberto && (
-            <Panel className="xl:sticky xl:top-5">
+            <div
+              id="formulario-demanda-field"
+              className="min-w-0 scroll-mt-24 self-start"
+            >
+              <Panel>
               <PanelHeader
                 eyebrow={editandoId ? "Modo edição" : "Nova solicitação"}
                 title={editandoId ? "Editar demanda" : "Registrar demanda"}
@@ -1824,7 +1833,8 @@ export default function GestaoDemandasFields() {
                   )}
                 </div>
               </form>
-            </Panel>
+              </Panel>
+            </div>
           )}
 
           <Panel>

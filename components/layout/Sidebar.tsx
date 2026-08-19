@@ -51,6 +51,12 @@ export default async function Sidebar() {
           icon: "📋",
           permission: "painel.chamados",
         },
+        {
+          href: "/gestao-chamados",
+          label: "Gestão de Chamados",
+          icon: "🛠️",
+          permission: "gestaoChamados.view",
+        },
       ],
     },
     {
@@ -223,12 +229,6 @@ export default async function Sidebar() {
           label: "Gestão de Usuários",
           icon: "👥",
           permission: "usuarios.view",
-        },
-        {
-          href: "/gestao-chamados",
-          label: "Gestão de Chamados",
-          icon: "🛠️",
-          permission: "gestaoChamados.view",
         },
         {
           href: "/gestao-equipamentos",

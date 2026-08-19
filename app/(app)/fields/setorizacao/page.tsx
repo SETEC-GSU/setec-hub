@@ -4,17 +4,39 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  type CSSProperties,
   type FormEvent,
   type ReactNode,
 } from "react"
 import { createClient } from "@/lib/supabase"
+import dynamic from "next/dynamic"
+
+const MapSetorizacao = dynamic(
+  () => import("@/components/ui/MapSetorizacao"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-full min-h-[380px] items-center justify-center bg-[#020617]">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-cyan-500 border-t-transparent" />
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">
+            Carregando prévia territorial
+          </p>
+        </div>
+      </div>
+    ),
+  }
+)
 
 type EscolaRow = {
   id: string
   nome_escola: string | null
   cie: string | number | null
   tecnico_atribuido: string | null
+  latitude: string | number | null
+  longitude: string | number | null
 }
 
 type TecnicoRow = {
@@ -30,7 +52,6 @@ type Feedback = {
 } | null
 
 type FiltroStatus = "todas" | "pendentes" | "atribuidas"
-type FiltroEquipe = "todos" | "ativos" | "inativos" | "sobrecarga"
 
 function textoSeguro(value: unknown, fallback = "") {
   const text = String(value ?? "").trim()
@@ -43,6 +64,16 @@ function normalizar(value: unknown) {
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim()
+}
+
+function temCoordenada(escola: EscolaRow) {
+  const latitude = Number(escola.latitude)
+  const longitude = Number(escola.longitude)
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false
+  if (latitude === 0 && longitude === 0) return false
+
+  return true
 }
 
 function getInitials(name?: string | null) {
@@ -93,8 +124,15 @@ export default function SetorizacaoPage() {
 
   const [buscaEscola, setBuscaEscola] = useState("")
   const [filtroStatus, setFiltroStatus] = useState<FiltroStatus>("todas")
-  const [buscaTecnico, setBuscaTecnico] = useState("")
-  const [filtroEquipe, setFiltroEquipe] = useState<FiltroEquipe>("todos")
+
+  const [filtroMapaTecnico, setFiltroMapaTecnico] = useState("Todos")
+  const [escolaMapaFocoId, setEscolaMapaFocoId] = useState<string | null>(null)
+  const [mapaExpandido, setMapaExpandido] = useState(false)
+
+  // Mantém a Matriz exatamente na mesma altura visual da coluna
+  // "Equipe FIELD + Inteligência", sem deixar a lista crescer.
+  const colunaGestaoRef = useRef<HTMLDivElement>(null)
+  const [alturaColunaGestao, setAlturaColunaGestao] = useState<number | null>(null)
 
   const [savingId, setSavingId] = useState<string | null>(null)
   const [successId, setSuccessId] = useState<string | null>(null)
@@ -139,7 +177,7 @@ export default function SetorizacaoPage() {
             .order("nome", { ascending: true }),
           supabase
             .from("escolas")
-            .select("id, nome_escola, cie, tecnico_atribuido")
+            .select("id, nome_escola, cie, tecnico_atribuido, latitude, longitude")
             .order("nome_escola", { ascending: true }),
         ])
 
@@ -227,15 +265,11 @@ export default function SetorizacaoPage() {
         ? Math.ceil(totalEscolas / tecnicosAtivos.length)
         : 0
 
-    const ranking = tecnicosAtivos
-      .map((tecnico) => {
-        const nome = textoSeguro(tecnico.nome)
-
-        return {
-          nome,
-          carga: contagemPorTecnico[nome] || 0,
-        }
-      })
+    const ranking = Object.entries(contagemPorTecnico)
+      .map(([nome, carga]) => ({
+        nome,
+        carga,
+      }))
       .sort((a, b) => b.carga - a.carga || a.nome.localeCompare(b.nome, "pt-BR"))
 
     const maiorCarga = ranking[0] || null
@@ -254,49 +288,7 @@ export default function SetorizacaoPage() {
       menorCarga,
       tecnicosAtivos: tecnicosAtivos.length,
     }
-  }, [contagemPorTecnico, escolas, tecnicoStatusPorNome, tecnicosAtivos])
-
-  const tecnicosEquipeFiltrados = useMemo(() => {
-    const termo = normalizar(buscaTecnico)
-    const mediaIdeal = stats.mediaIdeal || 1
-
-    return [...tecnicos]
-      .filter((tecnico) => {
-        const nome = textoSeguro(tecnico.nome)
-        const ativo = Boolean(tecnico.ativo)
-        const carga = contagemPorTecnico[nome] || 0
-
-        const matchBusca = termo ? normalizar(nome).includes(termo) : true
-
-        if (!matchBusca) return false
-        if (filtroEquipe === "ativos") return ativo
-        if (filtroEquipe === "inativos") return !ativo
-        if (filtroEquipe === "sobrecarga") {
-          return ativo && carga > mediaIdeal + 2
-        }
-
-        return true
-      })
-      .sort((a, b) => {
-        const ativoA = Boolean(a.ativo)
-        const ativoB = Boolean(b.ativo)
-
-        if (ativoA !== ativoB) return ativoA ? -1 : 1
-
-        const nomeA = textoSeguro(a.nome)
-        const nomeB = textoSeguro(b.nome)
-        const cargaA = contagemPorTecnico[nomeA] || 0
-        const cargaB = contagemPorTecnico[nomeB] || 0
-
-        return cargaB - cargaA || nomeA.localeCompare(nomeB, "pt-BR")
-      })
-  }, [
-    buscaTecnico,
-    contagemPorTecnico,
-    filtroEquipe,
-    stats.mediaIdeal,
-    tecnicos,
-  ])
+  }, [contagemPorTecnico, escolas, tecnicoStatusPorNome, tecnicosAtivos.length])
 
   const escolasFiltradas = useMemo(() => {
     const termo = normalizar(buscaEscola)
@@ -324,22 +316,103 @@ export default function SetorizacaoPage() {
 
   const filtrosAtivos = Boolean(buscaEscola.trim()) || filtroStatus !== "todas"
 
+  const listaTecnicosMapa = useMemo(() => {
+    const nomes = new Set<string>()
+
+    tecnicosAtivos.forEach((tecnico) => {
+      const nome = textoSeguro(tecnico.nome)
+      if (nome) nomes.add(nome)
+    })
+
+    escolas.forEach((escola) => {
+      const nome = textoSeguro(escola.tecnico_atribuido)
+      if (nome) nomes.add(nome)
+    })
+
+    return Array.from(nomes).sort((a, b) => a.localeCompare(b, "pt-BR"))
+  }, [escolas, tecnicosAtivos])
+
+  const mapaStats = useMemo(() => {
+    const comCoordenada = escolas.filter(temCoordenada).length
+    const semCoordenada = escolas.length - comCoordenada
+    const semTecnicoMapeadas = escolas.filter(
+      (escola) => temCoordenada(escola) && !textoSeguro(escola.tecnico_atribuido)
+    ).length
+
+    return {
+      comCoordenada,
+      semCoordenada,
+      semTecnicoMapeadas,
+      cobertura:
+        escolas.length > 0
+          ? Math.round((comCoordenada / escolas.length) * 100)
+          : 0,
+    }
+  }, [escolas])
+
+  const escolasMapa = useMemo(() => {
+    let base = escolas.filter(temCoordenada)
+
+    if (escolaMapaFocoId) {
+      return base.filter((escola) => escola.id === escolaMapaFocoId)
+    }
+
+    if (filtroMapaTecnico === "Sem Técnico") {
+      base = base.filter(
+        (escola) => !textoSeguro(escola.tecnico_atribuido)
+      )
+    } else if (filtroMapaTecnico !== "Todos") {
+      base = base.filter(
+        (escola) =>
+          textoSeguro(escola.tecnico_atribuido) === filtroMapaTecnico
+      )
+    }
+
+    return base
+  }, [escolaMapaFocoId, escolas, filtroMapaTecnico])
+
+  const escolaMapaFoco = useMemo(() => {
+    if (!escolaMapaFocoId) return null
+    return escolas.find((escola) => escola.id === escolaMapaFocoId) || null
+  }, [escolaMapaFocoId, escolas])
+
+  function abrirMapa() {
+    window.setTimeout(() => {
+      document.getElementById("preview-mapa-setorizacao")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      })
+    }, 60)
+  }
+
+  function verTecnicoNoMapa(nome: string) {
+    setEscolaMapaFocoId(null)
+    setFiltroMapaTecnico(nome || "Todos")
+    abrirMapa()
+  }
+
+  function localizarEscolaNoMapa(escola: EscolaRow) {
+    if (!temCoordenada(escola)) {
+      setFeedback({
+        tipo: "warning",
+        texto: "Esta escola ainda não possui latitude/longitude válidas para exibição no mapa.",
+      })
+      return
+    }
+
+    setEscolaMapaFocoId(escola.id)
+    setFiltroMapaTecnico("Todos")
+    abrirMapa()
+  }
+
+  function limparMapa() {
+    setEscolaMapaFocoId(null)
+    setFiltroMapaTecnico("Todos")
+  }
+
   function limparFiltros() {
     setBuscaEscola("")
     setFiltroStatus("todas")
-  }
-
-  function visualizarEscolasDoTecnico(nome: string) {
-    if (!nome) return
-
-    setBuscaEscola(nome)
-    setFiltroStatus("atribuidas")
-
-    window.setTimeout(() => {
-      document
-        .getElementById("matriz-atribuicao")
-        ?.scrollIntoView({ behavior: "smooth", block: "start" })
-    }, 100)
   }
 
   async function handleAtribuirTecnico(escolaId: string, novoTecnico: string) {
@@ -569,11 +642,44 @@ export default function SetorizacaoPage() {
     }
   }
 
+  useEffect(() => {
+    const elemento = colunaGestaoRef.current
+
+    if (!elemento) return
+
+    let frame = 0
+
+    const atualizarAltura = () => {
+      window.cancelAnimationFrame(frame)
+
+      frame = window.requestAnimationFrame(() => {
+        const altura = Math.ceil(elemento.getBoundingClientRect().height)
+
+        if (altura > 0) {
+          setAlturaColunaGestao(altura)
+        }
+      })
+    }
+
+    atualizarAltura()
+
+    const observer = new ResizeObserver(atualizarAltura)
+    observer.observe(elemento)
+
+    window.addEventListener("resize", atualizarAltura)
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+      observer.disconnect()
+      window.removeEventListener("resize", atualizarAltura)
+    }
+  }, [tecnicos.length, stats.atribuidasInativas])
+
   if (loading) return <LoadingPage />
 
   return (
-    <div className="mx-auto max-w-[1750px] space-y-6 pb-12">
-      <section className="relative overflow-hidden rounded-[2rem] border border-blue-500/20 bg-[#020617] p-5 shadow-2xl shadow-blue-950/20 md:p-7">
+    <div className="mx-auto max-w-[1750px] space-y-7 pb-12">
+      <section className="relative overflow-hidden rounded-[2.5rem] border border-blue-500/20 bg-[#020617] p-5 shadow-2xl shadow-blue-950/20 md:p-8">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.28),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(6,182,212,0.16),transparent_34%)]" />
         <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-blue-500/10 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-28 left-1/3 h-72 w-72 rounded-full bg-cyan-500/10 blur-3xl" />
@@ -587,7 +693,7 @@ export default function SetorizacaoPage() {
                 <Badge color="emerald">Atribuições sincronizadas</Badge>
               </div>
 
-              <h1 className="max-w-5xl text-3xl font-black tracking-tight text-white md:text-4xl">
+              <h1 className="max-w-5xl text-3xl font-black tracking-tight text-white md:text-5xl">
                 Setorização{" "}
                 <span className="bg-gradient-to-r from-blue-300 via-cyan-300 to-blue-600 bg-clip-text text-transparent">
                   SETEC / FIELD
@@ -595,8 +701,9 @@ export default function SetorizacaoPage() {
               </h1>
 
               <p className="mt-4 max-w-3xl text-sm font-medium leading-relaxed text-slate-400 md:text-base">
-                Distribua as unidades escolares entre os técnicos Field, acompanhe
-                a carga da equipe e ajuste as atribuições em uma única visão.
+                Painel executivo para gerenciamento dos técnicos de campo e atribuição
+                das unidades escolares. As alterações refletem na coluna de técnico
+                atribuído da tabela de escolas.
               </p>
             </div>
 
@@ -658,254 +765,177 @@ export default function SetorizacaoPage() {
         </div>
       )}
 
-      <section className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-        <div className="space-y-7">
-          <Panel title="Carga da Equipe Field" className="flex flex-col">
-            <div className="mb-5 grid grid-cols-3 gap-2">
-              <TeamSummary label="Ativos" value={stats.tecnicosAtivos} tone="blue" />
-              <TeamSummary label="Média ideal" value={stats.mediaIdeal || 0} tone="cyan" />
-              <TeamSummary label="Pendentes" value={stats.pendentes} tone="red" />
-            </div>
-
+      {/* ========================================================= */}
+      {/* ÁREA PRINCIPAL — EQUIPE + MATRIZ, SEM ESPREMER O CONTEÚDO */}
+      {/* ========================================================= */}
+      <section className="grid grid-cols-1 items-start gap-7 xl:grid-cols-[minmax(360px,0.72fr)_minmax(0,1.28fr)]">
+        <div ref={colunaGestaoRef} className="space-y-7">
+          <Panel title="Gerenciar equipe FIELD">
             <form
               onSubmit={handleAdicionarTecnico}
-              className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]"
+              className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]"
             >
               <input
                 type="text"
-                placeholder="Cadastrar novo técnico..."
+                placeholder="Nome do novo técnico..."
                 value={novoTecnicoNome}
                 onChange={(event) => setNovoTecnicoNome(event.target.value)}
-                className="min-h-12 rounded-xl border border-slate-800 bg-slate-950 px-4 py-3 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/50"
+                className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950 px-5 py-4 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/50"
               />
 
               <button
                 type="submit"
                 disabled={salvandoTecnico || !novoTecnicoNome.trim()}
-                className="inline-flex min-h-12 items-center justify-center rounded-xl bg-blue-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-blue-950/25 transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+                className="inline-flex min-h-[52px] items-center justify-center rounded-2xl bg-blue-600 px-6 py-4 text-sm font-black uppercase tracking-widest text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
               >
-                {salvandoTecnico ? "Salvando..." : "+ Adicionar"}
+                {salvandoTecnico ? "Salvando..." : "Adicionar"}
               </button>
             </form>
-
-            <div className="mb-4 rounded-2xl border border-slate-800 bg-slate-950/55 p-3">
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                <div className="relative">
-                  <span className="pointer-events-none absolute inset-y-0 left-4 flex items-center text-slate-600">
-                    🔎
-                  </span>
-
-                  <input
-                    value={buscaTecnico}
-                    onChange={(event) => setBuscaTecnico(event.target.value)}
-                    placeholder="Buscar técnico..."
-                    className="h-11 w-full rounded-xl border border-slate-800 bg-[#020617] pl-11 pr-4 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500/60"
-                  />
-                </div>
-
-                <div className="custom-horizontal-scroll flex gap-1 overflow-x-auto rounded-xl border border-slate-800 bg-[#020617] p-1">
-                  <TeamFilterButton
-                    active={filtroEquipe === "todos"}
-                    onClick={() => setFiltroEquipe("todos")}
-                  >
-                    Todos
-                  </TeamFilterButton>
-                  <TeamFilterButton
-                    active={filtroEquipe === "ativos"}
-                    onClick={() => setFiltroEquipe("ativos")}
-                  >
-                    Ativos
-                  </TeamFilterButton>
-                  <TeamFilterButton
-                    active={filtroEquipe === "inativos"}
-                    onClick={() => setFiltroEquipe("inativos")}
-                  >
-                    Inativos
-                  </TeamFilterButton>
-                  <TeamFilterButton
-                    active={filtroEquipe === "sobrecarga"}
-                    onClick={() => setFiltroEquipe("sobrecarga")}
-                  >
-                    Sobrecarga
-                  </TeamFilterButton>
-                </div>
-              </div>
-
-              <div className="mt-3 flex items-center justify-between gap-3 px-1">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-600">
-                  {tecnicosEquipeFiltrados.length} de {tecnicos.length} técnico(s)
-                </p>
-
-                {(buscaTecnico || filtroEquipe !== "todos") && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setBuscaTecnico("")
-                      setFiltroEquipe("todos")
-                    }}
-                    className="text-[10px] font-black uppercase tracking-widest text-blue-300 transition hover:text-blue-200"
-                  >
-                    Limpar
-                  </button>
-                )}
-              </div>
-            </div>
 
             {tecnicos.length === 0 ? (
               <EmptyState
                 icon="👨‍🔧"
                 title="Nenhum técnico cadastrado"
-                description="Cadastre o primeiro técnico Field para iniciar a setorização."
-              />
-            ) : tecnicosEquipeFiltrados.length === 0 ? (
-              <EmptyState
-                icon="🔎"
-                title="Nenhum técnico encontrado"
-                description="Ajuste a busca ou altere o filtro aplicado à equipe."
+                description="Cadastre o primeiro técnico field para iniciar a setorização."
               />
             ) : (
-              <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/35 p-2 shadow-inner shadow-slate-950/40">
-                <div className="team-scrollbar h-[480px] touch-pan-y space-y-3 overflow-y-scroll overscroll-y-contain pr-2">
-                  {tecnicosEquipeFiltrados.map((tecnico, index) => {
-                    const nome = textoSeguro(tecnico.nome)
-                    const carga = contagemPorTecnico[nome] || 0
-                    const ativo = Boolean(tecnico.ativo)
-                    const config = getCargaColor(carga, stats.mediaIdeal || 1)
-                    const bloqueado = savingTecnicoId === tecnico.id
-                    const percentualCarga = Math.min(
-                      Math.max(
-                        (carga / Math.max(stats.mediaIdeal || 1, carga || 1)) * 100,
-                        carga > 0 ? 8 : 0
-                      ),
-                      100
-                    )
+              <div className="custom-scrollbar max-h-[520px] space-y-4 overflow-y-auto overscroll-contain pr-2">
+                {tecnicos.map((tecnico) => {
+                  const nome = textoSeguro(tecnico.nome)
+                  const carga = contagemPorTecnico[nome] || 0
+                  const ativo = Boolean(tecnico.ativo)
+                  const config = getCargaColor(carga, stats.mediaIdeal || 1)
+                  const bloqueado = savingTecnicoId === tecnico.id
 
-                    return (
-                      <article
-                        key={tecnico.id}
-                        className={`relative overflow-hidden rounded-2xl border p-3.5 transition [contain-intrinsic-size:0_210px] [content-visibility:auto] ${
-                          ativo
-                            ? "border-slate-800 bg-[#020617] hover:border-blue-500/35"
-                            : "border-red-500/20 bg-red-500/[0.045]"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex min-w-0 flex-1 gap-3">
-                            <div
-                              className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border text-xs font-black ${
-                                ativo
-                                  ? "border-blue-500/25 bg-blue-500/10 text-blue-300"
-                                  : "border-red-500/25 bg-red-500/10 text-red-300"
-                              }`}
-                            >
-                              {getInitials(nome)}
-                            </div>
-
-                            <div className="min-w-0 flex-1">
-                              <div className="flex min-w-0 items-center gap-2">
-                                <span className="text-[10px] font-black text-slate-700">
-                                  #{index + 1}
-                                </span>
-                                <p
-                                  className={`truncate text-sm font-black ${
-                                    ativo ? "text-white" : "text-slate-500 line-through"
-                                  }`}
-                                >
-                                  {nome || "Técnico sem nome"}
-                                </p>
-                              </div>
-
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                <span
-                                  className={`rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${
-                                    ativo
-                                      ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
-                                      : "border-red-500/25 bg-red-500/10 text-red-300"
-                                  }`}
-                                >
-                                  {ativo ? "Ativo" : "Inativo"}
-                                </span>
-
-                                {ativo && (
-                                  <span
-                                    className={`rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${config.badge}`}
-                                  >
-                                    {config.label}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
+                  return (
+                    <article
+                      key={tecnico.id}
+                      className={`relative overflow-hidden rounded-[1.75rem] border p-4 shadow-lg transition ${
+                        ativo
+                          ? "border-slate-800 bg-slate-950/75 hover:border-blue-500/35"
+                          : "border-red-500/20 bg-red-500/[0.045] opacity-85"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex min-w-0 gap-4">
+                          <div
+                            className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border text-sm font-black ${
+                              ativo
+                                ? "border-blue-500/25 bg-blue-500/10 text-blue-300"
+                                : "border-red-500/25 bg-red-500/10 text-red-300"
+                            }`}
+                          >
+                            {getInitials(nome)}
                           </div>
 
-                          <div className="flex min-w-[72px] flex-col items-center rounded-xl border border-slate-800 bg-slate-950 px-3 py-2">
-                            <p className="text-xl font-black text-white">{carga}</p>
-                            <p className="text-[8px] font-black uppercase tracking-widest text-slate-600">
-                              UEs
+                          <div className="min-w-0">
+                            <p
+                              className={`truncate text-base font-black ${
+                                ativo ? "text-white" : "text-slate-500 line-through"
+                              }`}
+                              title={nome}
+                            >
+                              {nome || "Técnico sem nome"}
                             </p>
+
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <span
+                                className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${
+                                  ativo
+                                    ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+                                    : "border-red-500/25 bg-red-500/10 text-red-300"
+                                }`}
+                              >
+                                {ativo ? "Ativo" : "Inativo"}
+                              </span>
+
+                              {ativo && (
+                                <span
+                                  className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${config.badge}`}
+                                >
+                                  {config.label}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
 
                         {ativo && (
-                          <div className="mt-3">
-                            <div className="mb-1.5 flex items-center justify-between text-[9px] font-bold uppercase tracking-widest text-slate-600">
-                              <span>Carga atual</span>
-                              <span>Meta: {stats.mediaIdeal || 0}</span>
-                            </div>
-                            <div className="h-2 overflow-hidden rounded-full border border-slate-800 bg-slate-950">
-                              <div
-                                className={`h-full rounded-full bg-gradient-to-r ${config.bar}`}
-                                style={{ width: `${percentualCarga}%` }}
-                              />
-                            </div>
+                          <div className="flex min-w-[76px] shrink-0 flex-col items-center rounded-2xl border border-slate-800 bg-[#020617] px-3 py-2">
+                            <p className="text-2xl font-black text-white">{carga}</p>
+                            <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">
+                              Escolas
+                            </p>
                           </div>
                         )}
+                      </div>
 
-                        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
-                          <button
-                            type="button"
-                            onClick={() => visualizarEscolasDoTecnico(nome)}
-                            disabled={!ativo || carga <= 0 || bloqueado}
-                            className="rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            Ver escolas
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => handleToggleStatusTecnico(tecnico)}
-                            disabled={bloqueado}
-                            className={`rounded-xl border px-3 py-2.5 text-[10px] font-black uppercase tracking-widest transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                              ativo
-                                ? "border-orange-500/25 bg-orange-500/10 text-orange-300 hover:bg-orange-500/20"
-                                : "border-emerald-500/25 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
-                            }`}
-                          >
-                            {bloqueado
-                              ? "Processando..."
-                              : ativo
-                                ? "Suspender"
-                                : "Reativar"}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => handleRemoverTecnico(tecnico)}
-                            disabled={bloqueado}
-                            className="rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-red-300 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            Remover
-                          </button>
+                      {ativo && (
+                        <div className="mt-4 h-2.5 overflow-hidden rounded-full border border-slate-800 bg-[#020617]">
+                          <div
+                            className={`h-full rounded-full bg-gradient-to-r ${config.bar}`}
+                            style={{
+                              width: `${Math.min(
+                                Math.max(
+                                  (carga /
+                                    Math.max(stats.mediaIdeal || 1, carga || 1)) *
+                                    100,
+                                  8
+                                ),
+                                100
+                              )}%`,
+                            }}
+                          />
                         </div>
-                      </article>
-                    )
-                  })}
-                </div>
+                      )}
+
+                      {nome && carga > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => verTecnicoNoMapa(nome)}
+                          className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-cyan-500/25 bg-cyan-500/10 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-cyan-300 transition hover:bg-cyan-500/20"
+                        >
+                          <span aria-hidden="true">🗺️</span>
+                          Visualizar setor no mapa
+                        </button>
+                      )}
+
+                      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleStatusTecnico(tecnico)}
+                          disabled={bloqueado}
+                          className={`rounded-2xl border px-4 py-3 text-xs font-black uppercase tracking-widest transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                            ativo
+                              ? "border-red-500/25 bg-red-500/10 text-red-300 hover:bg-red-500/20"
+                              : "border-emerald-500/25 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                          }`}
+                        >
+                          {bloqueado
+                            ? "Processando..."
+                            : ativo
+                              ? "Suspender e limpar"
+                              : "Reativar técnico"}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleRemoverTecnico(tecnico)}
+                          disabled={bloqueado}
+                          className="rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3 text-xs font-black uppercase tracking-widest text-slate-300 transition hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Remover
+                        </button>
+                      </div>
+                    </article>
+                  )
+                })}
               </div>
             )}
           </Panel>
 
-          <Panel title="Resumo da distribuição">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Panel title="Inteligência de setorização">
+            <div className="grid grid-cols-2 gap-3">
               <InsightBox
                 label="Unidades"
                 value={stats.totalEscolas}
@@ -932,6 +962,30 @@ export default function SetorizacaoPage() {
               />
             </div>
 
+            <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                    Georreferenciamento
+                  </p>
+                  <p className="mt-1 text-sm font-black text-white">
+                    {mapaStats.comCoordenada} de {stats.totalEscolas} escolas localizadas
+                  </p>
+                </div>
+
+                <span className="rounded-full border border-cyan-500/25 bg-cyan-500/10 px-3 py-1 text-xs font-black text-cyan-300">
+                  {mapaStats.cobertura}%
+                </span>
+              </div>
+
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-900">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-500"
+                  style={{ width: `${mapaStats.cobertura}%` }}
+                />
+              </div>
+            </div>
+
             {stats.atribuidasInativas > 0 && (
               <div className="mt-4 rounded-2xl border border-yellow-500/25 bg-yellow-500/10 p-4 text-sm font-bold leading-relaxed text-yellow-200">
                 Existem {stats.atribuidasInativas} escola(s) vinculadas a técnicos
@@ -941,66 +995,88 @@ export default function SetorizacaoPage() {
           </Panel>
         </div>
 
-        <Panel
-          id="matriz-atribuicao"
-          title={`Matriz de atribuição (${escolasFiltradas.length} listadas)`}
-          className="flex h-[720px] flex-col sm:h-[748px]"
+        <div
+          className="h-[820px] min-w-0 xl:h-[var(--altura-matriz)]"
+          style={
+            {
+              "--altura-matriz": alturaColunaGestao
+                ? `${alturaColunaGestao}px`
+                : "820px",
+            } as CSSProperties
+          }
         >
+          <Panel
+            title={`Matriz de atribuição (${escolasFiltradas.length} listadas)`}
+            className="flex h-full min-h-0 min-w-0 flex-col"
+          >
           <div className="flex min-h-0 flex-1 flex-col gap-5">
             <div className="shrink-0 rounded-[1.75rem] border border-slate-800 bg-slate-950/45 p-4">
-              <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
-                <div className="relative flex-1">
+              <div className="flex flex-col gap-4">
+                <div className="relative">
                   <span className="pointer-events-none absolute inset-y-0 left-5 flex items-center text-slate-500">
                     🔍
                   </span>
 
                   <input
                     type="text"
-                    placeholder="Buscar escola por nome ou CIE..."
+                    placeholder="Buscar escola por nome, CIE ou técnico..."
                     value={buscaEscola}
                     onChange={(event) => setBuscaEscola(event.target.value)}
-                    className="w-full rounded-2xl border border-slate-800 bg-[#020617] py-4 pl-14 pr-4 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/50"
+                    className="w-full min-w-0 rounded-2xl border border-slate-800 bg-[#020617] py-4 pl-14 pr-4 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/50"
                   />
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 rounded-2xl border border-slate-800 bg-[#020617] p-1">
-                  <FilterButton active={filtroStatus === "todas"} onClick={() => setFiltroStatus("todas")}>
-                    Todas
-                  </FilterButton>
-                  <FilterButton active={filtroStatus === "pendentes"} onClick={() => setFiltroStatus("pendentes")}>
-                    Pendentes
-                  </FilterButton>
-                  <FilterButton active={filtroStatus === "atribuidas"} onClick={() => setFiltroStatus("atribuidas")}>
-                    Atribuídas
-                  </FilterButton>
-                </div>
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_auto]">
+                  <div className="grid grid-cols-3 gap-2 rounded-2xl border border-slate-800 bg-[#020617] p-1">
+                    <FilterButton
+                      active={filtroStatus === "todas"}
+                      onClick={() => setFiltroStatus("todas")}
+                    >
+                      Todas
+                    </FilterButton>
 
-                <button
-                  type="button"
-                  onClick={() => carregarDados("manual")}
-                  disabled={refreshing}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-cyan-500/25 bg-cyan-500/10 px-5 py-4 text-sm font-black uppercase tracking-widest text-cyan-300 transition hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <span className={refreshing ? "animate-spin" : ""}>↻</span>
-                  Atualizar
-                </button>
-              </div>
+                    <FilterButton
+                      active={filtroStatus === "pendentes"}
+                      onClick={() => setFiltroStatus("pendentes")}
+                    >
+                      Pendentes
+                    </FilterButton>
 
-              {filtrosAtivos && (
-                <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-[#020617] p-4">
-                  <p className="text-xs font-bold text-slate-500">
-                    Filtros ativos aplicados na matriz.
-                  </p>
+                    <FilterButton
+                      active={filtroStatus === "atribuidas"}
+                      onClick={() => setFiltroStatus("atribuidas")}
+                    >
+                      Atribuídas
+                    </FilterButton>
+                  </div>
 
                   <button
                     type="button"
-                    onClick={limparFiltros}
-                    className="text-xs font-black uppercase tracking-widest text-blue-300 transition hover:text-blue-200"
+                    onClick={() => carregarDados("manual")}
+                    disabled={refreshing}
+                    className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-2xl border border-cyan-500/25 bg-cyan-500/10 px-5 py-3 text-xs font-black uppercase tracking-widest text-cyan-300 transition hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Limpar filtros
+                    <span className={refreshing ? "animate-spin" : ""}>↻</span>
+                    Atualizar
                   </button>
                 </div>
-              )}
+
+                {filtrosAtivos && (
+                  <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-[#020617] p-4">
+                    <p className="text-xs font-bold text-slate-500">
+                      Filtros ativos aplicados na matriz.
+                    </p>
+
+                    <button
+                      type="button"
+                      onClick={limparFiltros}
+                      className="text-xs font-black uppercase tracking-widest text-blue-300 transition hover:text-blue-200"
+                    >
+                      Limpar filtros
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="min-h-0 flex-1 rounded-[1.75rem] border border-slate-800 bg-slate-950/35 p-2 shadow-inner shadow-slate-950/40">
@@ -1018,12 +1094,15 @@ export default function SetorizacaoPage() {
                       const tecnicoAtivo = tecnicoStatusPorNome.get(tecnico)
                       const isSaving = savingId === escola.id
                       const isSuccess = successId === escola.id
-                      const atribuicaoInativa = Boolean(tecnico && tecnicoAtivo === false)
+                      const atribuicaoInativa = Boolean(
+                        tecnico && tecnicoAtivo === false
+                      )
+                      const mapeada = temCoordenada(escola)
 
                       return (
                         <article
                           key={escola.id}
-                          className={`rounded-[1.5rem] border p-4 transition [contain-intrinsic-size:0_130px] [content-visibility:auto] ${
+                          className={`rounded-[1.5rem] border p-4 transition ${
                             isSuccess
                               ? "border-emerald-500/35 bg-emerald-500/10"
                               : atribuicaoInativa
@@ -1033,10 +1112,12 @@ export default function SetorizacaoPage() {
                                   : "border-red-500/25 bg-red-500/[0.045] hover:border-red-500/40"
                           }`}
                         >
-                          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_360px] xl:items-center">
+                          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,380px)] lg:items-center">
                             <div className="min-w-0">
-                              <div className="mb-2 flex flex-wrap gap-2">
-                                <Badge color="blue">CIE {textoSeguro(escola.cie, "S/N")}</Badge>
+                              <div className="mb-2 flex flex-wrap items-center gap-2">
+                                <Badge color="blue">
+                                  CIE {textoSeguro(escola.cie, "S/N")}
+                                </Badge>
 
                                 {atribuicaoInativa ? (
                                   <span className="rounded-full border border-yellow-500/25 bg-yellow-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-yellow-300">
@@ -1051,21 +1132,52 @@ export default function SetorizacaoPage() {
                                     Pendente
                                   </span>
                                 )}
+
+                                <span
+                                  className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${
+                                    mapeada
+                                      ? "border-cyan-500/20 bg-cyan-500/10 text-cyan-300"
+                                      : "border-slate-700 bg-slate-900 text-slate-500"
+                                  }`}
+                                >
+                                  {mapeada ? "Mapeada" : "Sem coordenada"}
+                                </span>
                               </div>
 
-                              <h3 className="line-clamp-2 text-base font-black leading-snug text-white">
+                              <h3
+                                className="truncate text-base font-black leading-snug text-white"
+                                title={textoSeguro(escola.nome_escola, "Escola sem nome")}
+                              >
                                 {textoSeguro(escola.nome_escola, "Escola sem nome")}
                               </h3>
+
+                              <button
+                                type="button"
+                                onClick={() => localizarEscolaNoMapa(escola)}
+                                className={`mt-3 inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition ${
+                                  mapeada
+                                    ? "text-cyan-400 hover:text-cyan-300"
+                                    : "text-slate-600 hover:text-yellow-300"
+                                }`}
+                              >
+                                <span aria-hidden="true">⌖</span>
+                                {mapeada
+                                  ? "Localizar no mapa"
+                                  : "Coordenada não cadastrada"}
+                              </button>
                             </div>
 
-                            <div className="relative">
+                            <div className="relative min-w-0">
                               <select
                                 value={tecnico}
                                 onChange={(event) =>
-                                  handleAtribuirTecnico(escola.id, event.target.value)
+                                  handleAtribuirTecnico(
+                                    escola.id,
+                                    event.target.value
+                                  )
                                 }
                                 disabled={isSaving}
-                                className={`w-full appearance-none rounded-2xl border px-4 py-4 pr-12 text-sm font-black outline-none transition disabled:cursor-not-allowed disabled:opacity-70 ${
+                                className={`w-full min-w-0 appearance-none rounded-2xl border px-4 py-4 pr-12 text-sm font-black outline-none transition disabled:cursor-not-allowed disabled:opacity-70 ${
                                   isSuccess
                                     ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
                                     : atribuicaoInativa
@@ -1078,14 +1190,18 @@ export default function SetorizacaoPage() {
                                 <option value="">Sem técnico atribuído</option>
 
                                 {tecnicosAtivos.map((item) => (
-                                  <option key={item.id} value={textoSeguro(item.nome)}>
+                                  <option
+                                    key={item.id}
+                                    value={textoSeguro(item.nome)}
+                                  >
                                     {textoSeguro(item.nome)}
                                   </option>
                                 ))}
 
                                 {tecnico &&
                                   !tecnicosAtivos.some(
-                                    (item) => textoSeguro(item.nome) === tecnico
+                                    (item) =>
+                                      textoSeguro(item.nome) === tecnico
                                   ) && (
                                     <option value={tecnico}>
                                       {tecnico} (inativo)
@@ -1112,49 +1228,318 @@ export default function SetorizacaoPage() {
               </div>
             </div>
           </div>
+          </Panel>
+        </div>
+      </section>
+
+      {/* ========================================================= */}
+      {/* MAPA — FULL WIDTH ABAIXO DA GESTÃO / MATRIZ              */}
+      {/* ========================================================= */}
+      <section
+        id="preview-mapa-setorizacao"
+        className="scroll-mt-24"
+      >
+        <Panel title="Pré-visualização territorial da setorização">
+          <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/10 p-4">
+              <p className="text-[10px] font-black uppercase tracking-widest text-cyan-300">
+                Escolas mapeadas
+              </p>
+              <div className="mt-2 flex items-end justify-between gap-3">
+                <p className="text-3xl font-black text-white">{mapaStats.comCoordenada}</p>
+                <p className="text-xs font-black text-cyan-300">{mapaStats.cobertura}%</p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4">
+              <p className="text-[10px] font-black uppercase tracking-widest text-red-300">
+                Sem Field
+              </p>
+              <p className="mt-2 text-3xl font-black text-white">
+                {mapaStats.semTecnicoMapeadas}
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-4">
+              <p className="text-[10px] font-black uppercase tracking-widest text-blue-300">
+                Exibidas no mapa
+              </p>
+              <p className="mt-2 text-3xl font-black text-white">{escolasMapa.length}</p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-700 bg-slate-900/70 p-4">
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                Sem coordenada
+              </p>
+              <p className="mt-2 text-3xl font-black text-white">{mapaStats.semCoordenada}</p>
+            </div>
+          </div>
+
+          <div className="mb-5 rounded-[1.75rem] border border-slate-800 bg-slate-950/55 p-4 md:p-5">
+            {escolaMapaFoco ? (
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border border-cyan-500/25 bg-cyan-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-cyan-300">
+                      Foco individual
+                    </span>
+                    <Badge color="blue">
+                      CIE {textoSeguro(escolaMapaFoco.cie, "S/N")}
+                    </Badge>
+                  </div>
+
+                  <p className="mt-3 text-base font-black text-white md:text-lg">
+                    {textoSeguro(escolaMapaFoco.nome_escola, "Escola sem nome")}
+                  </p>
+
+                  <p className="mt-1 text-sm font-semibold text-slate-500">
+                    {textoSeguro(
+                      escolaMapaFoco.tecnico_atribuido,
+                      "Sem técnico atribuído"
+                    )}
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <button
+                    type="button"
+                    onClick={limparMapa}
+                    className="rounded-2xl border border-slate-700 bg-slate-900 px-5 py-3 text-xs font-black uppercase tracking-widest text-slate-300 transition hover:border-cyan-500/30 hover:text-cyan-300"
+                  >
+                    Mostrar toda a rede
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setMapaExpandido((current) => !current)}
+                    className="rounded-2xl border border-blue-500/25 bg-blue-500/10 px-5 py-3 text-xs font-black uppercase tracking-widest text-blue-300 transition hover:bg-blue-500/20"
+                  >
+                    {mapaExpandido ? "Altura normal" : "Ampliar mapa"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,420px)_1fr_auto] lg:items-end">
+                <label className="block">
+                  <span className="mb-2 block text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
+                    Visualizar setor
+                  </span>
+
+                  <select
+                    value={filtroMapaTecnico}
+                    onChange={(event) => {
+                      setEscolaMapaFocoId(null)
+                      setFiltroMapaTecnico(event.target.value)
+                    }}
+                    className="w-full rounded-2xl border border-slate-700 bg-[#020617] px-4 py-4 text-sm font-black text-white outline-none transition focus:border-cyan-500/60 focus:ring-1 focus:ring-cyan-500/40"
+                  >
+                    <option value="Todos">Toda a rede</option>
+                    <option value="Sem Técnico">Escolas sem técnico</option>
+
+                    {listaTecnicosMapa.map((nome) => (
+                      <option key={nome} value={nome}>
+                        {nome}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="rounded-2xl border border-slate-800 bg-[#020617] px-4 py-3">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-cyan-300">
+                    Atualização imediata
+                  </p>
+                  <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-500">
+                    Ao alterar um Field na matriz, a nova atribuição aparece neste mapa
+                    assim que o Supabase confirma a atualização.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setMapaExpandido((current) => !current)}
+                  className="min-h-[52px] rounded-2xl border border-blue-500/25 bg-blue-500/10 px-5 py-3 text-xs font-black uppercase tracking-widest text-blue-300 transition hover:bg-blue-500/20"
+                >
+                  {mapaExpandido ? "Altura normal" : "Ampliar mapa"}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {mapaStats.semCoordenada > 0 && (
+            <div className="mb-5 rounded-2xl border border-yellow-500/20 bg-yellow-500/[0.06] px-4 py-3 text-xs font-bold leading-relaxed text-yellow-200/80">
+              {mapaStats.semCoordenada} escola(s) não aparecem no mapa porque ainda
+              não possuem latitude/longitude válidas cadastradas.
+            </div>
+          )}
+
+          <div
+            className={`setorizacao-live-map relative w-full overflow-hidden rounded-[1.75rem] border border-slate-800 bg-slate-950 transition-[height] duration-300 ${
+              mapaExpandido
+                ? "h-[78vh] min-h-[680px]"
+                : "h-[62vh] min-h-[560px]"
+            }`}
+          >
+            {escolasMapa.length === 0 && (
+              <div className="absolute inset-0 z-[500] flex flex-col items-center justify-center bg-[#020617]/90 p-6 text-center backdrop-blur-sm">
+                <div className="mb-3 text-4xl">🗺️</div>
+                <p className="text-sm font-black text-white">
+                  Nenhuma escola disponível neste recorte
+                </p>
+                <p className="mt-2 max-w-sm text-xs font-semibold leading-relaxed text-slate-500">
+                  Limpe o filtro territorial ou verifique as coordenadas cadastradas.
+                </p>
+
+                <button
+                  type="button"
+                  onClick={limparMapa}
+                  className="mt-4 rounded-xl border border-cyan-500/25 bg-cyan-500/10 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-cyan-300"
+                >
+                  Mostrar toda a rede
+                </button>
+              </div>
+            )}
+
+            <MapSetorizacao escolas={escolasMapa} />
+          </div>
+
+          <div className="mt-5 flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-950/45 p-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                Uso operacional
+              </p>
+              <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-400">
+                Use “Visualizar setor no mapa” no card do Field ou “Localizar no mapa”
+                em uma escola para abrir este painel já filtrado.
+              </p>
+            </div>
+
+            {(escolaMapaFocoId || filtroMapaTecnico !== "Todos") && (
+              <button
+                type="button"
+                onClick={limparMapa}
+                className="shrink-0 rounded-2xl border border-cyan-500/25 bg-cyan-500/10 px-5 py-3 text-[10px] font-black uppercase tracking-widest text-cyan-300 transition hover:bg-cyan-500/20"
+              >
+                Limpar filtro do mapa
+              </button>
+            )}
+          </div>
         </Panel>
       </section>
 
       <style jsx global>{`
-        .custom-scrollbar,
-        .team-scrollbar {
-          scrollbar-width: thin;
-          scrollbar-color: #475569 rgba(15, 23, 42, 0.45);
-          scrollbar-gutter: stable;
-          -webkit-overflow-scrolling: touch;
+        .setorizacao-live-map .leaflet-container {
+          height: 100%;
+          width: 100%;
+          background: #020617;
+          font-family: inherit;
         }
 
-        .custom-scrollbar::-webkit-scrollbar,
-        .team-scrollbar::-webkit-scrollbar {
-          width: 10px;
+        /*
+         * Nesta tela de gestão a legenda detalhada do MapSetorizacao é ocultada
+         * para liberar área útil. O mapa Field original continua inalterado.
+         */
+        .setorizacao-live-map .legend,
+        .setorizacao-live-map .map-legend,
+        .setorizacao-live-map .leaflet-control-layers,
+        .setorizacao-live-map .leaflet-bottom.leaflet-right > .leaflet-control {
+          display: none !important;
+        }
+
+
+        .setorizacao-live-map .leaflet-control-container {
+          font-family: inherit;
+        }
+
+        .setorizacao-live-map .leaflet-tile {
+          border: none !important;
+          outline: 1px solid transparent !important;
+          box-shadow: none !important;
+          image-rendering: auto !important;
+          -webkit-backface-visibility: hidden !important;
+          backface-visibility: hidden !important;
+          transform: translateZ(0);
+        }
+
+        .setorizacao-live-map .leaflet-marker-icon,
+        .setorizacao-live-map .leaflet-marker-shadow {
+          outline: none !important;
+          box-shadow: none !important;
+        }
+
+        .setorizacao-live-map .leaflet-control {
+          border-radius: 0.9rem !important;
+          border: 1px solid rgba(51, 65, 85, 0.95) !important;
+          background: rgba(2, 6, 23, 0.92) !important;
+          color: #e2e8f0 !important;
+          box-shadow: 0 14px 38px rgba(2, 6, 23, 0.35) !important;
+          backdrop-filter: blur(10px);
+        }
+
+        .setorizacao-live-map .leaflet-control a {
+          background: rgba(15, 23, 42, 0.98) !important;
+          color: #e2e8f0 !important;
+          border-color: rgba(51, 65, 85, 0.95) !important;
+        }
+
+        .setorizacao-live-map .leaflet-control a:hover {
+          background: rgba(30, 41, 59, 0.98) !important;
+          color: #67e8f9 !important;
+        }
+
+        .setorizacao-live-map .leaflet-popup-content-wrapper,
+        .setorizacao-live-map .leaflet-popup-tip {
+          background: #020617 !important;
+          color: #f8fafc !important;
+          border: 1px solid rgba(51, 65, 85, 0.95) !important;
+          box-shadow: 0 18px 50px rgba(2, 6, 23, 0.45) !important;
+        }
+
+        .setorizacao-live-map .leaflet-popup-content {
+          margin: 12px 14px !important;
+          font-family: inherit !important;
+          color: #f8fafc !important;
+        }
+
+        .setorizacao-live-map .leaflet-popup-content * {
+          color: #f8fafc !important;
+        }
+
+        .setorizacao-live-map .leaflet-popup-close-button {
+          color: #ffffff !important;
+        }
+
+        .setorizacao-live-map .leaflet-control-attribution {
+          display: none !important;
+        }
+
+        .setorizacao-live-map .leaflet-bottom.leaflet-right {
+          display: none !important;
+        }
+
+        .custom-scrollbar {
+          scrollbar-width: thin;
+          scrollbar-color: #475569 rgba(15, 23, 42, 0.45);
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 8px;
           height: 8px;
         }
 
-        .custom-scrollbar::-webkit-scrollbar-track,
-        .team-scrollbar::-webkit-scrollbar-track {
-          background: rgba(15, 23, 42, 0.55);
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: rgba(15, 23, 42, 0.45);
           border-radius: 999px;
         }
 
-        .custom-scrollbar::-webkit-scrollbar-thumb,
-        .team-scrollbar::-webkit-scrollbar-thumb {
+        .custom-scrollbar::-webkit-scrollbar-thumb {
           background-color: #334155;
           border-radius: 999px;
           border: 2px solid transparent;
           background-clip: padding-box;
         }
 
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover,
-        .team-scrollbar::-webkit-scrollbar-thumb:hover {
-          background-color: #64748b;
-        }
-
-        .custom-horizontal-scroll {
-          scrollbar-width: none;
-        }
-
-        .custom-horizontal-scroll::-webkit-scrollbar {
-          display: none;
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background-color: #475569;
         }
 
         select option {
@@ -1170,16 +1555,13 @@ function Panel({
   children,
   title,
   className = "",
-  id,
 }: {
   children: ReactNode
   title?: string
   className?: string
-  id?: string
 }) {
   return (
     <div
-      id={id}
       className={`relative overflow-hidden rounded-[2rem] border border-slate-800 bg-[#020617] p-5 shadow-xl shadow-slate-950/20 md:p-6 ${className}`}
     >
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-blue-500/40 to-transparent" />
@@ -1258,55 +1640,6 @@ function KpiCard({
 
       <div className={`mt-3 h-1 rounded-full ${bars[tone]}`} />
     </div>
-  )
-}
-
-function TeamSummary({
-  label,
-  value,
-  tone,
-}: {
-  label: string
-  value: number
-  tone: "blue" | "cyan" | "red"
-}) {
-  const styles = {
-    blue: "border-blue-500/20 bg-blue-500/10 text-blue-300",
-    cyan: "border-cyan-500/20 bg-cyan-500/10 text-cyan-300",
-    red: "border-red-500/20 bg-red-500/10 text-red-300",
-  }
-
-  return (
-    <div className={`rounded-xl border p-3 ${styles[tone]}`}>
-      <p className="text-[8px] font-black uppercase tracking-widest opacity-75">
-        {label}
-      </p>
-      <p className="mt-1 text-xl font-black text-white">{value}</p>
-    </div>
-  )
-}
-
-function TeamFilterButton({
-  children,
-  active,
-  onClick,
-}: {
-  children: ReactNode
-  active: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`shrink-0 rounded-lg px-3 py-2 text-[9px] font-black uppercase tracking-widest transition ${
-        active
-          ? "bg-blue-600 text-white shadow-md shadow-blue-950/30"
-          : "text-slate-500 hover:bg-slate-800 hover:text-slate-200"
-      }`}
-    >
-      {children}
-    </button>
   )
 }
 

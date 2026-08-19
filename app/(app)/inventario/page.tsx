@@ -4,6 +4,139 @@ import Button from "@/components/ui/Button"
 import { createServerSupabase } from "@/lib/supabase-server"
 import { getUser } from "@/lib/getUser"
 
+const N1110_MODELO_32_ID = "0e1e7331-8550-41bd-b1e2-9ba37e6087eb"
+const N1110_MODELO_64_ID = "80f610df-bb29-459e-a397-f58a13746fa8"
+
+const N1110_32 = "Notebook Positivo N1110 - 32GB - LOTE 1"
+const N1110_64_ANTIGO = "Notebook Positivo N1110 - 64GB - LOTE 1"
+const N1110_64_ATUAL = "Notebook Positivo N1110 - 64GB - LOTE 2"
+
+const N1110_CONSOLIDADO = "Notebook Positivo N1110 - LOTES 1 E 2"
+
+function textoSeguro(value: unknown) {
+  return String(value ?? "").trim()
+}
+
+function normalizar(value: unknown) {
+  return textoSeguro(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+}
+
+function numeroSeguro(value: unknown) {
+  const numero = Number(value || 0)
+  return Number.isFinite(numero) ? Math.max(0, numero) : 0
+}
+
+function getModeloRecebido(item: any) {
+  if (Array.isArray(item?.equipamentos_modelos)) {
+    return item.equipamentos_modelos[0] || null
+  }
+
+  return item?.equipamentos_modelos || null
+}
+
+function ehN1110Consolidavel(modelo: any) {
+  const modeloId = textoSeguro(modelo?.id)
+  const nomeNormalizado = normalizar(modelo?.equipamento)
+
+  if (
+    modeloId === N1110_MODELO_32_ID ||
+    modeloId === N1110_MODELO_64_ID
+  ) {
+    return true
+  }
+
+  return (
+    nomeNormalizado === normalizar(N1110_32) ||
+    nomeNormalizado === normalizar(N1110_64_ANTIGO) ||
+    nomeNormalizado === normalizar(N1110_64_ATUAL)
+  )
+}
+
+function prioridadeN1110(modelo: any) {
+  const modeloId = textoSeguro(modelo?.id)
+
+  if (modeloId === N1110_MODELO_32_ID) return 0
+  if (modeloId === N1110_MODELO_64_ID) return 1
+
+  return normalizar(modelo?.equipamento) === normalizar(N1110_32) ? 0 : 1
+}
+
+function consolidarEquipamentosParaExibicao(equipamentos: any[]) {
+  const resultado: any[] = []
+
+  let indiceGrupoN1110 = -1
+  let prioridadeAtual = Number.POSITIVE_INFINITY
+
+  equipamentos.forEach((item) => {
+    const modelo = getModeloRecebido(item)
+
+    if (!ehN1110Consolidavel(modelo)) {
+      resultado.push({
+        ...item,
+        __idsOriginais: [String(item.id)],
+      })
+      return
+    }
+
+    const quantidade = numeroSeguro(item.quantidade_recebida)
+    const prioridade = prioridadeN1110(modelo)
+
+    if (indiceGrupoN1110 === -1) {
+      resultado.push({
+        ...item,
+        quantidade_recebida: quantidade,
+        __idsOriginais: [String(item.id)],
+        equipamentos_modelos: {
+          id: modelo?.id || null,
+          equipamento: N1110_CONSOLIDADO,
+          imagem_url: modelo?.imagem_url || null,
+          ano_recebimento: null,
+        },
+      })
+
+      indiceGrupoN1110 = resultado.length - 1
+      prioridadeAtual = prioridade
+      return
+    }
+
+    const atual = resultado[indiceGrupoN1110]
+    const modeloAtual = getModeloRecebido(atual)
+
+    resultado[indiceGrupoN1110] = {
+      ...atual,
+      id: prioridade < prioridadeAtual ? item.id : atual.id,
+      quantidade_recebida:
+        numeroSeguro(atual.quantidade_recebida) + quantidade,
+      __idsOriginais: [
+        ...(atual.__idsOriginais || [String(atual.id)]),
+        String(item.id),
+      ],
+      equipamentos_modelos: {
+        id:
+          prioridade < prioridadeAtual
+            ? modelo?.id || modeloAtual?.id || null
+            : modeloAtual?.id || modelo?.id || null,
+        equipamento: N1110_CONSOLIDADO,
+        imagem_url:
+          prioridade < prioridadeAtual
+            ? modelo?.imagem_url || modeloAtual?.imagem_url || null
+            : modeloAtual?.imagem_url || modelo?.imagem_url || null,
+        ano_recebimento: null,
+      },
+    }
+
+    if (prioridade < prioridadeAtual) {
+      prioridadeAtual = prioridade
+    }
+  })
+
+  return resultado
+}
+
+
 export default async function InventarioPage() {
 
   const supabase = await createServerSupabase()
@@ -26,6 +159,7 @@ export default async function InventarioPage() {
       id,
       quantidade_recebida,
       equipamentos_modelos (
+        id,
         equipamento,
         imagem_url,
         ano_recebimento
@@ -33,6 +167,10 @@ export default async function InventarioPage() {
     `)
     .eq("escola_nome", escola)
     .gt("quantidade_recebida", 0)
+
+  const equipamentosExibicao = consolidarEquipamentosParaExibicao(
+    (equipamentos || []) as any[]
+  )
 
   // ADICIONADO "observacao" NO SELECT AQUI 👇
   const { data: ultimaResposta } = await supabase
@@ -60,8 +198,31 @@ export default async function InventarioPage() {
     statusItens = data || []
   }
 
-  function statusModelo(modeloId: string) {
-    return statusItens.find((s: any) => s.modelo_id === modeloId)
+  function statusModelo(modeloIds: string[]) {
+    const ids = new Set(modeloIds.map(String))
+    const encontrados = statusItens.filter((s: any) =>
+      ids.has(String(s.modelo_id))
+    )
+
+    if (encontrados.length === 0) return null
+
+    return encontrados.reduce(
+      (acc: any, item: any) => ({
+        funcionando: acc.funcionando + numeroSeguro(item.funcionando),
+        aguardando_garantia:
+          acc.aguardando_garantia + numeroSeguro(item.aguardando_garantia),
+        danificados_mau_uso:
+          acc.danificados_mau_uso + numeroSeguro(item.danificados_mau_uso),
+        nao_localizado:
+          acc.nao_localizado + numeroSeguro(item.nao_localizado),
+      }),
+      {
+        funcionando: 0,
+        aguardando_garantia: 0,
+        danificados_mau_uso: 0,
+        nao_localizado: 0,
+      }
+    )
   }
 
   function formatarData(data: string) {
@@ -148,8 +309,8 @@ export default async function InventarioPage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {equipamentos?.map((item: any, i: number) => {
-            const status = statusModelo(item.id)
+          {equipamentosExibicao.map((item: any, i: number) => {
+            const status = statusModelo(item.__idsOriginais || [String(item.id)])
             let saude = 0
 
             if (status) {
@@ -185,10 +346,17 @@ export default async function InventarioPage() {
                     <p className="text-sm font-bold text-white leading-snug">
                       {item.equipamentos_modelos.equipamento}
                     </p>
-                    {item.equipamentos_modelos.ano_recebimento && (
+                    {item.equipamentos_modelos.equipamento ===
+                    N1110_CONSOLIDADO ? (
                       <span className="inline-block mt-1.5 bg-blue-500/10 border border-blue-500/30 text-blue-400 text-[9px] uppercase font-black px-1.5 py-0.5 rounded-md tracking-wider">
-                        Ano de recebimento: {item.equipamentos_modelos.ano_recebimento}
+                        Lotes 1 e 2 • Recebimentos 2021 e 2023
                       </span>
+                    ) : (
+                      item.equipamentos_modelos.ano_recebimento && (
+                        <span className="inline-block mt-1.5 bg-blue-500/10 border border-blue-500/30 text-blue-400 text-[9px] uppercase font-black px-1.5 py-0.5 rounded-md tracking-wider">
+                          Ano de recebimento: {item.equipamentos_modelos.ano_recebimento}
+                        </span>
+                      )
                     )}
                   </div>
                 </div>

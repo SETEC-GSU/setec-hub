@@ -71,6 +71,57 @@ function normalizar(value: unknown) {
     .trim()
 }
 
+
+const N1110_MODELO_32_ID = "0e1e7331-8550-41bd-b1e2-9ba37e6087eb"
+const N1110_MODELO_64_ID = "80f610df-bb29-459e-a397-f58a13746fa8"
+
+const N1110_32 = "Notebook Positivo N1110 - 32GB - LOTE 1"
+const N1110_64_ANTIGO = "Notebook Positivo N1110 - 64GB - LOTE 1"
+const N1110_64_ATUAL = "Notebook Positivo N1110 - 64GB - LOTE 2"
+
+const N1110_CONSOLIDADO = "Notebook Positivo N1110 - LOTES 1 E 2"
+
+function ehN1110Consolidavel(modelo: EquipamentoModelo | null) {
+  const modeloId = textoSeguro(modelo?.id)
+  const nomeNormalizado = normalizar(modelo?.equipamento)
+
+  if (
+    modeloId === N1110_MODELO_32_ID ||
+    modeloId === N1110_MODELO_64_ID
+  ) {
+    return true
+  }
+
+  return (
+    nomeNormalizado === normalizar(N1110_32) ||
+    nomeNormalizado === normalizar(N1110_64_ANTIGO) ||
+    nomeNormalizado === normalizar(N1110_64_ATUAL)
+  )
+}
+
+function nomeModeloInventario(modelo: EquipamentoModelo | null) {
+  const nomeOriginal = textoSeguro(modelo?.equipamento)
+
+  return ehN1110Consolidavel(modelo)
+    ? N1110_CONSOLIDADO
+    : nomeOriginal
+}
+
+function nomeFiltroModeloInventario(nome: string) {
+  const nomeNormalizado = normalizar(nome)
+
+  if (
+    nomeNormalizado === normalizar(N1110_CONSOLIDADO) ||
+    nomeNormalizado === normalizar(N1110_32) ||
+    nomeNormalizado === normalizar(N1110_64_ANTIGO) ||
+    nomeNormalizado === normalizar(N1110_64_ATUAL)
+  ) {
+    return N1110_CONSOLIDADO
+  }
+
+  return nome
+}
+
 function formatarData(dataIso: string) {
   if (!dataIso) return ""
 
@@ -94,6 +145,7 @@ export default async function DiretoriaPage({
   const escolaSelecionada = filters?.escola || ""
   const anoSelecionado = filters?.ano || ""
   const modeloSelecionado = filters?.modelo || ""
+  const modeloSelecionadoEfetivo = nomeFiltroModeloInventario(modeloSelecionado)
   const statusSelecionado = filters?.status || ""
 
   const { data: equipamentosRaw, error: equipamentosError } = await supabase
@@ -175,7 +227,7 @@ export default async function DiretoriaPage({
   const listaModelos = [
     ...new Set(
       equipamentos
-        .map((e) => getModelo(e)?.equipamento)
+        .map((e) => nomeModeloInventario(getModelo(e)))
         .filter(Boolean)
         .map(String)
     ),
@@ -188,8 +240,8 @@ export default async function DiretoriaPage({
     const matchAno = anoSelecionado
       ? String(modelo?.ano_recebimento) === anoSelecionado
       : true
-    const matchModelo = modeloSelecionado
-      ? modelo?.equipamento === modeloSelecionado
+    const matchModelo = modeloSelecionadoEfetivo
+      ? nomeModeloInventario(modelo) === modeloSelecionadoEfetivo
       : true
 
     return matchEscola && matchAno && matchModelo
@@ -212,7 +264,7 @@ export default async function DiretoriaPage({
     const modelo = getModelo(item)
 
     mapaEquipamentos[String(item.id)] = {
-      nome: textoSeguro(modelo?.equipamento),
+      nome: nomeModeloInventario(modelo),
       finalidade: textoSeguro(modelo?.finalidade),
       ano: textoSeguro(modelo?.ano_recebimento),
     }
@@ -227,7 +279,7 @@ export default async function DiretoriaPage({
       const finalidadeLimpa = normalizar(equipamentoBanco?.finalidade)
 
       if (anoSelecionado && String(equipamentoBanco?.ano) !== anoSelecionado) return
-      if (modeloSelecionado && equipamentoBanco?.nome !== modeloSelecionado) return
+      if (modeloSelecionadoEfetivo && equipamentoBanco?.nome !== modeloSelecionadoEfetivo) return
 
       let func = numeroSeguro(item.funcionando)
       let gar = numeroSeguro(item.aguardando_garantia)
@@ -266,9 +318,11 @@ export default async function DiretoriaPage({
     const modelo = getModelo(item)
 
     const finalidade = textoSeguro(modelo?.finalidade)
-    const modeloNome = textoSeguro(modelo?.equipamento)
+    const modeloNome = nomeModeloInventario(modelo)
     const imagemUrl = textoSeguro(modelo?.imagem_url)
-    const anoRecebimento = modelo?.ano_recebimento || ""
+    const anoRecebimento = ehN1110Consolidavel(modelo)
+      ? anoSelecionado || "2021 / 2023"
+      : modelo?.ano_recebimento || ""
     const uso = textoSeguro(modelo?.uso)
     const tipo = textoSeguro(modelo?.tipo)
     const quantidade = numeroSeguro(item.quantidade_recebida)
@@ -321,7 +375,7 @@ export default async function DiretoriaPage({
       const nomeModelo = equipamentoBanco?.nome
 
       if (anoSelecionado && String(equipamentoBanco?.ano) !== anoSelecionado) return
-      if (modeloSelecionado && nomeModelo !== modeloSelecionado) return
+      if (modeloSelecionadoEfetivo && nomeModelo !== modeloSelecionadoEfetivo) return
 
       let func = numeroSeguro(item.funcionando)
       let gar = numeroSeguro(item.aguardando_garantia)
@@ -493,23 +547,95 @@ export default async function DiretoriaPage({
     : null
 
   return (
-    <div className="space-y-8 pb-8 min-h-screen flex flex-col">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <h1 className="text-2xl md:text-3xl font-bold text-white">
-          Visão Executiva da Rede
-        </h1>
+    <div className="mx-auto flex min-h-screen w-full max-w-[1750px] flex-col gap-6 pb-10">
+      <section className="relative overflow-hidden rounded-[2rem] border border-slate-800 bg-[#020617] p-5 shadow-2xl shadow-slate-950/20 md:p-7">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.15),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(6,182,212,0.08),transparent_30%)]" />
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-blue-400/50 to-transparent" />
 
-        <div className="flex w-full flex-col items-stretch gap-3 lg:w-auto">
+        <div className="relative z-10 flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+          <div className="max-w-3xl">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-blue-500/25 bg-blue-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-blue-300">
+                Inventário Tecnológico
+              </span>
+              <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-cyan-300">
+                Visão Executiva
+              </span>
+            </div>
+
+            <h1 className="text-3xl font-black tracking-tight text-white md:text-4xl">
+              Visão Executiva da Rede
+            </h1>
+
+            <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-slate-400">
+              Panorama consolidado do parque tecnológico, recertificação das unidades,
+              garantia e saúde dos equipamentos da rede.
+            </p>
+          </div>
+
+          <div className="grid w-full grid-cols-2 gap-3 sm:grid-cols-4 xl:w-auto xl:min-w-[520px]">
+            <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-4">
+              <p className="text-[9px] font-black uppercase tracking-widest text-blue-300/80">Equipamentos</p>
+              <p className="mt-2 text-2xl font-black text-white">{totalEquipamentos}</p>
+            </div>
+
+            <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/10 p-4">
+              <p className="text-[9px] font-black uppercase tracking-widest text-cyan-300/80">Plataformas</p>
+              <p className="mt-2 text-2xl font-black text-white">{totalPlataformasRecebidas}</p>
+            </div>
+
+            <div className={`rounded-2xl border p-4 ${
+              progressoInventario >= 80
+                ? "border-emerald-500/20 bg-emerald-500/10"
+                : progressoInventario >= 50
+                  ? "border-yellow-500/20 bg-yellow-500/10"
+                  : "border-red-500/20 bg-red-500/10"
+            }`}>
+              <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Recertificação</p>
+              <p className="mt-2 text-2xl font-black text-white">{progressoInventario}%</p>
+            </div>
+
+            <div className={`rounded-2xl border p-4 ${
+              alertaGarantia
+                ? "border-red-500/20 bg-red-500/10"
+                : "border-emerald-500/20 bg-emerald-500/10"
+            }`}>
+              <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Em garantia</p>
+              <p className="mt-2 text-2xl font-black text-white">{totalGarantiaGeral}</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-[2rem] border border-slate-800 bg-[#020617] p-4 shadow-xl shadow-slate-950/20 md:p-5">
+        <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-300">
+              Filtros da visão
+            </p>
+            <p className="mt-1 text-xs font-medium text-slate-500">
+              Refine a análise por lote, escola, modelo ou situação do equipamento.
+            </p>
+          </div>
+
+          <div className="text-[10px] font-black uppercase tracking-widest text-slate-600">
+            {escolaSelecionada || anoSelecionado || modeloSelecionado || statusSelecionado
+              ? "Filtro aplicado"
+              : "Visão consolidada"}
+          </div>
+        </div>
+
+        <div className="flex w-full flex-col items-stretch gap-3 xl:flex-row xl:items-end xl:justify-between">
           <form
             method="GET"
-            className="flex flex-col sm:flex-row flex-wrap items-center gap-2 w-full lg:w-auto justify-end"
+            className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-[170px_minmax(240px,1.35fr)_minmax(220px,1fr)_190px_auto]"
           >
             <select
               name="ano"
               defaultValue={anoSelecionado}
-              className="w-full sm:w-auto bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:border-blue-500"
+              className="min-h-[48px] w-full rounded-xl border border-slate-800 bg-slate-950 px-4 text-sm font-bold text-white outline-none transition focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/40"
             >
-              <option value="">Todo o Histórico (Anos)</option>
+              <option value="">Todo o Histórico</option>
               {listaAnos.map((ano) => (
                 <option key={ano} value={ano}>
                   Lote {ano}
@@ -520,7 +646,7 @@ export default async function DiretoriaPage({
             <select
               name="escola"
               defaultValue={escolaSelecionada}
-              className="w-full sm:w-auto bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:border-blue-500"
+              className="min-h-[48px] w-full rounded-xl border border-slate-800 bg-slate-950 px-4 text-sm font-bold text-white outline-none transition focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/40"
             >
               <option value="">Todas as UEs</option>
               {listaEscolas.map((escola) => (
@@ -532,8 +658,8 @@ export default async function DiretoriaPage({
 
             <select
               name="modelo"
-              defaultValue={modeloSelecionado}
-              className="w-full sm:w-auto bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:border-blue-500 max-w-[200px] truncate"
+              defaultValue={modeloSelecionadoEfetivo}
+              className="min-h-[48px] w-full rounded-xl border border-slate-800 bg-slate-950 px-4 text-sm font-bold text-white outline-none transition focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/40"
             >
               <option value="">Todos os Modelos</option>
               {listaModelos.map((modelo) => (
@@ -546,7 +672,7 @@ export default async function DiretoriaPage({
             <select
               name="status"
               defaultValue={statusSelecionado}
-              className="w-full sm:w-auto bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:border-blue-500"
+              className="min-h-[48px] w-full rounded-xl border border-slate-800 bg-slate-950 px-4 text-sm font-bold text-white outline-none transition focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/40"
             >
               <option value="">Todos os Status</option>
               <option value="funcionando">Funcionando</option>
@@ -557,48 +683,52 @@ export default async function DiretoriaPage({
 
             <button
               type="submit"
-              className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+              className="min-h-[48px] rounded-xl bg-blue-600 px-5 text-sm font-black text-white shadow-lg shadow-blue-950/20 transition hover:bg-blue-500"
             >
-              Filtrar
+              Aplicar filtros
             </button>
           </form>
 
-          <ExportInventarioButtons
-            resumo={{
-              escolaSelecionada,
-              anoSelecionado,
-              modeloSelecionado,
-              statusSelecionado,
-              totalEquipamentos,
-              totalPlataformasRecebidas,
-              totalPlataformasRespondidas,
-              totalGarantiaGeral,
-              percentualGarantia,
-              totalEscolas,
-              totalEnviados,
-              progressoInventario,
-            }}
-            modelos={modelosExportacao}
-            ranking={rankingExportacao}
-            recertificacao={recertificacaoExportacao}
-            saude={heatmapArray}
-            responsavel={responsavelExportacao}
-          />
+          <div className="shrink-0">
+            <ExportInventarioButtons
+              resumo={{
+                escolaSelecionada,
+                anoSelecionado,
+                modeloSelecionado: modeloSelecionadoEfetivo,
+                statusSelecionado,
+                totalEquipamentos,
+                totalPlataformasRecebidas,
+                totalPlataformasRespondidas,
+                totalGarantiaGeral,
+                percentualGarantia,
+                totalEscolas,
+                totalEnviados,
+                progressoInventario,
+              }}
+              modelos={modelosExportacao}
+              ranking={rankingExportacao}
+              recertificacao={recertificacaoExportacao}
+              saude={heatmapArray}
+              responsavel={responsavelExportacao}
+            />
+          </div>
         </div>
-      </div>
+      </section>
 
       {dadosResponsavel && (
-        <div className="bg-[#020617] border border-blue-900/50 rounded-xl p-4 flex flex-col gap-4">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-blue-900/20 rounded-lg hidden sm:block">
+        <div className="relative overflow-hidden rounded-[1.75rem] border border-blue-500/20 bg-[#020617] p-5 shadow-xl shadow-blue-950/10">
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.10),transparent_35%)]" />
+
+          <div className="relative z-10 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-4">
+              <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-blue-500/25 bg-blue-500/10 sm:flex">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   fill="none"
                   viewBox="0 0 24 24"
                   strokeWidth={1.5}
                   stroke="currentColor"
-                  className="w-6 h-6 text-blue-400"
+                  className="h-6 w-6 text-blue-400"
                 >
                   <path
                     strokeLinecap="round"
@@ -608,24 +738,24 @@ export default async function DiretoriaPage({
                 </svg>
               </div>
 
-              <div>
-                <p className="text-[10px] sm:text-xs text-blue-400 font-semibold uppercase tracking-widest mb-1">
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-300">
                   Inventário respondido por
                 </p>
-                <p className="text-white text-base sm:text-lg font-bold">
+                <p className="mt-1 truncate text-lg font-black text-white">
                   {dadosResponsavel.responsavel_nome}
                 </p>
-                <p className="text-slate-400 text-xs sm:text-sm">
+                <p className="mt-1 text-xs font-semibold text-slate-500">
                   {dadosResponsavel.responsavel_cargo}
                 </p>
               </div>
             </div>
 
-            <div className="sm:text-right border-t sm:border-t-0 border-slate-800 pt-3 sm:pt-0 w-full sm:w-auto">
-              <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">
-                Data de Envio
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-3 sm:text-right">
+              <p className="text-[9px] font-black uppercase tracking-widest text-slate-600">
+                Data de envio
               </p>
-              <p className="text-slate-300 font-medium text-sm">
+              <p className="mt-1 text-sm font-bold text-slate-300">
                 {formatarData(dadosResponsavel.created_at)}
               </p>
             </div>
@@ -633,12 +763,12 @@ export default async function DiretoriaPage({
 
           {dadosResponsavel.observacao &&
             dadosResponsavel.observacao.trim() !== "" && (
-              <div className="mt-2 bg-slate-900/80 border border-slate-800 rounded-lg p-3">
-                <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-widest mb-1">
-                  Observações do Responsável
+              <div className="relative z-10 mt-4 rounded-xl border border-slate-800 bg-slate-950/80 p-4">
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-600">
+                  Observações do responsável
                 </p>
-                <p className="text-sm text-slate-300 italic">
-                  "{dadosResponsavel.observacao}"
+                <p className="mt-2 text-sm font-medium leading-relaxed text-slate-300">
+                  {dadosResponsavel.observacao}
                 </p>
               </div>
             )}
@@ -653,32 +783,58 @@ export default async function DiretoriaPage({
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+      <div className="grid grid-cols-1 items-stretch gap-6 lg:grid-cols-2">
         <div className="h-full">
           <Card className="h-full flex flex-col">
-            <h2 className="text-lg md:text-xl font-semibold mb-4 shrink-0">
-              Ranking de escolas com mais equipamentos
-            </h2>
+            <div className="mb-4 flex items-start justify-between gap-3 shrink-0">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-blue-300">
+                  Distribuição
+                </p>
+                <h2 className="mt-1 text-lg font-black text-white md:text-xl">
+                  Ranking de escolas com mais equipamentos
+                </h2>
+              </div>
 
-            <div className="space-y-3 h-96 overflow-y-auto pr-2 min-h-0 w-full">
+              <span className="rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-blue-300">
+                {rankingOrdenado.length} UEs
+              </span>
+            </div>
+
+            <div className="min-h-0 h-96 w-full space-y-2.5 overflow-y-auto overscroll-contain pr-2 [scrollbar-color:#475569_transparent] [scrollbar-width:thin]">
               {rankingOrdenado.map(([escola, total], i) => {
                 const widthPercent = (Number(total) / maiorValorRanking) * 100
 
                 return (
                   <div
                     key={String(escola)}
-                    className="relative bg-slate-900 border border-slate-800 rounded-xl overflow-hidden h-12 flex items-center shrink-0"
+                    className="group relative flex min-h-[54px] shrink-0 items-center overflow-hidden rounded-xl border border-slate-800 bg-slate-900/80 transition hover:border-blue-500/30 hover:bg-slate-900"
                   >
                     <div
-                      className="absolute top-0 left-0 h-full bg-blue-600/20 transition-all duration-1000"
+                      className="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-600/25 to-cyan-500/5 transition-all duration-700"
                       style={{ width: `${widthPercent}%` }}
                     />
 
-                    <div className="relative z-10 flex justify-between w-full px-4 gap-2 items-center">
-                      <p className="text-slate-300 text-sm">
-                        {i + 1}º {String(escola)}
+                    <div className="relative z-10 flex w-full items-center gap-3 px-4 py-3">
+                      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-xs font-black ${
+                        i === 0
+                          ? "border-amber-500/25 bg-amber-500/10 text-amber-300"
+                          : i === 1
+                            ? "border-slate-600 bg-slate-800 text-slate-300"
+                            : i === 2
+                              ? "border-orange-500/25 bg-orange-500/10 text-orange-300"
+                              : "border-blue-500/20 bg-blue-500/10 text-blue-300"
+                      }`}>
+                        {i + 1}
+                      </span>
+
+                      <p className="min-w-0 flex-1 truncate text-sm font-bold text-slate-300 group-hover:text-white" title={String(escola)}>
+                        {String(escola)}
                       </p>
-                      <p className="text-white font-semibold">{Number(total)}</p>
+
+                      <p className="shrink-0 text-lg font-black text-white">
+                        {Number(total)}
+                      </p>
                     </div>
                   </div>
                 )
@@ -689,33 +845,59 @@ export default async function DiretoriaPage({
 
         <div className="h-full">
           <Card className="h-full flex flex-col">
-            <h2 className="text-lg md:text-xl font-semibold mb-4 shrink-0">
-              Recertificação e Status (90 Dias)
-            </h2>
+            <div className="mb-4 flex items-start justify-between gap-3 shrink-0">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-300">
+                  Recertificação
+                </p>
+                <h2 className="mt-1 text-lg font-black text-white md:text-xl">
+                  Status do inventário — 90 dias
+                </h2>
+              </div>
 
-            <div className="shrink-0">
-              <p className="text-sm text-slate-400 mb-2">
-                {totalEnviados} / {totalEscolas} escolas enviaram inventário ativo
-              </p>
+              <span className={`rounded-full border px-3 py-1 text-[9px] font-black uppercase tracking-widest ${
+                progressoInventario >= 80
+                  ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+                  : progressoInventario >= 50
+                    ? "border-yellow-500/25 bg-yellow-500/10 text-yellow-300"
+                    : "border-red-500/25 bg-red-500/10 text-red-300"
+              }`}>
+                {progressoInventario}%
+              </span>
+            </div>
 
-              <div className="w-full bg-slate-800 rounded-full h-4 mb-6">
+            <div className="shrink-0 rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-slate-400">
+                  {totalEnviados} / {totalEscolas} escolas com inventário ativo
+                </p>
+                <p className="text-sm font-black text-white">{progressoInventario}%</p>
+              </div>
+
+              <div className="h-3 w-full overflow-hidden rounded-full bg-slate-800">
                 <div
-                  className="bg-green-500 h-4 rounded-full transition-all duration-1000"
+                  className={`h-full rounded-full transition-all duration-1000 ${
+                    progressoInventario >= 80
+                      ? "bg-emerald-500"
+                      : progressoInventario >= 50
+                        ? "bg-yellow-500"
+                        : "bg-red-500"
+                  }`}
                   style={{ width: `${progressoInventario}%` }}
                 />
               </div>
             </div>
 
-            <div className="space-y-2 h-[20.5rem] overflow-y-auto pr-2 min-h-0 w-full">
+            <div className="mt-4 min-h-0 h-[20.5rem] w-full space-y-2 overflow-y-auto overscroll-contain pr-2 [scrollbar-color:#475569_transparent] [scrollbar-width:thin]">
               {escolasAtivas.map((escola, i) => (
                 <div
                   key={`env-${i}`}
-                  className="flex justify-between bg-slate-900 border border-green-800/30 rounded-xl px-4 py-2 gap-2 items-center shrink-0"
+                  className="flex shrink-0 items-center justify-between gap-3 rounded-xl border border-emerald-500/15 bg-emerald-500/[0.05] px-4 py-2.5"
                 >
-                  <p className="text-green-300 text-sm truncate">{escola}</p>
-                  <p className="text-green-400 font-semibold text-xs sm:text-sm uppercase tracking-wide">
-                    Enviado
-                  </p>
+                  <p className="min-w-0 truncate text-sm font-bold text-slate-300">{escola}</p>
+                  <span className="shrink-0 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-[9px] font-black uppercase tracking-widest text-emerald-300">
+                    Em dia
+                  </span>
                 </div>
               ))}
 
@@ -727,21 +909,21 @@ export default async function DiretoriaPage({
                 return (
                   <div
                     key={`pend-${i}`}
-                    className="flex justify-between bg-slate-900 border border-red-900/30 rounded-xl px-4 py-2 gap-2 items-center shrink-0"
+                    className={`flex shrink-0 items-center justify-between gap-3 rounded-xl border px-4 py-2.5 ${
+                      isVencida
+                        ? "border-red-500/20 bg-red-500/[0.05]"
+                        : "border-yellow-500/20 bg-yellow-500/[0.05]"
+                    }`}
                   >
-                    <p className="text-red-300 text-sm truncate">{escola}</p>
+                    <p className="min-w-0 truncate text-sm font-bold text-slate-300">{escola}</p>
 
-                    <div className="flex gap-2 items-center">
-                      {isVencida && (
-                        <span className="bg-red-500/10 text-red-400 text-[10px] px-2 py-0.5 rounded font-bold uppercase border border-red-500/20">
-                          Vencido
-                        </span>
-                      )}
-
-                      <p className="text-red-400 font-semibold text-xs sm:text-sm uppercase tracking-wide">
-                        Pendente
-                      </p>
-                    </div>
+                    <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-widest ${
+                      isVencida
+                        ? "border-red-500/25 bg-red-500/10 text-red-300"
+                        : "border-yellow-500/25 bg-yellow-500/10 text-yellow-300"
+                    }`}>
+                      {isVencida ? "Vencido" : "Pendente"}
+                    </span>
                   </div>
                 )
               })}
@@ -750,49 +932,65 @@ export default async function DiretoriaPage({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch pt-4">
-        <div className="lg:col-span-1 h-full">
+      <div className="grid grid-cols-1 items-stretch gap-6 pt-1 lg:grid-cols-3">
+        <div className="h-full lg:col-span-1">
           <Card className="h-full flex flex-col justify-between">
             <div>
-              <h2 className="text-sm md:text-base font-semibold mb-1 flex items-center gap-2 text-slate-300">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth={2}
-                  stroke="currentColor"
-                  className="w-4 h-4"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
-                  />
-                </svg>
-                Gargalo de Garantia
-              </h2>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-orange-300">
+                    Garantia
+                  </p>
+                  <h2 className="mt-1 text-base font-black text-white md:text-lg">
+                    Gargalo de Garantia
+                  </h2>
+                </div>
 
-              <div className="flex items-end gap-2 mt-4">
-                <span className="text-4xl font-black text-white">
+                <div className={`flex h-10 w-10 items-center justify-center rounded-xl border ${
+                  alertaGarantia
+                    ? "border-red-500/25 bg-red-500/10 text-red-300"
+                    : "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+                }`}>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={2}
+                    stroke="currentColor"
+                    className="h-5 w-5"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+                    />
+                  </svg>
+                </div>
+              </div>
+
+              <div className="mt-5 flex items-end gap-3">
+                <span className="text-5xl font-black tracking-tight text-white">
                   {totalGarantiaGeral}
                 </span>
-                <span className="text-sm text-slate-400 mb-1">
-                  equipamentos parados ({percentualGarantia}%)
-                </span>
+                <div className="pb-1">
+                  <p className="text-sm font-bold text-slate-300">equipamentos parados</p>
+                  <p className={`mt-0.5 text-xs font-black ${alertaGarantia ? "text-red-300" : "text-emerald-300"}`}>
+                    {percentualGarantia}% do parque
+                  </p>
+                </div>
               </div>
             </div>
 
-            <div className="mt-auto pt-4">
+            <div className="mt-auto pt-5">
               {alertaGarantia ? (
-                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
-                  <p className="text-xs text-red-400 font-medium">
-                    ⚠️ Alto volume de capital travado. Recomenda-se acionar SLAs
-                    das empresas contratadas.
+                <div className="rounded-xl border border-red-500/20 bg-red-500/[0.06] p-4">
+                  <p className="text-xs font-medium leading-relaxed text-red-300">
+                    ⚠️ Alto volume de capital travado. Recomenda-se acionar SLAs das empresas contratadas.
                   </p>
                 </div>
               ) : (
-                <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
-                  <p className="text-xs text-green-400 font-medium">
+                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] p-4">
+                  <p className="text-xs font-medium leading-relaxed text-emerald-300">
                     ✔️ Volume de equipamentos parados dentro do tolerável.
                   </p>
                 </div>
@@ -801,47 +999,58 @@ export default async function DiretoriaPage({
           </Card>
         </div>
 
-        <div className="lg:col-span-2 h-full">
+        <div className="h-full lg:col-span-2">
           <Card className="h-full flex flex-col">
-            <div className="flex justify-between items-end mb-4 shrink-0">
-              <h2 className="text-sm md:text-base font-semibold text-slate-300">
-                Mapa de Calor: Saúde por UE
-              </h2>
-              <p className="text-[10px] text-slate-500 uppercase tracking-widest hidden sm:block">
-                Melhor para Pior
-              </p>
+            <div className="mb-4 flex flex-col gap-2 shrink-0 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-300">
+                  Saúde por unidade
+                </p>
+                <h2 className="mt-1 text-base font-black text-white md:text-lg">
+                  Mapa de Calor: Saúde por UE
+                </h2>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-[9px] font-black uppercase tracking-widest">
+                <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-emerald-300">80–100%</span>
+                <span className="rounded-full border border-yellow-500/20 bg-yellow-500/10 px-2.5 py-1 text-yellow-300">50–79%</span>
+                <span className="rounded-full border border-red-500/20 bg-red-500/10 px-2.5 py-1 text-red-300">0–49%</span>
+              </div>
             </div>
 
-            <div className="flex flex-wrap gap-2 h-36 overflow-y-auto pr-2 content-start min-h-0 w-full">
+            <div className="flex h-40 min-h-0 w-full flex-wrap content-start gap-2 overflow-y-auto overscroll-contain pr-2 [scrollbar-color:#475569_transparent] [scrollbar-width:thin]">
               {heatmapArray.map((item) => {
                 let colorClass =
-                  "bg-green-500/10 text-green-400 border-green-500/30"
+                  "bg-emerald-500/10 text-emerald-300 border-emerald-500/25"
 
                 if (item.saude < 50) {
-                  colorClass = "bg-red-500/10 text-red-400 border-red-500/30"
+                  colorClass = "bg-red-500/10 text-red-300 border-red-500/25"
                 } else if (item.saude < 80) {
                   colorClass =
-                    "bg-yellow-500/10 text-yellow-400 border-yellow-500/30"
+                    "bg-yellow-500/10 text-yellow-300 border-yellow-500/25"
                 }
 
                 return (
                   <div
                     key={item.escola}
-                    className={`px-2 py-1.5 rounded-lg border flex flex-col justify-center items-center cursor-help shrink-0 w-20 sm:w-24 h-16 sm:h-20 transition-colors hover:brightness-125 ${colorClass}`}
+                    className={`flex h-20 w-24 shrink-0 cursor-help flex-col items-center justify-center rounded-xl border px-2 py-2 text-center transition hover:-translate-y-0.5 hover:brightness-125 ${colorClass}`}
                     title={`${item.escola}: ${item.saude}% (${item.recebido} recebidos)`}
                   >
-                    <span className="text-[9px] sm:text-[10px] uppercase font-bold truncate w-full text-center leading-tight">
+                    <span className="w-full truncate text-[9px] font-black uppercase leading-tight">
                       {item.escola}
                     </span>
-                    <span className="text-sm sm:text-base font-black mt-0.5">
+                    <span className="mt-1 text-lg font-black">
                       {item.saude}%
+                    </span>
+                    <span className="mt-0.5 text-[8px] font-bold uppercase tracking-widest opacity-60">
+                      {item.funcionando}/{item.recebido}
                     </span>
                   </div>
                 )
               })}
 
               {heatmapArray.length === 0 && (
-                <p className="text-sm text-slate-500 w-full text-center py-4 flex-1">
+                <p className="flex w-full flex-1 items-center justify-center py-4 text-center text-sm text-slate-500">
                   Aguardando dados das escolas para gerar mapa.
                 </p>
               )}

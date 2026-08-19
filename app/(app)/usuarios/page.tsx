@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import type { FormEvent, ReactNode } from "react"
+import type { ReactNode } from "react"
 import {
   createUser,
   updateUser,
@@ -122,6 +122,13 @@ type Usuario = {
 
 type ModalMode = "create" | "edit" | null
 
+type UserActionResult = {
+  ok: boolean
+  message: string
+}
+
+type UserServerAction = (formData: FormData) => Promise<UserActionResult>
+
 function normalizarTexto(value: unknown) {
   return String(value || "")
     .normalize("NFD")
@@ -167,9 +174,6 @@ function getRoleTone(role?: string | null) {
   return "slate"
 }
 
-async function deleteUserFormAction(formData: FormData): Promise<void> {
-  await deleteUser(formData)
-}
 
 export default function UsuariosClient() {
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
@@ -185,6 +189,7 @@ export default function UsuariosClient() {
 
   const [modalMode, setModalMode] = useState<ModalMode>(null)
   const [selectedUser, setSelectedUser] = useState<Usuario | null>(null)
+  const [processandoAcao, setProcessandoAcao] = useState(false)
 
   const fetchUsers = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true)
@@ -286,32 +291,97 @@ export default function UsuariosClient() {
     setSelectedUser(null)
   }
 
-  function afterAction(message: string) {
+  async function executarAcao(
+    action: UserServerAction,
+    formData: FormData,
+    mensagemProcessando: string,
+    fecharModalAoConcluir = true
+  ) {
+    if (processandoAcao) return false
+
+    setProcessandoAcao(true)
     setFeedback({
       type: "info",
-      message,
+      message: mensagemProcessando,
     })
 
-    window.setTimeout(() => {
-      fetchUsers(true)
-      closeModal()
-    }, 1200)
+    try {
+      const result = await action(formData)
+
+      if (!result?.ok) {
+        setFeedback({
+          type: "error",
+          message: result?.message || "A operação não pôde ser concluída.",
+        })
+        return false
+      }
+
+      setFeedback({
+        type: "success",
+        message: result.message,
+      })
+
+      await fetchUsers(true)
+
+      if (fecharModalAoConcluir) {
+        closeModal()
+      }
+
+      return true
+    } catch (error) {
+      console.error("[USUÁRIOS] Erro ao executar ação:", error)
+
+      setFeedback({
+        type: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Ocorreu um erro inesperado ao processar a solicitação.",
+      })
+
+      return false
+    } finally {
+      setProcessandoAcao(false)
+    }
   }
 
-  function handleDelete(e: FormEvent<HTMLFormElement>) {
-    const confirmacao = window.confirm(
-      "🚨 ATENÇÃO!\n\nTem certeza absoluta que deseja EXCLUIR este usuário? Essa ação não pode ser desfeita e ele perderá acesso imediatamente."
-    )
-
-    if (!confirmacao) {
-      e.preventDefault()
-      return
+  async function handleDelete(usuario: Usuario) {
+    if (usuario.role === "admin") {
+      setFeedback({
+        type: "error",
+        message:
+          "Usuários administradores não podem ser excluídos pela interface do sistema.",
+      })
+      return false
     }
 
-    window.setTimeout(() => {
-      fetchUsers(true)
-      closeModal()
-    }, 1200)
+    const confirmacao = window.confirm(
+      `🚨 ATENÇÃO!\n\nTem certeza absoluta que deseja EXCLUIR ${
+        usuario.nome || usuario.email || "este usuário"
+      }?\n\nEssa ação não pode ser desfeita e o acesso será removido imediatamente.`
+    )
+
+    if (!confirmacao) return false
+
+    const formData = new FormData()
+    formData.set("id", usuario.id)
+
+    const excluido = await executarAcao(
+      deleteUser,
+      formData,
+      "Excluindo usuário...",
+      true
+    )
+
+    if (excluido) {
+      // Atualização otimista para a linha desaparecer imediatamente,
+      // seguida pela consulta real executada em executarAcao().
+      setUsuarios((atuais) =>
+        atuais.filter((item) => item.id !== usuario.id)
+      )
+    }
+
+    return excluido
   }
 
   return (
@@ -520,7 +590,6 @@ export default function UsuariosClient() {
                     usuario={usuario}
                     onEdit={() => openEditModal(usuario)}
                     onDelete={handleDelete}
-                    onAfterDelete={() => fetchUsers(true)}
                   />
                 ))}
               </div>
@@ -601,25 +670,16 @@ export default function UsuariosClient() {
                           />
 
                           <form
-                            action={deleteUserFormAction}
                             onSubmit={(event) => {
-                              if (usuario.role === "admin") {
-                                event.preventDefault()
-                                setFeedback({
-                                  type: "error",
-                                  message:
-                                    "Usuários administradores não podem ser excluídos pela interface do sistema.",
-                                })
-                                return
-                              }
-
-                              handleDelete(event)
-                              window.setTimeout(() => fetchUsers(true), 1200)
+                              event.preventDefault()
+                              void handleDelete(usuario)
                             }}
                           >
-                            <input type="hidden" name="id" value={usuario.id} />
-
-                            <DeleteButton disabled={usuario.role === "admin"} />
+                            <DeleteButton
+                              disabled={
+                                usuario.role === "admin" || processandoAcao
+                              }
+                            />
                           </form>
                         </div>
                       </td>
@@ -635,8 +695,14 @@ export default function UsuariosClient() {
       {modalMode === "create" && (
         <CreateUserModal
           onClose={closeModal}
-          onAfterSubmit={() =>
-            afterAction("Solicitação enviada. Atualizando a lista de usuários...")
+          processing={processandoAcao}
+          onSubmitAction={(formData) =>
+            executarAcao(
+              createUser,
+              formData,
+              "Criando usuário...",
+              true
+            )
           }
         />
       )}
@@ -645,8 +711,30 @@ export default function UsuariosClient() {
         <EditUserModal
           user={selectedUser}
           onClose={closeModal}
-          onAfterSubmit={() =>
-            afterAction("Solicitação enviada. Atualizando os dados do usuário...")
+          processing={processandoAcao}
+          onUpdateUser={(formData) =>
+            executarAcao(
+              updateUser,
+              formData,
+              "Salvando dados do usuário...",
+              true
+            )
+          }
+          onUpdateEmail={(formData) =>
+            executarAcao(
+              updateEmail,
+              formData,
+              "Atualizando e-mail...",
+              true
+            )
+          }
+          onResetPassword={(formData) =>
+            executarAcao(
+              resetPassword,
+              formData,
+              "Redefinindo senha...",
+              false
+            )
           }
           onDelete={handleDelete}
         />
@@ -657,10 +745,12 @@ export default function UsuariosClient() {
 
 function CreateUserModal({
   onClose,
-  onAfterSubmit,
+  onSubmitAction,
+  processing,
 }: {
   onClose: () => void
-  onAfterSubmit: () => void
+  onSubmitAction: (formData: FormData) => Promise<boolean>
+  processing: boolean
 }) {
   return (
     <div className="fixed inset-0 z-[100] flex items-end justify-center p-0 sm:items-center sm:p-6">
@@ -686,8 +776,10 @@ function CreateUserModal({
           />
 
           <form
-            action={createUser}
-            onSubmit={() => onAfterSubmit()}
+            onSubmit={(event) => {
+              event.preventDefault()
+              void onSubmitAction(new FormData(event.currentTarget))
+            }}
             className="space-y-6 p-5 sm:space-y-8 sm:p-10"
             autoComplete="off"
           >
@@ -771,7 +863,8 @@ function CreateUserModal({
 
             <ModalFooter
               onClose={onClose}
-              submitLabel="Criar Usuário"
+              submitLabel={processing ? "Criando usuário..." : "Criar Usuário"}
+              disabled={processing}
             />
           </form>
         </div>
@@ -783,13 +876,19 @@ function CreateUserModal({
 function EditUserModal({
   user,
   onClose,
-  onAfterSubmit,
+  processing,
+  onUpdateUser,
+  onUpdateEmail,
+  onResetPassword,
   onDelete,
 }: {
   user: Usuario
   onClose: () => void
-  onAfterSubmit: () => void
-  onDelete: (event: FormEvent<HTMLFormElement>) => void
+  processing: boolean
+  onUpdateUser: (formData: FormData) => Promise<boolean>
+  onUpdateEmail: (formData: FormData) => Promise<boolean>
+  onResetPassword: (formData: FormData) => Promise<boolean>
+  onDelete: (user: Usuario) => Promise<boolean>
 }) {
   return (
     <div className="fixed inset-0 z-[100] flex items-end justify-center p-0 sm:items-center sm:p-6">
@@ -813,8 +912,10 @@ function EditUserModal({
 
           <div className="space-y-6 p-5 sm:space-y-8 sm:p-10">
             <form
-              action={updateUser}
-              onSubmit={() => onAfterSubmit()}
+              onSubmit={(event) => {
+                event.preventDefault()
+                void onUpdateUser(new FormData(event.currentTarget))
+              }}
               className="space-y-6"
               autoComplete="off"
             >
@@ -880,9 +981,10 @@ function EditUserModal({
               <div className="flex justify-end">
                 <button
                   type="submit"
-                  className="inline-flex w-full items-center justify-center gap-3 rounded-2xl bg-blue-600 px-6 py-4 text-sm font-bold text-white transition-all hover:bg-blue-500 sm:w-auto"
+                  disabled={processing}
+                  className="inline-flex w-full items-center justify-center gap-3 rounded-2xl bg-blue-600 px-6 py-4 text-sm font-bold text-white transition-all hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                 >
-                  Salvar dados gerais
+                  {processing ? "Processando..." : "Salvar dados gerais"}
                 </button>
               </div>
             </form>
@@ -907,8 +1009,10 @@ function EditUserModal({
 
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <form
-                  action={updateEmail}
-                  onSubmit={() => onAfterSubmit()}
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    void onUpdateEmail(new FormData(event.currentTarget))
+                  }}
                   className="rounded-2xl border border-slate-800 bg-[#020617] p-4"
                 >
                   <input type="hidden" name="id" value={user.id} />
@@ -924,15 +1028,18 @@ function EditUserModal({
 
                   <button
                     type="submit"
-                    className="mt-4 w-full rounded-2xl border border-slate-700 bg-slate-800 px-5 py-3 text-xs font-bold uppercase tracking-widest text-slate-200 transition-all hover:bg-slate-700"
+                    disabled={processing}
+                    className="mt-4 w-full rounded-2xl border border-slate-700 bg-slate-800 px-5 py-3 text-xs font-bold uppercase tracking-widest text-slate-200 transition-all hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Atualizar e-mail
+                    {processing ? "Processando..." : "Atualizar e-mail"}
                   </button>
                 </form>
 
                 <form
-                  action={resetPassword}
-                  onSubmit={() => onAfterSubmit()}
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    void onResetPassword(new FormData(event.currentTarget))
+                  }}
                   className="rounded-2xl border border-slate-800 bg-[#020617] p-4"
                 >
                   <input type="hidden" name="id" value={user.id} />
@@ -946,9 +1053,10 @@ function EditUserModal({
 
                   <button
                     type="submit"
-                    className="mt-4 w-full rounded-2xl border border-slate-700 bg-slate-800 px-5 py-3 text-xs font-bold uppercase tracking-widest text-slate-200 transition-all hover:bg-slate-700"
+                    disabled={processing}
+                    className="mt-4 w-full rounded-2xl border border-slate-700 bg-slate-800 px-5 py-3 text-xs font-bold uppercase tracking-widest text-slate-200 transition-all hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Redefinir senha
+                    {processing ? "Processando..." : "Redefinir senha"}
                   </button>
                 </form>
               </div>
@@ -968,23 +1076,15 @@ function EditUserModal({
                 </div>
 
                 <form
-                  action={deleteUserFormAction}
                   onSubmit={(event) => {
-                    if (user.role === "admin") {
-                      event.preventDefault()
-                      return
-                    }
-
-                    onDelete(event)
-                    window.setTimeout(() => onClose(), 1200)
+                    event.preventDefault()
+                    void onDelete(user)
                   }}
                   className="w-full sm:w-auto"
                 >
-                  <input type="hidden" name="id" value={user.id} />
-
                   <button
                     type="submit"
-                    disabled={user.role === "admin"}
+                    disabled={user.role === "admin" || processing}
                     title={
                       user.role === "admin"
                         ? "Usuários admin não podem ser excluídos pela interface"
@@ -1023,12 +1123,10 @@ function UsuarioMobileCard({
   usuario,
   onEdit,
   onDelete,
-  onAfterDelete,
 }: {
   usuario: Usuario
   onEdit: () => void
-  onDelete: (event: FormEvent<HTMLFormElement>) => void
-  onAfterDelete: () => void
+  onDelete: (user: Usuario) => Promise<boolean>
 }) {
   return (
     <article className="rounded-[1.75rem] border border-slate-800 bg-slate-900/50 p-4 shadow-sm">
@@ -1077,18 +1175,11 @@ function UsuarioMobileCard({
         </button>
 
         <form
-          action={deleteUserFormAction}
           onSubmit={(event) => {
-            if (usuario.role === "admin") {
-              event.preventDefault()
-              return
-            }
-
-            onDelete(event)
-            window.setTimeout(() => onAfterDelete(), 1200)
+            event.preventDefault()
+            void onDelete(usuario)
           }}
         >
-          <input type="hidden" name="id" value={usuario.id} />
 
           <button
             type="submit"
@@ -1158,9 +1249,11 @@ function ModalHeader({
 function ModalFooter({
   onClose,
   submitLabel,
+  disabled = false,
 }: {
   onClose: () => void
   submitLabel: string
+  disabled?: boolean
 }) {
   return (
     <div className="sticky bottom-0 -mx-5 -mb-5 flex flex-col gap-3 border-t border-slate-800 bg-[#020617]/95 p-5 backdrop-blur-xl sm:-mx-10 sm:-mb-10 sm:flex-row sm:p-6">
@@ -1174,7 +1267,8 @@ function ModalFooter({
 
       <button
         type="submit"
-        className="flex items-center justify-center gap-3 rounded-2xl bg-blue-600 px-6 py-4 text-sm font-bold text-white shadow-lg shadow-blue-950/20 transition-all hover:bg-blue-500 sm:flex-1"
+        disabled={disabled}
+        className="flex items-center justify-center gap-3 rounded-2xl bg-blue-600 px-6 py-4 text-sm font-bold text-white shadow-lg shadow-blue-950/20 transition-all hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-1"
       >
         {submitLabel}
       </button>
