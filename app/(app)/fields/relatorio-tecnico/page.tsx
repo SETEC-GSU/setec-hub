@@ -9,6 +9,16 @@ import {
   type FormEvent,
 } from "react";
 import { createClient } from "@/lib/supabase";
+import SerialBarcodeScanner from "@/components/SerialBarcodeScanner";
+import {
+  LIMITE_RETORNO_CHAMADO,
+  LIMITE_SEGURO_RETORNO_CHAMADO,
+  contarCaracteresRetorno,
+  dividirRetornoEmPartes,
+  montarTextoRetornoCompacto,
+  obterTitulosEquipamentosRetorno,
+  type ModoRetornoChamado,
+} from "@/lib/retornoChamado";
 
 type UsuarioPerfil = {
   id: string;
@@ -110,9 +120,17 @@ type PdfPronto = {
   parecer: ParecerHistorico;
 } | null;
 
+type VersaoRetornoChamado = {
+  textos: string[];
+  indice: number;
+  copiadas: boolean[];
+  erro: string | null;
+};
+
 type RetornoChamadoModal = {
   parecer: ParecerHistorico;
-  texto: string;
+  modo: ModoRetornoChamado;
+  versoes: Record<ModoRetornoChamado, VersaoRetornoChamado>;
 } | null;
 
 type PendenciaValidacao = {
@@ -1387,6 +1405,17 @@ export default function ParecerTecnicoPage() {
   const [pdfPronto, setPdfPronto] = useState<PdfPronto>(null);
   const [retornoChamadoModal, setRetornoChamadoModal] =
     useState<RetornoChamadoModal>(null);
+  const [retornoCopiando, setRetornoCopiando] = useState(false);
+  const retornoCopiandoRef = useRef(false);
+  const retornoDialogRef = useRef<HTMLDivElement>(null);
+  const retornoAberto = Boolean(retornoChamadoModal);
+  const versaoRetornoAtual = retornoChamadoModal
+    ? retornoChamadoModal.versoes[retornoChamadoModal.modo]
+    : null;
+  const textoRetornoAtual = versaoRetornoAtual?.textos[versaoRetornoAtual.indice] || "";
+  const caracteresRetornoAtual = contarCaracteresRetorno(textoRetornoAtual);
+  const retornoAcimaDoLimite = caracteresRetornoAtual > LIMITE_RETORNO_CHAMADO;
+  const retornoPertoDoLimite = caracteresRetornoAtual >= LIMITE_SEGURO_RETORNO_CHAMADO;
   const [splashValidacao, setSplashValidacao] = useState<SplashValidacao>(null);
   const [autosaveStatus, setAutosaveStatus] =
     useState<AutosaveStatus>("aguardando");
@@ -1428,6 +1457,12 @@ export default function ParecerTecnicoPage() {
   const [resumoAtendimento, setResumoAtendimento] = useState("");
   const [observacoesGerais, setObservacoesGerais] = useState("");
   const [itens, setItens] = useState<ItemParecer[]>([novoItem()]);
+  const [leitorSerialItemId, setLeitorSerialItemId] = useState<string | null>(null);
+  const itemLeitorSerial = itens.find((item) => item.tempId === leitorSerialItemId);
+
+  useEffect(() => {
+    if (leitorSerialItemId && !itemLeitorSerial) setLeitorSerialItemId(null);
+  }, [leitorSerialItemId, itemLeitorSerial]);
 
   const ultimoItemRegistrado = itens[itens.length - 1] || null;
   const podeReaproveitarUltimoItem =
@@ -2135,6 +2170,47 @@ export default function ParecerTecnicoPage() {
     };
   }, [historicoAberto, retornoChamadoModal]);
 
+  useEffect(() => {
+    if (!retornoAberto) return;
+    const dialog = retornoDialogRef.current;
+    if (!dialog) return;
+    const focoAnterior = document.activeElement as HTMLElement | null;
+    const bloquearRolagem = !historicoAberto;
+    const overflowAnterior = document.body.style.overflow;
+    if (bloquearRolagem) document.body.style.overflow = "hidden";
+    dialog.focus();
+
+    const controlarTeclado = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setRetornoChamadoModal(null);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focaveis = Array.from(dialog.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex="0"]',
+      )).filter(elemento => elemento.getClientRects().length > 0);
+      const primeiro = focaveis[0];
+      const ultimo = focaveis[focaveis.length - 1];
+      if (!primeiro || !ultimo) {
+        event.preventDefault();
+        dialog.focus();
+      } else if (event.shiftKey && (document.activeElement === primeiro || document.activeElement === dialog)) {
+        event.preventDefault();
+        ultimo.focus();
+      } else if (!event.shiftKey && (document.activeElement === ultimo || document.activeElement === dialog)) {
+        event.preventDefault();
+        primeiro.focus();
+      }
+    };
+    window.addEventListener("keydown", controlarTeclado);
+    return () => {
+      window.removeEventListener("keydown", controlarTeclado);
+      if (bloquearRolagem) document.body.style.overflow = overflowAnterior;
+      if (focoAnterior?.isConnected) focoAnterior.focus({ preventScroll: true });
+    };
+  }, [retornoAberto, historicoAberto]);
+
   function limparBackupLocal() {
     if (!usuario?.auth_user_id) return;
 
@@ -2243,9 +2319,9 @@ export default function ParecerTecnicoPage() {
     setAdicionarItemModalAberto(false);
 
     window.setTimeout(() => {
-      document
-        .getElementById(`equipamento-card-${itemCriado.tempId}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      const card = document.getElementById(`equipamento-card-${itemCriado.tempId}`);
+      card?.scrollIntoView({ behavior: "smooth", block: "start" });
+      card?.querySelector<HTMLSelectElement>("select")?.focus({ preventScroll: true });
     }, 120);
   }
 
@@ -3018,38 +3094,155 @@ export default function ParecerTecnicoPage() {
 
     setRetornoChamadoModal({
       parecer,
-      texto: montarTextoRetornoChamado(parecer),
+      modo: "compacto",
+      versoes: {
+        compacto: {
+          textos: [montarTextoRetornoCompacto(parecer, formatarData(parecer.data_atendimento))],
+          indice: 0,
+          copiadas: [false],
+          erro: null,
+        },
+        completo: {
+          textos: [montarTextoRetornoChamado(parecer)],
+          indice: 0,
+          copiadas: [false],
+          erro: null,
+        },
+      },
+    });
+  }
+
+  function editarTextoRetornoChamado(texto: string) {
+    setRetornoChamadoModal((atual) => {
+      if (!atual) return atual;
+      const versao = atual.versoes[atual.modo];
+      return {
+        ...atual,
+        versoes: {
+          ...atual.versoes,
+          [atual.modo]: {
+            ...versao,
+            textos: versao.textos.map((valor, index) => index === versao.indice ? texto : valor),
+            copiadas: versao.copiadas.map((valor, index) => index === versao.indice ? false : valor),
+            erro: null,
+          },
+        },
+      };
+    });
+  }
+
+  function selecionarParteRetorno(indice: number) {
+    setRetornoChamadoModal((atual) => {
+      if (!atual) return atual;
+      const versao = atual.versoes[atual.modo];
+      if (indice < 0 || indice >= versao.textos.length) return atual;
+      return {
+        ...atual,
+        versoes: { ...atual.versoes, [atual.modo]: { ...versao, indice, erro: null } },
+      };
+    });
+  }
+
+  function prepararPartesRetorno() {
+    setRetornoChamadoModal((atual) => {
+      if (!atual) return atual;
+      const versao = atual.versoes[atual.modo];
+      if (versao.textos.length !== 1) return atual;
+      const divisao = dividirRetornoEmPartes(
+        versao.textos[0],
+        obterTitulosEquipamentosRetorno(atual.parecer, atual.modo),
+        atual.parecer.id,
+      );
+      return {
+        ...atual,
+        versoes: {
+          ...atual.versoes,
+          [atual.modo]: divisao.erro
+            ? { ...versao, erro: divisao.erro }
+            : {
+                textos: divisao.partes,
+                indice: 0,
+                copiadas: divisao.partes.map(() => false),
+                erro: null,
+              },
+        },
+      };
     });
   }
 
   async function copiarRetornoChamado() {
-    if (!retornoChamadoModal?.texto.trim()) return;
+    if (!retornoChamadoModal || !versaoRetornoAtual || !textoRetornoAtual.trim() || retornoCopiandoRef.current) return;
+    if (contarCaracteresRetorno(textoRetornoAtual) > LIMITE_RETORNO_CHAMADO) {
+      setMensagem({ tipo: "error", texto: "O retorno excede 10.000 caracteres. Reduza o texto ou prepare as partes antes de copiar." });
+      return;
+    }
+    const relatorioId = retornoChamadoModal.parecer.id;
+    const modo = retornoChamadoModal.modo;
+    const indice = versaoRetornoAtual.indice;
+    const total = versaoRetornoAtual.textos.length;
+    const texto = textoRetornoAtual;
+    retornoCopiandoRef.current = true;
+    setRetornoCopiando(true);
 
     try {
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(retornoChamadoModal.texto);
+        await navigator.clipboard.writeText(texto);
       } else {
+        const focoAnterior = document.activeElement as HTMLElement | null;
         const textarea = document.createElement("textarea");
-        textarea.value = retornoChamadoModal.texto;
+        textarea.value = texto;
         textarea.style.position = "fixed";
         textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.focus();
-        textarea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textarea);
+        (retornoDialogRef.current || document.body).appendChild(textarea);
+        try {
+          textarea.focus();
+          textarea.select();
+          if (!document.execCommand("copy")) throw new Error("Cópia não autorizada pelo navegador.");
+        } finally {
+          textarea.remove();
+          if (focoAnterior?.isConnected) focoAnterior.focus({ preventScroll: true });
+        }
       }
 
+      setRetornoChamadoModal((atual) => {
+        if (!atual || atual.parecer.id !== relatorioId) return atual;
+        const versao = atual.versoes[modo];
+        if (versao.textos[indice] !== texto) return atual;
+        return {
+          ...atual,
+          versoes: {
+            ...atual.versoes,
+            [modo]: { ...versao, erro: null, copiadas: versao.copiadas.map((valor, index) => index === indice ? true : valor) },
+          },
+        };
+      });
       setMensagem({
         tipo: "success",
-        texto: "Texto de retorno copiado. Agora basta colar no chamado.",
+        texto: total > 1
+          ? `Parte ${indice + 1}/${total} copiada. Cole no chamado e depois copie a próxima parte.`
+          : "Texto de retorno copiado. Agora basta colar no chamado.",
       });
     } catch (error) {
       console.error("Erro ao copiar retorno do chamado:", error);
+      setRetornoChamadoModal((atual) => {
+        if (!atual || atual.parecer.id !== relatorioId) return atual;
+        const versao = atual.versoes[modo];
+        if (versao.textos[indice] !== texto) return atual;
+        return {
+          ...atual,
+          versoes: {
+            ...atual.versoes,
+            [modo]: { ...versao, erro: "Não foi possível copiar automaticamente. Selecione o texto e copie manualmente." },
+          },
+        };
+      });
       setMensagem({
         tipo: "error",
         texto: "Não foi possível copiar automaticamente. Selecione o texto e copie manualmente.",
       });
+    } finally {
+      retornoCopiandoRef.current = false;
+      setRetornoCopiando(false);
     }
   }
 
@@ -3619,19 +3812,41 @@ export default function ParecerTecnicoPage() {
                   <p className="mt-1 text-sm font-medium text-slate-500">
                     Preencha os equipamentos avaliados no atendimento técnico.
                   </p>
+                  <p
+                    className="mt-2 text-xs font-semibold text-cyan-300/80"
+                    aria-live="polite"
+                  >
+                    {itens.length}{" "}
+                    {itens.length === 1
+                      ? "equipamento no formulário"
+                      : "equipamentos no formulário"}
+                  </p>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    document
-                      .getElementById("finalizacao-relatorio")
-                      ?.scrollIntoView({ behavior: "smooth", block: "start" })
-                  }
-                  className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-5 py-3 text-xs font-black uppercase tracking-widest text-emerald-300 transition-all hover:bg-emerald-500 hover:text-emerald-950"
-                >
-                  Ir para finalização
-                </button>
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:shrink-0 lg:flex-row">
+                  <button
+                    type="button"
+                    onClick={adicionarItem}
+                    disabled={salvando}
+                    className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-2xl bg-cyan-500 px-5 py-3 text-xs font-black uppercase tracking-widest text-cyan-950 shadow-lg shadow-cyan-950/20 transition hover:bg-cyan-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <span aria-hidden="true" className="text-xl leading-none">
+                      +
+                    </span>
+                    Adicionar equipamento
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      document
+                        .getElementById("finalizacao-relatorio")
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                    }
+                    className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-5 py-3 text-xs font-black uppercase tracking-widest text-emerald-300 transition-all hover:bg-emerald-500 hover:text-emerald-950"
+                  >
+                    Ir para finalização
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -3760,15 +3975,45 @@ export default function ParecerTecnicoPage() {
                           </div>
 
                           <div className="lg:col-span-6">
-                            <Campo
-                              id={`item-${index}-serial`}
-                              label="Número de série *"
-                              value={item.numero_serie}
-                              onChange={(value) =>
-                                atualizarItem(item.tempId, "numero_serie", value)
-                              }
-                              placeholder="Serial do equipamento"
-                            />
+                            <div className="flex min-w-0 items-end gap-2">
+                              <div className="min-w-0 flex-1">
+                                <Campo
+                                  id={`item-${index}-serial`}
+                                  label="Número de série *"
+                                  value={item.numero_serie}
+                                  onChange={(value) =>
+                                    atualizarItem(item.tempId, "numero_serie", value)
+                                  }
+                                  placeholder="Serial do equipamento"
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setLeitorSerialItemId(item.tempId)}
+                                disabled={salvando}
+                                aria-label={`Ler número de série pela câmera do equipamento ${index + 1}`}
+                                aria-haspopup="dialog"
+                                title="Ler código de barras pela câmera (opcional)"
+                                className="mb-px inline-flex h-[54px] w-[54px] shrink-0 items-center justify-center rounded-2xl border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 transition hover:border-cyan-400 hover:bg-cyan-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                <svg
+                                  aria-hidden="true"
+                                  width="24"
+                                  height="24"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="1.7"
+                                  strokeLinecap="round"
+                                >
+                                  <path d="M4 7V4h3M17 4h3v3M20 17v3h-3M7 20H4v-3M7 8v8M10 8v8M14 8v8M17 8v8" />
+                                  <path d="M12 8v8" strokeWidth="2.8" />
+                                </svg>
+                              </button>
+                            </div>
+                            <p className="mt-2 text-[11px] font-medium leading-relaxed text-slate-500">
+                              Digite o serial ou use a câmera para ler o código de barras da etiqueta.
+                            </p>
                           </div>
 
                           <div className="lg:col-span-6">
@@ -4120,6 +4365,23 @@ export default function ParecerTecnicoPage() {
 
         </section>
       </form>
+
+      {itemLeitorSerial && (
+        <SerialBarcodeScanner
+          equipamento={itemLeitorSerial.equipamento || "Novo equipamento"}
+          serialAtual={itemLeitorSerial.numero_serie}
+          onClose={() => setLeitorSerialItemId(null)}
+          onConfirm={(serial) => {
+            if (salvandoRef.current) return;
+            atualizarItem(itemLeitorSerial.tempId, "numero_serie", serial);
+            setLeitorSerialItemId(null);
+            setMensagem({
+              tipo: "success",
+              texto: "Número de série preenchido. Continue o registro do equipamento.",
+            });
+          }}
+        />
+      )}
 
       {adicionarItemModalAberto && (
         <div
@@ -4584,7 +4846,7 @@ export default function ParecerTecnicoPage() {
         </div>
       )}
 
-      {retornoChamadoModal && (
+      {retornoChamadoModal && versaoRetornoAtual && (
         <div
           className="fixed inset-0 z-[10001] flex items-center justify-center bg-[#020617]/95 p-4 backdrop-blur-md"
           onMouseDown={(event) => {
@@ -4593,7 +4855,15 @@ export default function ParecerTecnicoPage() {
             }
           }}
         >
-          <div className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-[2rem] border border-blue-500/30 bg-[#020617] shadow-2xl shadow-blue-950/30">
+          <div
+            ref={retornoDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="retorno-chamado-titulo"
+            aria-describedby="retorno-chamado-descricao"
+            tabIndex={-1}
+            className="flex max-h-[92dvh] w-full max-w-4xl flex-col overflow-hidden rounded-[2rem] border border-blue-500/30 bg-[#020617] shadow-2xl shadow-blue-950/30 outline-none"
+          >
             <div className="relative shrink-0 overflow-hidden border-b border-slate-800 p-5 sm:p-7">
               <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(59,130,246,0.18),transparent_38%)]" />
 
@@ -4602,11 +4872,11 @@ export default function ParecerTecnicoPage() {
                   <p className="mb-2 text-[10px] font-black uppercase tracking-[0.22em] text-blue-300">
                     Retorno padronizado
                   </p>
-                  <h2 className="text-2xl font-black tracking-tight text-white">
+                  <h2 id="retorno-chamado-titulo" className="text-xl font-black tracking-tight text-white sm:text-2xl">
                     Texto pronto para o chamado
                   </h2>
-                  <p className="mt-2 text-sm font-medium leading-relaxed text-slate-400">
-                    O texto reúne escola, atendimento, equipamentos, números de série, ações e resultados. Ele pode ser ajustado antes de copiar.
+                  <p id="retorno-chamado-descricao" className="mt-2 text-sm font-medium leading-relaxed text-slate-400">
+                    Equipamentos separados, texto editável e limite de 10.000 caracteres.
                   </p>
                 </div>
 
@@ -4622,11 +4892,13 @@ export default function ParecerTecnicoPage() {
             </div>
 
             <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-5 sm:p-7">
-              <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <InfoBox
-                  label="Unidade Escolar"
-                  value={retornoChamadoModal.parecer.escola_nome || "Não informada"}
-                />
+              <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <div className="col-span-2 sm:col-span-1">
+                  <InfoBox
+                    label="Unidade Escolar"
+                    value={retornoChamadoModal.parecer.escola_nome || "Não informada"}
+                  />
+                </div>
                 <InfoBox
                   label="Data do atendimento"
                   value={formatarData(retornoChamadoModal.parecer.data_atendimento)}
@@ -4637,21 +4909,118 @@ export default function ParecerTecnicoPage() {
                 />
               </div>
 
+              <div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div role="group" aria-label="Formato do retorno" className="grid min-w-0 grid-cols-2 gap-2 sm:w-72">
+                    {(["compacto", "completo"] as const).map((modo) => (
+                      <button
+                        key={modo}
+                        type="button"
+                        aria-pressed={retornoChamadoModal.modo === modo}
+                        disabled={retornoCopiando}
+                        onClick={() => setRetornoChamadoModal((atual) => atual ? { ...atual, modo } : atual)}
+                        className={`rounded-xl border px-4 py-3 text-xs font-black uppercase tracking-wider transition disabled:opacity-50 ${retornoChamadoModal.modo === modo ? "border-cyan-500/40 bg-cyan-500/15 text-cyan-300" : "border-slate-700 bg-slate-950 text-slate-400 hover:border-slate-500 hover:text-white"}`}
+                      >
+                        {modo === "compacto" ? "Compacto" : "Completo"}
+                      </button>
+                    ))}
+                  </div>
+                  <p id="retorno-contagem" className={`text-sm font-black tabular-nums ${retornoAcimaDoLimite ? "text-red-300" : retornoPertoDoLimite ? "text-amber-300" : "text-emerald-300"}`}>
+                    {caracteresRetornoAtual.toLocaleString("pt-BR")} / 10.000 caracteres
+                  </p>
+                </div>
+                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-800" aria-hidden="true">
+                  <div
+                    className={`h-full rounded-full transition-all ${retornoAcimaDoLimite ? "bg-red-400" : retornoPertoDoLimite ? "bg-amber-400" : "bg-emerald-400"}`}
+                    style={{ width: `${Math.min(100, caracteresRetornoAtual / LIMITE_RETORNO_CHAMADO * 100)}%` }}
+                  />
+                </div>
+                <p className="mt-3 text-xs leading-relaxed text-slate-400">
+                  {retornoChamadoModal.modo === "compacto"
+                    ? "Títulos curtos e menos frases repetidas, mantendo série, patrimônio, problema, ação e resultado de cada equipamento."
+                    : "Formato detalhado original do retorno. As edições de cada formato ficam preservadas enquanto este modal estiver aberto."}
+                </p>
+              </div>
+
+              {retornoPertoDoLimite && (
+                <div role={retornoAcimaDoLimite ? "alert" : "status"} className={`mb-4 rounded-2xl border p-4 text-sm leading-relaxed ${retornoAcimaDoLimite ? "border-red-500/30 bg-red-500/10 text-red-200" : "border-amber-500/30 bg-amber-500/10 text-amber-200"}`}>
+                  {retornoAcimaDoLimite
+                    ? `Este texto excede o limite em ${(caracteresRetornoAtual - LIMITE_RETORNO_CHAMADO).toLocaleString("pt-BR")} ${caracteresRetornoAtual - LIMITE_RETORNO_CHAMADO === 1 ? "caractere" : "caracteres"}. A cópia fica bloqueada até ajustar o texto ou preparar partes.`
+                    : "O texto está próximo do limite. Confira a colagem antes de enviar o retorno."}
+                </div>
+              )}
+
+              {versaoRetornoAtual.textos.length === 1 && caracteresRetornoAtual > LIMITE_SEGURO_RETORNO_CHAMADO && (
+                <div className="mb-4 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4">
+                  <p className="text-sm leading-relaxed text-slate-300">
+                    Se o sistema aceitar vários retornos, prepare partes de até 9.500 caracteres e cole uma por vez. Cada equipamento fica inteiro. Para um único retorno, reduza o texto e use o relatório completo como referência.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={retornoCopiando}
+                    onClick={prepararPartesRetorno}
+                    className="mt-3 w-full rounded-xl border border-blue-500/35 bg-blue-500/10 px-4 py-3 text-xs font-black uppercase tracking-wider text-blue-200 transition hover:bg-blue-500/20 disabled:opacity-50 sm:w-auto"
+                  >
+                    Preparar partes de até 9.500
+                  </button>
+                </div>
+              )}
+
+              {versaoRetornoAtual.erro && (
+                <p role="alert" className="mb-4 break-words rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm leading-relaxed text-red-200">
+                  {versaoRetornoAtual.erro}
+                </p>
+              )}
+
+              {versaoRetornoAtual.textos.length > 1 && (
+                <div className="mb-4 rounded-2xl border border-cyan-500/25 bg-cyan-500/5 p-4">
+                  <p className="mb-3 text-xs font-bold leading-relaxed text-cyan-200">
+                    {versaoRetornoAtual.copiadas.filter(Boolean).length} de {versaoRetornoAtual.textos.length} partes copiadas. Cole todas as partes, em ordem, no mesmo chamado.
+                  </p>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                    <label className="min-w-0 flex-1">
+                      <span className="mb-1.5 block text-xs font-bold text-slate-400">Parte do retorno</span>
+                      <select
+                        value={versaoRetornoAtual.indice}
+                        disabled={retornoCopiando}
+                        onChange={(event) => selecionarParteRetorno(Number(event.target.value))}
+                        className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm font-bold text-white outline-none focus:border-cyan-500"
+                      >
+                        {versaoRetornoAtual.textos.map((_, index) => (
+                          <option key={index} value={index}>
+                            Parte {index + 1} de {versaoRetornoAtual.textos.length}{versaoRetornoAtual.copiadas[index] ? " — copiada" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button type="button" disabled={retornoCopiando || versaoRetornoAtual.indice === 0} onClick={() => selecionarParteRetorno(versaoRetornoAtual.indice - 1)} className="rounded-xl border border-slate-700 px-4 py-3 text-xs font-bold text-slate-200 transition hover:bg-slate-800 disabled:opacity-35">Anterior</button>
+                      <button type="button" disabled={retornoCopiando || versaoRetornoAtual.indice === versaoRetornoAtual.textos.length - 1} onClick={() => selecionarParteRetorno(versaoRetornoAtual.indice + 1)} className="rounded-xl border border-slate-700 px-4 py-3 text-xs font-bold text-slate-200 transition hover:bg-slate-800 disabled:opacity-35">Próxima</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <label className="block">
                 <span className="mb-2 block text-xs font-black uppercase tracking-widest text-slate-500">
-                  Texto do retorno
+                  Texto do retorno{versaoRetornoAtual.textos.length > 1 ? ` — parte ${versaoRetornoAtual.indice + 1}/${versaoRetornoAtual.textos.length}` : ""}
                 </span>
                 <textarea
-                  value={retornoChamadoModal.texto}
-                  onChange={(event) =>
-                    setRetornoChamadoModal((atual) =>
-                      atual ? { ...atual, texto: event.target.value } : atual,
-                    )
-                  }
-                  rows={18}
+                  aria-label="Texto do retorno"
+                  aria-describedby="retorno-contagem"
+                  spellCheck={false}
+                  value={textoRetornoAtual}
+                  disabled={retornoCopiando}
+                  onChange={(event) => editarTextoRetornoChamado(event.target.value)}
+                  rows={14}
                   className="custom-scrollbar w-full resize-y rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-4 text-sm font-medium leading-relaxed text-slate-200 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500/40"
                 />
               </label>
+              {versaoRetornoAtual.copiadas[versaoRetornoAtual.indice] && (
+                <p role="status" className="mt-3 text-sm font-bold text-emerald-300">
+                  {versaoRetornoAtual.textos.length > 1 ? `Parte ${versaoRetornoAtual.indice + 1}/${versaoRetornoAtual.textos.length} copiada.` : "Texto copiado."} Cole no chamado antes de continuar.
+                </p>
+              )}
             </div>
 
             <div className="shrink-0 border-t border-slate-800 bg-slate-950 p-4 sm:p-5">
@@ -4675,9 +5044,10 @@ export default function ParecerTecnicoPage() {
                 <button
                   type="button"
                   onClick={copiarRetornoChamado}
-                  className="rounded-2xl bg-blue-600 px-6 py-3 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-500"
+                  disabled={retornoCopiando || retornoAcimaDoLimite || !textoRetornoAtual.trim()}
+                  className="rounded-2xl bg-blue-600 px-6 py-3 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  Copiar texto
+                  {retornoCopiando ? "Copiando..." : versaoRetornoAtual.textos.length > 1 ? `Copiar parte ${versaoRetornoAtual.indice + 1}/${versaoRetornoAtual.textos.length}` : "Copiar texto"}
                 </button>
               </div>
             </div>

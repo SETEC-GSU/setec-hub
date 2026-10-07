@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { createClient } from "@/lib/supabase"
 import {
   Calendar,
@@ -53,6 +53,26 @@ type Feedback = {
   tipo: "success" | "error" | "info"
   texto: string
 } | null
+
+const TAMANHO_LOTE_AGENDA = 500
+
+const CAMPOS_AGENDA = `
+  id,
+  chamado,
+  escola,
+  data_abertura,
+  data_prevista,
+  data_visita,
+  data_finalizacao,
+  impacto,
+  urgencia,
+  status,
+  categoria,
+  subcategoria,
+  tecnico,
+  abertura_por,
+  created_at
+`
 
 const STATUS_OPTIONS = [
   "Todos",
@@ -294,11 +314,15 @@ function matchStatusFilter(statusValue: unknown, filtro: string) {
 }
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message
+  if (error && typeof error === "object" && "message" in error) {
+    return String(error.message)
+  }
   return "Não foi possível carregar a agenda operacional."
 }
 
 export default function AgendaFields() {
   const supabase = useMemo(() => createClient(), [])
+  const consultaAtual = useRef<AbortController | null>(null)
 
   const [visitas, setVisitas] = useState<FieldVisita[]>([])
   const [tecnicoFiltro, setTecnicoFiltro] = useState("Todos")
@@ -313,36 +337,53 @@ export default function AgendaFields() {
 
   const carregar = useCallback(
     async (modo: "inicial" | "manual" = "inicial") => {
+      consultaAtual.current?.abort()
+      const controller = new AbortController()
+      consultaAtual.current = controller
+
       if (modo === "inicial") setLoading(true)
-      if (modo === "manual") setRefreshing(true)
+      setRefreshing(modo === "manual")
 
       setFeedback(null)
 
       try {
-        const { data, error } = await supabase
-          .from("fields_visitas")
-          .select(`
-            id,
-            chamado,
-            escola,
-            data_abertura,
-            data_prevista,
-            data_visita,
-            data_finalizacao,
-            impacto,
-            urgencia,
-            status,
-            categoria,
-            subcategoria,
-            tecnico,
-            abertura_por,
-            created_at
-          `)
-          .order("data_prevista", { ascending: true, nullsFirst: false })
+        const todasVisitas: FieldVisita[] = []
+        let inicio = 0
+        let totalEsperado: number | null = null
 
-        if (error) throw error
+        // A API limita cada resposta. Busca todos os lotes com uma ordem
+        // determinística e só troca os dados da tela após a consulta completa.
+        while (!controller.signal.aborted) {
+          const { data, error, count } = await supabase
+            .from("fields_visitas")
+            .select(CAMPOS_AGENDA, inicio === 0 ? { count: "exact" } : {})
+            .order("data_prevista", { ascending: true, nullsFirst: false })
+            .order("id", { ascending: true })
+            .range(inicio, inicio + TAMANHO_LOTE_AGENDA - 1)
+            .abortSignal(controller.signal)
 
-        setVisitas((data || []) as FieldVisita[])
+          if (controller.signal.aborted) return
+          if (error) throw error
+          if (inicio === 0) totalEsperado = count
+
+          const lote = (data || []) as FieldVisita[]
+          if (lote.length === 0) {
+            if (totalEsperado !== null && todasVisitas.length < totalEsperado) {
+              throw new Error(
+                "A consulta da agenda ficou incompleta. Atualize novamente para carregar todos os registros."
+              )
+            }
+            break
+          }
+
+          todasVisitas.push(...lote)
+          inicio += lote.length
+
+          if (totalEsperado !== null && inicio >= totalEsperado) break
+        }
+
+        if (controller.signal.aborted) return
+        setVisitas(todasVisitas)
 
         if (modo === "manual") {
           setFeedback({
@@ -351,6 +392,7 @@ export default function AgendaFields() {
           })
         }
       } catch (error) {
+        if (controller.signal.aborted) return
         console.error("[Agenda Fields] Erro ao carregar agenda:", error)
 
         setFeedback({
@@ -358,19 +400,22 @@ export default function AgendaFields() {
           texto: getErrorMessage(error),
         })
       } finally {
-        setLoading(false)
-        setRefreshing(false)
+        if (!controller.signal.aborted) {
+          setLoading(false)
+          setRefreshing(false)
+        }
       }
     },
     [supabase]
   )
 
   useEffect(() => {
-    carregar("inicial")
+    void carregar("inicial")
+    return () => consultaAtual.current?.abort()
   }, [carregar])
 
   useEffect(() => {
-    if (!feedback) return
+    if (!feedback || feedback.tipo === "error") return
 
     const timer = window.setTimeout(() => {
       setFeedback(null)

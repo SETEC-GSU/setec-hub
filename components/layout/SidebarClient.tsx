@@ -1,26 +1,39 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+
 import Image from "next/image"
+
 import Link from "next/link"
+
 import { usePathname } from "next/navigation"
+
+import LoginAuditTracker from "./LoginAuditTracker"
 
 export type SidebarItem = {
   href: string
+
   label: string
+
   icon: string
+
   permission: string
 }
 
 export type SidebarSection = {
   title: string
+
   items: SidebarItem[]
 }
 
 type SidebarClientProps = {
   sections: SidebarSection[]
+
   showHome: boolean
+
   userRole?: string
+
+  primaryItems?: SidebarItem[]
 }
 
 function cx(...classes: Array<string | false | null | undefined>) {
@@ -37,7 +50,9 @@ function normalizePath(path: string) {
 
 function splitSectionTitle(title: string) {
   const parts = title.trim().split(" ")
+
   const emoji = parts[0] || "•"
+
   const text = parts.slice(1).join(" ") || title
 
   return { emoji, text }
@@ -45,6 +60,7 @@ function splitSectionTitle(title: string) {
 
 function isHrefMatch(pathname: string, href: string) {
   const current = normalizePath(pathname)
+
   const target = normalizePath(href)
 
   if (target === "/") return current === "/"
@@ -54,14 +70,18 @@ function isHrefMatch(pathname: string, href: string) {
 
 function getActiveHref(pathname: string, hrefs: string[]) {
   const matches = hrefs
+
     .filter((href) => isHrefMatch(pathname, href))
+
     .sort((a, b) => normalizePath(b).length - normalizePath(a).length)
 
   return matches[0] || ""
 }
 
 function closeMobileMenu() {
-  const checkbox = document.getElementById("mobile-menu") as HTMLInputElement | null
+  const checkbox = document.getElementById(
+    "mobile-menu",
+  ) as HTMLInputElement | null
 
   if (checkbox) {
     checkbox.checked = false
@@ -71,10 +91,15 @@ function closeMobileMenu() {
 function getRoleLabel(role?: string) {
   const labels: Record<string, string> = {
     admin: "Administrador",
+
     analista: "Analista",
+
     dirigente: "Dirigente",
+
     chefia_ure: "Chefia URE",
+
     gestao_escolas: "Gestão Escolas",
+
     seintec: "SEINTEC",
   }
 
@@ -85,31 +110,43 @@ function getRoleLabel(role?: string) {
 
 export default function SidebarClient({
   sections,
+
   showHome,
+
   userRole,
+
+  primaryItems = [],
 }: SidebarClientProps) {
   const pathname = usePathname() || "/"
 
   const safeSections = Array.isArray(sections) ? sections : []
 
+  const safePrimaryItems = Array.isArray(primaryItems) ? primaryItems : []
+
   const [collapsed, setCollapsed] = useState(false)
+
   const [mounted, setMounted] = useState(false)
+
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({})
+
   const [logoError, setLogoError] = useState(false)
 
   const allHrefs = useMemo(() => {
     const hrefs = safeSections.flatMap((section) =>
-      section.items.map((item) => item.href)
+      section.items.map((item) => item.href),
     )
 
     if (showHome) hrefs.push("/")
 
+    hrefs.push(...safePrimaryItems.map((item) => item.href))
+
     return hrefs
-  }, [safeSections, showHome])
+  }, [safeSections, safePrimaryItems, showHome])
 
   const activeHref = useMemo(
     () => getActiveHref(pathname, allHrefs),
-    [pathname, allHrefs]
+
+    [pathname, allHrefs],
   )
 
   useEffect(() => {
@@ -117,6 +154,7 @@ export default function SidebarClient({
 
     try {
       const saved = window.localStorage.getItem("setec-sidebar-collapsed")
+
       setCollapsed(saved === "true")
     } catch {
       setCollapsed(false)
@@ -139,7 +177,7 @@ export default function SidebarClient({
 
       safeSections.forEach((section) => {
         const hasActiveItem = section.items.some((item) =>
-          isHrefMatch(pathname, item.href)
+          isHrefMatch(pathname, item.href),
         )
 
         if (hasActiveItem) {
@@ -154,6 +192,7 @@ export default function SidebarClient({
   function toggleSection(title: string) {
     setOpenSections((current) => ({
       ...current,
+
       [title]: !current[title],
     }))
   }
@@ -166,37 +205,51 @@ export default function SidebarClient({
     <aside
       className={cx(
         "relative flex h-full shrink-0 flex-col justify-between border-r border-slate-800 bg-[#020617] transition-[width] duration-300",
-        collapsed ? "w-[84px]" : "w-72"
+
+        collapsed ? "w-[84px]" : "w-72",
       )}
     >
+      <LoginAuditTracker />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.10),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(6,182,212,0.06),transparent_26%)]" />
 
       <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden">
         <div
           className={cx(
             "sticky top-0 z-20 flex h-24 shrink-0 items-center border-b border-slate-800 bg-[#020617]/95 backdrop-blur-md transition-all",
-            collapsed ? "justify-center px-0" : "px-6"
+
+            collapsed ? "justify-center px-0" : "px-6",
           )}
         >
           <Link
             href="/"
+
             onClick={closeMobileMenu}
+
             className={cx(
               "group/logo flex min-w-0 items-center",
-              collapsed ? "justify-center" : "gap-3"
+
+              collapsed ? "justify-center" : "gap-3",
             )}
+
             title="SETEC Hub"
           >
             <div className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-blue-400/20 bg-blue-500/5 shadow-[0_0_24px_rgba(37,99,235,0.30)] transition-all group-hover/logo:scale-105 group-hover/logo:border-blue-400/40">
               {!logoError ? (
                 <Image
                   src="/brand/setec-hub-icon.png"
+
                   alt="Símbolo do SETEC Hub"
+
                   width={1024}
+
                   height={1024}
+
                   priority
+
                   sizes="48px"
+
                   onError={() => setLogoError(true)}
+
                   className="h-full w-full object-contain"
                 />
               ) : (
@@ -214,6 +267,7 @@ export default function SidebarClient({
                   <span className="bg-gradient-to-r from-blue-400 to-blue-600 bg-clip-text text-transparent">
                     SETEC
                   </span>
+
                   <span className="ml-1 font-light text-slate-200">Hub</span>
                 </div>
 
@@ -226,25 +280,37 @@ export default function SidebarClient({
 
           <button
             type="button"
+
             onClick={handleToggleCollapsed}
+
             aria-label={collapsed ? "Expandir menu" : "Recolher menu"}
+
             title={collapsed ? "Expandir menu" : "Recolher menu"}
+
             className={cx(
               "absolute top-8 hidden h-9 w-9 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-400 shadow-lg transition-all hover:border-blue-500/40 hover:bg-slate-800 hover:text-white md:flex",
-              collapsed ? "right-[-18px] rotate-180" : "right-4"
+
+              collapsed ? "right-[-18px] rotate-180" : "right-4",
             )}
           >
             <svg
               width="18"
+
               height="18"
+
               fill="none"
+
               stroke="currentColor"
+
               viewBox="0 0 24 24"
+
               strokeWidth="2.5"
             >
               <path
                 strokeLinecap="round"
+
                 strokeLinejoin="round"
+
                 d="M11 19l-7-7 7-7m8 14l-7-7 7-7"
               />
             </svg>
@@ -254,22 +320,30 @@ export default function SidebarClient({
         <nav
           className={cx(
             "custom-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-6 transition-all",
-            collapsed ? "px-2" : "px-4"
+
+            collapsed ? "px-2" : "px-4",
           )}
         >
           {showHome && (
             <Link
               href="/"
+
               onClick={closeMobileMenu}
+
               title="Menu Principal"
+
               aria-current={activeHref === "/" ? "page" : undefined}
+
               className={cx(
-                "group/link relative mb-6 flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition-all",
+                "group/link relative mb-2 flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition-all",
+
                 collapsed && "justify-center px-0",
+
                 activeHref === "/"
                   ? "border-blue-500/30 bg-blue-500/10 text-white shadow-[0_0_18px_rgba(37,99,235,0.12)]"
                   : "border-transparent text-slate-300 hover:border-slate-700 hover:bg-slate-800 hover:text-white",
-                !collapsed && activeHref !== "/" && "hover:translate-x-1"
+
+                !collapsed && activeHref !== "/" && "hover:translate-x-1",
               )}
             >
               {activeHref === "/" && (
@@ -284,34 +358,79 @@ export default function SidebarClient({
             </Link>
           )}
 
+          {safePrimaryItems.length > 0 && (
+            <div className="mb-6 space-y-2">
+              {safePrimaryItems.map((item) => {
+                const active = activeHref === item.href
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={closeMobileMenu}
+                    title={item.label}
+                    aria-current={active ? "page" : undefined}
+                    className={cx(
+                      "group/link relative flex min-h-12 items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition-all",
+                      collapsed && "justify-center px-0",
+                      active
+                        ? "border-blue-500/30 bg-blue-500/10 text-white"
+                        : "border-cyan-500/15 bg-cyan-500/[0.04] text-slate-300 hover:border-blue-500/30 hover:bg-slate-800 hover:text-white",
+                    )}
+                  >
+                    {active && (
+                      <span className="absolute left-0 top-1/2 h-7 w-1 -translate-y-1/2 rounded-r-full bg-blue-500" />
+                    )}
+                    <span aria-hidden="true" className="shrink-0 text-xl">
+                      {item.icon}
+                    </span>
+                    {!collapsed && (
+                      <span className="min-w-0 flex-1 text-[12px] leading-5">
+                        {item.label}
+                      </span>
+                    )}
+                  </Link>
+                )
+              })}
+            </div>
+          )}
+
           <div className="space-y-4">
             {safeSections.map((section) => {
               const { emoji, text } = splitSectionTitle(section.title)
+
               const isOpen = Boolean(openSections[section.title])
+
               const sectionActive = section.items.some((item) =>
-                isHrefMatch(pathname, item.href)
+                isHrefMatch(pathname, item.href),
               )
 
               return (
                 <div key={section.title}>
                   <button
                     type="button"
+
                     onClick={() => toggleSection(section.title)}
+
                     title={text}
+
                     aria-expanded={isOpen || collapsed}
+
                     className={cx(
                       "mb-2 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-all",
+
                       collapsed && "justify-center px-0",
+
                       sectionActive
                         ? "bg-slate-900 text-slate-200"
-                        : "text-slate-400 hover:bg-slate-900/70 hover:text-slate-200"
+                        : "text-slate-400 hover:bg-slate-900/70 hover:text-slate-200",
                     )}
                   >
                     <span
                       className={cx(
                         "text-lg transition-all",
+
                         sectionActive &&
-                          "drop-shadow-[0_0_8px_rgba(59,130,246,0.55)]"
+                          "drop-shadow-[0_0_8px_rgba(59,130,246,0.55)]",
                       )}
                     >
                       {emoji}
@@ -326,7 +445,8 @@ export default function SidebarClient({
                         <span
                           className={cx(
                             "text-sm text-slate-400 transition-transform",
-                            isOpen && "rotate-90 text-blue-300"
+
+                            isOpen && "rotate-90 text-blue-300",
                           )}
                         >
                           ▸
@@ -338,9 +458,10 @@ export default function SidebarClient({
                   <div
                     className={cx(
                       "grid transition-all duration-300",
+
                       isOpen || collapsed
                         ? "grid-rows-[1fr] opacity-100"
-                        : "grid-rows-[0fr] opacity-0"
+                        : "grid-rows-[0fr] opacity-0",
                     )}
                   >
                     <div className="overflow-hidden">
@@ -351,17 +472,25 @@ export default function SidebarClient({
                           return (
                             <Link
                               key={item.href}
+
                               href={item.href}
+
                               onClick={closeMobileMenu}
+
                               title={item.label}
+
                               aria-current={active ? "page" : undefined}
+
                               className={cx(
                                 "group/link relative flex items-center gap-3 rounded-xl border px-4 py-2.5 text-[13px] font-medium transition-all",
+
                                 collapsed && "justify-center px-0",
+
                                 active
                                   ? "border-blue-500/30 bg-blue-500/10 text-white shadow-[0_0_16px_rgba(37,99,235,0.10)]"
                                   : "border-transparent text-slate-400 hover:border-slate-700 hover:bg-slate-800/60 hover:text-white",
-                                !collapsed && !active && "hover:translate-x-1"
+
+                                !collapsed && !active && "hover:translate-x-1",
                               )}
                             >
                               {active && (
@@ -371,7 +500,8 @@ export default function SidebarClient({
                               <span
                                 className={cx(
                                   "text-base opacity-70 transition-all group-hover/link:scale-110 group-hover/link:opacity-100",
-                                  active && "opacity-100"
+
+                                  active && "opacity-100",
                                 )}
                               >
                                 {item.icon}
@@ -402,12 +532,14 @@ export default function SidebarClient({
       <div
         className={cx(
           "relative z-10 shrink-0 border-t border-slate-800 bg-[#020617]/95 backdrop-blur-md transition-all",
-          collapsed ? "px-2 py-4" : "p-5"
+
+          collapsed ? "px-2 py-4" : "p-5",
         )}
       >
         {collapsed ? (
           <div
             className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl border border-slate-800 bg-slate-900 text-xs font-bold text-blue-300"
+
             title="Plataforma interna - URE Guarulhos Sul"
           >
             GSU

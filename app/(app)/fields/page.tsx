@@ -143,6 +143,29 @@ function isStatusFinalizado(status: unknown) {
   )
 }
 
+function getChaveStatusTabela(status: unknown) {
+  if (isStatusPendente(status)) return "pendentes"
+  if (isStatusFinalizado(status)) return "finalizados"
+  return `outro:${normalizarTexto(status)}`
+}
+
+function getMesAnoVisitaKey(dateStr: string | null) {
+  const data = parseDateLocal(dateStr)
+  if (!data || Number.isNaN(data.getTime())) return ""
+
+  return `${data.getFullYear()}-${String(data.getMonth() + 1).padStart(2, "0")}`
+}
+
+function isDataPrevistaVencida(visita: any, hoje: string) {
+  if (!isStatusPendente(visita.status)) return false
+
+  const data = parseDateLocal(visita.data_prevista)
+  if (!data || Number.isNaN(data.getTime())) return false
+
+  const dataKey = normalizarDataKey(visita.data_prevista)
+  return Boolean(dataKey && dataKey < hoje)
+}
+
 function dateToInput(date: Date) {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, "0")
@@ -215,12 +238,71 @@ function getStatusClasses(status: unknown) {
     return "bg-amber-500/10 text-amber-400 border-amber-500/25"
   }
 
+  const statusNormalizado = normalizarTexto(status)
+
+  if (statusNormalizado === "cancelado" || statusNormalizado === "cancelada") {
+    return "bg-red-500/10 text-red-400 border-red-500/25"
+  }
+
+  if (statusNormalizado === "em andamento") {
+    return "bg-blue-500/10 text-blue-400 border-blue-500/25"
+  }
+
   return "bg-slate-500/10 text-slate-400 border-slate-500/25"
 }
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message
   return "Não foi possível carregar os dados da página."
+}
+
+type ResultadoPagina<T> = {
+  data: T[] | null
+  error: { message: string } | null
+  count: number | null
+}
+
+async function carregarTodosRegistros<T>(
+  consultarPagina: (
+    inicio: number,
+    fim: number,
+    incluirContagem: boolean
+  ) => PromiseLike<ResultadoPagina<T>>
+): Promise<T[]> {
+  const tamanhoPagina = 500
+  const registros: T[] = []
+  let inicio = 0
+  let totalEsperado: number | null = null
+
+  while (true) {
+    const { data, error, count } = await consultarPagina(
+      inicio,
+      inicio + tamanhoPagina - 1,
+      inicio === 0
+    )
+
+    if (error) throw new Error(error.message)
+    if (inicio === 0) totalEsperado = count
+
+    const pagina = data || []
+
+    if (pagina.length === 0) {
+      if (totalEsperado !== null && registros.length < totalEsperado) {
+        throw new Error(
+          "Não foi possível carregar todos os registros. Atualize o painel para tentar novamente."
+        )
+      }
+      break
+    }
+
+    registros.push(...pagina)
+    // Avança pelo lote recebido, mesmo se o limite da API for menor que 500.
+    inicio += pagina.length
+
+    if (totalEsperado !== null && registros.length >= totalEsperado) break
+  }
+
+  return registros
 }
 
 const SafeTooltip = ({ active, payload, label }: any) => {
@@ -264,6 +346,11 @@ export default function FieldsPage() {
   const [filtroEscolaTabela, setFiltroEscolaTabela] = useState("Todas")
   const [filtroTecnicoTabela, setFiltroTecnicoTabela] = useState("Todos")
   const [filtroCategoriaTabela, setFiltroCategoriaTabela] = useState("Todas")
+  const [filtroStatusTabela, setFiltroStatusTabela] = useState("Todos")
+  const [filtroAbertoPorTabela, setFiltroAbertoPorTabela] = useState("Todos")
+  const [paginaTabela, setPaginaTabela] = useState(1)
+  const [registrosPorPagina, setRegistrosPorPagina] = useState(25)
+  const [filtrosTabelaAbertos, setFiltrosTabelaAbertos] = useState(false)
 
   const [chamadoSelecionado, setChamadoSelecionado] = useState<any | null>(null)
   const [escolaHistoricoSelecionada, setEscolaHistoricoSelecionada] = useState<string | null>(null)
@@ -283,16 +370,25 @@ export default function FieldsPage() {
     setErroCarregamento("")
 
     try {
-      const [visitasResult, avaliacoesResult, escolasResult, tecnicosResult] =
+      const [visitasData, avaliacoesData, escolasResult, tecnicosResult] =
         await Promise.all([
-          supabase
-            .from("fields_visitas")
-            .select("*")
-            .order("data_visita", { ascending: false }),
-          supabase
-            .from("fields_avaliacoes")
-            .select("*")
-            .order("created_at", { ascending: false }),
+          carregarTodosRegistros((inicio, fim, incluirContagem) =>
+            supabase
+              .from("fields_visitas")
+              .select("*", { count: incluirContagem ? "exact" : undefined })
+              .order("data_visita", { ascending: false })
+              .order("id", { ascending: false })
+              .range(inicio, fim)
+          ),
+          carregarTodosRegistros((inicio, fim, incluirContagem) =>
+            supabase
+              .from("fields_avaliacoes")
+              .select("*", { count: incluirContagem ? "exact" : undefined })
+              .order("created_at", { ascending: false })
+              .order("tecnico", { ascending: true })
+              .order("nota_media", { ascending: true })
+              .range(inicio, fim)
+          ),
           supabase
             .from("escolas")
             .select("nome_escola")
@@ -304,8 +400,6 @@ export default function FieldsPage() {
             .order("nome", { ascending: true }),
         ])
 
-      if (visitasResult.error) throw visitasResult.error
-      if (avaliacoesResult.error) throw avaliacoesResult.error
       if (escolasResult.error) throw escolasResult.error
 
       if (tecnicosResult.error) {
@@ -315,8 +409,8 @@ export default function FieldsPage() {
         setTecnicosAtivos(tecnicosResult.data || [])
       }
 
-      setVisitas(visitasResult.data || [])
-      setAvaliacoes(avaliacoesResult.data || [])
+      setVisitas(visitasData)
+      setAvaliacoes(avaliacoesData)
       setTodasEscolas(escolasResult.data || [])
     } catch (error) {
       console.error("[Fields] Erro ao carregar dados:", error)
@@ -655,7 +749,29 @@ export default function FieldsPage() {
     }
   }, [historicoEscolaSelecionada])
 
-  const chamadosTabela = useMemo(() => {
+  const statusAdicionaisTabela = useMemo(() => {
+    const statusMap = new Map<string, string>()
+
+    stats.filtradas.forEach((visita) => {
+      const chave = getChaveStatusTabela(visita.status)
+      if (!chave.startsWith("outro:") || statusMap.has(chave)) return
+      statusMap.set(chave, textoSeguro(visita.status))
+    })
+
+    return Array.from(statusMap, ([value, label]) => ({ value, label })).sort(
+      (a, b) => ordenarTexto(a.label, b.label)
+    )
+  }, [stats.filtradas])
+
+  const responsaveisAberturaTabela = useMemo(() => {
+    return [...new Set(
+      stats.filtradas.map((visita) => textoSeguro(visita.abertura_por))
+    )].sort(ordenarTexto)
+  }, [stats.filtradas])
+
+  const chamadosBaseTabela = useMemo(() => {
+    const termo = normalizarTexto(buscaChamado)
+
     return stats.filtradas.filter((v) => {
       const matchEscola =
         filtroEscolaTabela === "Todas" || v.escola === filtroEscolaTabela
@@ -667,7 +783,9 @@ export default function FieldsPage() {
         filtroCategoriaTabela === "Todas" ||
         v.categoria === filtroCategoriaTabela
 
-      const termo = normalizarTexto(buscaChamado)
+      const matchAbertoPor =
+        filtroAbertoPorTabela === "Todos" ||
+        textoSeguro(v.abertura_por) === filtroAbertoPorTabela
 
       const matchBusca =
         termo === "" ||
@@ -684,31 +802,15 @@ export default function FieldsPage() {
           .join(" ")
           .includes(termo)
 
-      let matchMes = true
-
-      if (filtroMesTabela !== "Todos") {
-        if (!v.data_visita) {
-          matchMes = false
-        } else {
-          const data = parseDateLocal(v.data_visita)
-
-          if (data) {
-            const mesAno = data
-              .toLocaleDateString("pt-BR", { month: "short" })
-              .replace(".", "")
-              .toUpperCase()
-
-            matchMes = mesAno === filtroMesTabela
-          } else {
-            matchMes = false
-          }
-        }
-      }
+      const matchMes =
+        filtroMesTabela === "Todos" ||
+        getMesAnoVisitaKey(v.data_visita) === filtroMesTabela
 
       return (
         matchEscola &&
         matchTecnico &&
         matchCategoria &&
+        matchAbertoPor &&
         matchBusca &&
         matchMes
       )
@@ -718,9 +820,92 @@ export default function FieldsPage() {
     filtroEscolaTabela,
     filtroTecnicoTabela,
     filtroCategoriaTabela,
+    filtroAbertoPorTabela,
     filtroMesTabela,
     buscaChamado,
   ])
+
+  const chamadosTabela = useMemo(() => {
+    if (filtroStatusTabela === "Todos") return chamadosBaseTabela
+
+    return chamadosBaseTabela.filter(
+      (visita) => getChaveStatusTabela(visita.status) === filtroStatusTabela
+    )
+  }, [chamadosBaseTabela, filtroStatusTabela])
+
+  const totalPaginasTabela = Math.max(
+    1,
+    Math.ceil(chamadosTabela.length / registrosPorPagina)
+  )
+  const paginaTabelaAtual = Math.min(paginaTabela, totalPaginasTabela)
+  const inicioPaginaTabela = (paginaTabelaAtual - 1) * registrosPorPagina
+  const fimPaginaTabela = Math.min(
+    inicioPaginaTabela + registrosPorPagina,
+    chamadosTabela.length
+  )
+  const chamadosPaginados = useMemo(() => {
+    return chamadosTabela.slice(inicioPaginaTabela, fimPaginaTabela)
+  }, [chamadosTabela, inicioPaginaTabela, fimPaginaTabela])
+
+  useEffect(() => {
+    if (paginaTabela !== paginaTabelaAtual) {
+      setPaginaTabela(paginaTabelaAtual)
+    }
+  }, [paginaTabela, paginaTabelaAtual])
+
+  function atualizarFiltroTabela(
+    setFiltro: (value: string) => void,
+    value: string
+  ) {
+    setFiltro(value)
+    setPaginaTabela(1)
+  }
+
+  function alterarRegistrosPorPagina(value: number) {
+    if (![25, 50, 100].includes(value)) return
+    setRegistrosPorPagina(value)
+    setPaginaTabela(1)
+  }
+
+  function limparFiltrosTabela() {
+    setBuscaChamado("")
+    setFiltroMesTabela("Todos")
+    setFiltroEscolaTabela("Todas")
+    setFiltroTecnicoTabela("Todos")
+    setFiltroCategoriaTabela("Todas")
+    setFiltroStatusTabela("Todos")
+    setFiltroAbertoPorTabela("Todos")
+    setPaginaTabela(1)
+  }
+
+  const quantidadeFiltrosTabela = [
+    Boolean(buscaChamado.trim()),
+    filtroMesTabela !== "Todos",
+    filtroEscolaTabela !== "Todas",
+    filtroTecnicoTabela !== "Todos",
+    filtroCategoriaTabela !== "Todas",
+    filtroStatusTabela !== "Todos",
+    filtroAbertoPorTabela !== "Todos",
+  ].filter(Boolean).length
+  const temFiltrosTabela = quantidadeFiltrosTabela > 0
+  const hojeTabela = getHojeInput()
+  const classesFiltroStatusTabela = filtroStatusTabela === "Todos"
+    ? "border-slate-700 bg-[#020617] text-white"
+    : getStatusClasses(
+        filtroStatusTabela === "finalizados"
+          ? "Finalizado"
+          : filtroStatusTabela.replace(/^outro:/, "")
+      )
+  const paginacaoTabelaProps = {
+    pagina: paginaTabelaAtual,
+    totalPaginas: totalPaginasTabela,
+    totalRegistros: chamadosTabela.length,
+    inicio: chamadosTabela.length > 0 ? inicioPaginaTabela + 1 : 0,
+    fim: fimPaginaTabela,
+    registrosPorPagina,
+    onPaginaChange: setPaginaTabela,
+    onRegistrosChange: alterarRegistrosPorPagina,
+  }
 
   const chamadosPrevistosParaData = useMemo(() => {
     return visitas
@@ -990,13 +1175,14 @@ export default function FieldsPage() {
           </div>
 
           <div className="rounded-[2rem] border border-slate-800 bg-slate-950/60 p-4">
-            <label className="mb-2 block text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
+            <label htmlFor="fields-tecnico-geral" className="mb-2 block text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
               Filtro geral por técnico
             </label>
 
             <select
+              id="fields-tecnico-geral"
               value={tecnicoFiltro}
-              onChange={(e) => setTecnicoFiltro(e.target.value)}
+              onChange={(e) => atualizarFiltroTabela(setTecnicoFiltro, e.target.value)}
               className="w-full rounded-2xl border border-slate-800 bg-[#020617] px-4 py-4 text-sm font-bold text-white outline-none transition focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50"
             >
               <option value="Todos">👨‍🔧 Todos os técnicos do histórico</option>
@@ -1331,191 +1517,314 @@ export default function FieldsPage() {
 
       {/* TABELA DE CHAMADOS */}
       <Glass
-        title="Lista de chamados atendidos"
-        subtitle={`${chamadosTabela.length} registro(s) encontrado(s). Exibindo até 100 para preservar desempenho.`}
+        title="Lista de chamados"
+        subtitle={`${formatarNumero(chamadosTabela.length)} chamado(s) encontrado(s). Consulte pendências e atendimentos com os filtros abaixo.`}
+        className="min-w-0"
       >
-        <div className="mt-2 flex flex-col flex-wrap gap-3 md:flex-row">
-          <div className="relative min-w-[220px] flex-1">
-            <span className="absolute inset-y-0 left-4 flex items-center text-slate-500">🔍</span>
-            <input
-              type="text"
-              placeholder="Buscar chamado, escola, técnico..."
-              value={buscaChamado}
-              onChange={(e) => setBuscaChamado(e.target.value)}
-              className="w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 pl-11 text-sm font-bold text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50"
-            />
+        <section aria-label="Lista de chamados" className="min-w-0 space-y-5">
+          <div className="min-w-0 space-y-4 rounded-2xl border border-slate-800 bg-slate-950/50 p-3 sm:p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="hidden text-sm font-bold text-slate-200 sm:block">Filtrar chamados</p>
+              <button
+                type="button"
+                aria-controls="fields-filtros-avancados"
+                aria-expanded={filtrosTabelaAbertos}
+                onClick={() => setFiltrosTabelaAbertos((abertos) => !abertos)}
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-bold text-blue-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 sm:hidden"
+              >
+                Filtros{temFiltrosTabela? ` (${quantidadeFiltrosTabela})`:""}
+                <span aria-hidden="true">{filtrosTabelaAbertos? "▴":"▾"}</span>
+              </button>
+              <button
+                type="button"
+                onClick={limparFiltrosTabela}
+                disabled={!temFiltrosTabela}
+                className="min-h-[44px] rounded-xl border border-slate-700 px-3 py-2 text-xs font-bold text-slate-200 transition hover:border-cyan-500/50 hover:text-cyan-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 disabled:cursor-default disabled:opacity-40"
+              >
+                Limpar filtros da lista
+              </button>
+            </div>
+
+            {tecnicoFiltro!=="Todos"&&(
+              <p className="break-words rounded-xl border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs leading-relaxed text-blue-200">
+                Filtro geral por técnico: <strong>{tecnicoFiltro}</strong>
+              </p>
+            )}
+
+            <div className="min-w-0">
+              <label htmlFor="fields-busca" className="mb-2 block text-xs font-semibold text-slate-300">
+                Buscar chamado, escola ou técnico
+              </label>
+              <div className="relative">
+                <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-slate-400">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <circle cx="10.5" cy="10.5" r="6.5" />
+                    <path d="m16 16 4 4" strokeLinecap="round" />
+                  </svg>
+                </span>
+                <input
+                  id="fields-busca"
+                  type="search"
+                  placeholder="Buscar chamado, escola, técnico..."
+                  value={buscaChamado}
+                  onChange={(e) => atualizarFiltroTabela(setBuscaChamado,e.target.value)}
+                  className="min-h-[48px] w-full min-w-0 rounded-xl border border-slate-700 bg-[#020617] px-3 py-3 pl-10 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 sm:text-sm"
+                />
+              </div>
+            </div>
+
+            <div
+              id="fields-filtros-avancados"
+              className={`${filtrosTabelaAbertos? "grid":"hidden"} min-w-0 grid-cols-1 gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-3`}
+            >
+              <div className="min-w-0">
+                <label htmlFor="fields-status" className="mb-2 block text-xs font-semibold text-slate-300">Status</label>
+                <select
+                  id="fields-status"
+                  value={filtroStatusTabela}
+                  onChange={(e) => atualizarFiltroTabela(setFiltroStatusTabela,e.target.value)}
+                  className={`min-h-[48px] w-full min-w-0 rounded-xl border px-3 py-3 text-base outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 sm:text-sm ${classesFiltroStatusTabela}`}
+                >
+                  <option value="Todos" className="text-slate-300">Todos os status</option>
+                  <option value="pendentes" className={getStatusClasses("Pendente")}>Pendentes</option>
+                  <option value="finalizados" className={getStatusClasses("Finalizado")}>Finalizados</option>
+                  {statusAdicionaisTabela.map((status) => (
+                    <option key={status.value} value={status.value} className={getStatusClasses(status.label)}>{status.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="min-w-0">
+                <label htmlFor="fields-periodo" className="mb-2 block text-xs font-semibold text-slate-300">Mês/ano da visita</label>
+                <select
+                  id="fields-periodo"
+                  value={filtroMesTabela}
+                  onChange={(e) => atualizarFiltroTabela(setFiltroMesTabela,e.target.value)}
+                  className="min-h-[48px] w-full min-w-0 rounded-xl border border-slate-700 bg-[#020617] px-3 py-3 text-base text-white outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 sm:text-sm"
+                >
+                  <option value="Todos">Todos os períodos</option>
+                  {[...stats.graficoMes].reverse().map((m) => (
+                    <option key={m.key} value={m.key}>
+                      {m.name}/{m.key.slice(0,4)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="min-w-0">
+                <label htmlFor="fields-escola" className="mb-2 block text-xs font-semibold text-slate-300">Escola</label>
+                <select
+                  id="fields-escola"
+                  value={filtroEscolaTabela}
+                  onChange={(e) => atualizarFiltroTabela(setFiltroEscolaTabela,e.target.value)}
+                  className="min-h-[48px] w-full min-w-0 rounded-xl border border-slate-700 bg-[#020617] px-3 py-3 text-base text-white outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 sm:text-sm"
+                >
+                  <option value="Todas">Todas as escolas</option>
+                  {[...new Set(stats.filtradas.map((v) => v.escola))]
+                    .filter(Boolean)
+                    .sort(ordenarTexto)
+                    .map((e) => (
+                      <option key={String(e)} value={String(e)}>
+                        {String(e)}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div className="min-w-0">
+                <label htmlFor="fields-tecnico-lista" className="mb-2 block text-xs font-semibold text-slate-300">Técnico</label>
+                <select
+                  id="fields-tecnico-lista"
+                  value={filtroTecnicoTabela}
+                  onChange={(e) => atualizarFiltroTabela(setFiltroTecnicoTabela,e.target.value)}
+                  className="min-h-[48px] w-full min-w-0 rounded-xl border border-slate-700 bg-[#020617] px-3 py-3 text-base text-white outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 sm:text-sm"
+                >
+                  <option value="Todos">Todos os técnicos</option>
+                  {tecnicosParaFiltro.map((t) => {
+                    const ativo=tecnicosAtivosSet.has(normalizarTexto(t))
+
+                    return (
+                      <option key={String(t)} value={String(t)}>
+                        {ativo? "🟢":"⚪"} {String(t)}
+                        {ativo? "":" — histórico"}
+                      </option>
+                    )
+                  })}
+                </select>
+              </div>
+
+              <div className="min-w-0">
+                <label htmlFor="fields-categoria" className="mb-2 block text-xs font-semibold text-slate-300">Categoria</label>
+                <select
+                  id="fields-categoria"
+                  value={filtroCategoriaTabela}
+                  onChange={(e) => atualizarFiltroTabela(setFiltroCategoriaTabela,e.target.value)}
+                  className="min-h-[48px] w-full min-w-0 rounded-xl border border-slate-700 bg-[#020617] px-3 py-3 text-base text-white outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 sm:text-sm"
+                >
+                  <option value="Todas">Todas as categorias</option>
+                  {categoriasChamados.map((categoria) => (
+                    <option key={categoria} value={categoria}>{categoria}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="min-w-0">
+                <label htmlFor="fields-aberto-por" className="mb-2 block text-xs font-semibold text-slate-300">Aberto por</label>
+                <select
+                  id="fields-aberto-por"
+                  value={filtroAbertoPorTabela}
+                  onChange={(e) => atualizarFiltroTabela(setFiltroAbertoPorTabela, e.target.value)}
+                  className="min-h-[48px] w-full min-w-0 rounded-xl border border-slate-700 bg-[#020617] px-3 py-3 text-base text-white outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 sm:text-sm"
+                >
+                  <option value="Todos">Todos os responsáveis</option>
+                  {responsaveisAberturaTabela.map((responsavel) => (
+                    <option key={responsavel} value={responsavel}>{responsavel}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
 
-          <select
-            value={filtroMesTabela}
-            onChange={(e) => setFiltroMesTabela(e.target.value)}
-            className="min-w-[170px] rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 text-sm font-bold text-slate-300 outline-none transition focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50"
-          >
-            <option value="Todos">📅 Todos os meses</option>
-            {stats.graficoMes.map((m) => (
-              <option key={m.name} value={String(m.name)}>
-                {String(m.name)}
-              </option>
-            ))}
-          </select>
+          <PaginacaoChamados {...paginacaoTabelaProps} prefixo="topo" />
 
-          <select
-            value={filtroCategoriaTabela}
-            onChange={(e) =>
-              setFiltroCategoriaTabela(e.target.value)
-            }
-            className="min-w-[210px] rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 text-sm font-bold text-slate-300 outline-none transition focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50"
-          >
-            <option value="Todas">🗂️ Todas as categorias</option>
-            {categoriasChamados.map((categoria) => (
-              <option key={categoria} value={categoria}>
-                {categoria}
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={filtroEscolaTabela}
-            onChange={(e) => setFiltroEscolaTabela(e.target.value)}
-            className="min-w-[240px] rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 text-sm font-bold text-slate-300 outline-none transition focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 md:max-w-[340px]"
-          >
-            <option value="Todas">🏫 Todas as escolas</option>
-            {[...new Set(stats.filtradas.map((v) => v.escola))]
-              .filter(Boolean)
-              .sort(ordenarTexto)
-              .map((e) => (
-                <option key={String(e)} value={String(e)}>
-                  {String(e)}
-                </option>
-              ))}
-          </select>
-
-          <select
-            value={filtroTecnicoTabela}
-            onChange={(e) => setFiltroTecnicoTabela(e.target.value)}
-            className="min-w-[220px] rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 text-sm font-bold text-slate-300 outline-none transition focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50"
-          >
-            <option value="Todos">👨‍🔧 Todos os técnicos</option>
-            {tecnicosParaFiltro.map((t) => {
-              const ativo = tecnicosAtivosSet.has(normalizarTexto(t))
-
-              return (
-                <option key={String(t)} value={String(t)}>
-                  {ativo ? "🟢" : "⚪"} {String(t)}
-                  {ativo ? "" : " — histórico"}
-                </option>
-              )
-            })}
-          </select>
-        </div>
-
-        <div className="mt-5 overflow-hidden rounded-[1.75rem] border border-slate-800">
-          <div className="custom-scrollbar overflow-x-auto">
-            <table className="w-full min-w-[1180px] border-collapse text-left">
-              <thead>
-                <tr className="border-b border-slate-800 bg-slate-950/80 text-[10px] uppercase tracking-[0.2em] text-slate-500">
-                  <th className="px-4 py-4 font-black">Código</th>
-                  <th className="px-4 py-4 font-black">Escola</th>
-                  <th className="px-4 py-4 font-black">Status</th>
-                  <th className="px-4 py-4 font-black">Categoria</th>
-                  <th className="px-4 py-4 font-black">Descrição / Resolução</th>
-                  <th className="px-4 py-4 font-black">Técnico</th>
-                  <th className="px-4 py-4 font-black">Aberto por</th>
-                </tr>
-              </thead>
-
-              <tbody className="divide-y divide-slate-800/50 text-sm">
-                {chamadosTabela.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={7}
-                      className="px-4 py-12 text-center text-xs font-black uppercase tracking-widest text-slate-500"
-                    >
-                      Nenhum chamado encontrado com estes filtros.
-                    </td>
+          <div className="hidden overflow-hidden rounded-2xl border border-slate-800 lg:block">
+            <div className="custom-scrollbar overflow-x-auto">
+              <table className="w-full min-w-[1180px] border-collapse text-left">
+                <thead>
+                  <tr className="border-b border-slate-800 bg-slate-900/80 text-xs text-slate-300">
+                    <th className="px-4 py-4 font-black">Código</th>
+                    <th className="px-4 py-4 font-black">Escola</th>
+                    <th className="px-4 py-4 font-black">Status</th>
+                    <th className="px-4 py-4 font-black">Categoria</th>
+                    <th className="px-4 py-4 font-black">Descrição / Resolução</th>
+                    <th className="px-4 py-4 font-black">Técnico</th>
+                    <th className="px-4 py-4 font-black">Aberto por</th>
                   </tr>
-                ) : (
-                  chamadosTabela.slice(0, 100).map((v: any) => (
-                    <tr key={v.id} className="transition hover:bg-slate-800/20">
-                      <td className="px-4 py-4 text-xs font-black text-blue-400">
-                        <button
-                          onClick={() => setChamadoSelecionado(v)}
-                          className="cursor-pointer transition hover:text-cyan-300 hover:underline"
-                          title="Ver detalhes completos"
-                        >
-                          {v.chamado || "N/A"}
-                        </button>
-                      </td>
+                </thead>
 
-                      <td className="max-w-[260px] px-4 py-4">
-                        <p className="truncate font-black text-slate-100">
-                          {v.escola || "N/A"}
-                        </p>
-                        <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-600">
-                          Prevista: {formatarDataBR(v.data_prevista)}
-                        </p>
-                      </td>
-
-                      <td className="px-4 py-4">
-                        <span
-                          className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-widest ${getStatusClasses(
-                            v.status
-                          )}`}
-                        >
-                          {v.status || "Pendente"}
-                        </span>
-                      </td>
-
-                      <td className="px-4 py-4 text-slate-400">
-                        <div className="flex flex-col">
-                          <span className="font-black text-slate-200">
-                            {v.categoria || "N/A"}
-                          </span>
-                          <span className="text-[10px] font-semibold text-slate-600">
-                            {v.subcategoria || "N/A"}
-                          </span>
-                        </div>
-                      </td>
-
-                      <td className="max-w-[320px] px-4 py-4 text-slate-400">
-                        <div className="flex flex-col gap-1">
-                          <span className="truncate text-xs italic">
-                            “{v.descricao || "Sem descrição"}”
-                          </span>
-                          <span className="truncate text-[10px] font-bold text-blue-400/80">
-                            R: {v.resolucao || "Sem resolução"}
-                          </span>
-                        </div>
-                      </td>
-
-                      <td className="px-4 py-4">
-                        <div className="flex items-center gap-3">
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-blue-500/25 bg-blue-500/10 text-[11px] font-black text-blue-300">
-                            {getInitials(v.tecnico)}
-                          </span>
-                          <div>
-                            <p className="font-black text-slate-100">
-                              {v.tecnico || "Não atribuído"}
-                            </p>
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-600">
-                              {tecnicosAtivosSet.has(normalizarTexto(v.tecnico))
-                                ? "Ativo"
-                                : "Histórico"}
-                            </p>
-                          </div>
-                        </div>
-                      </td>
-
-                      <td className="px-4 py-4 text-xs font-semibold text-slate-500">
-                        {v.abertura_por || "N/A"}
+                <tbody className="divide-y divide-slate-800/50 text-sm">
+                  {chamadosTabela.length===0? (
+                    <tr>
+                      <td
+                        colSpan={7}
+                        className="px-4 py-12 text-center text-xs font-black uppercase tracking-widest text-slate-500"
+                      >
+                        Nenhum chamado encontrado com estes filtros.
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ):(
+                    chamadosPaginados.map((v: any) => (
+                      <tr key={v.id} className="transition hover:bg-slate-800/35">
+                        <td className="px-4 py-4 text-xs font-black text-blue-400">
+                          <button
+                            type="button"
+                            onClick={() => setChamadoSelecionado(v)}
+                            className="cursor-pointer transition hover:text-cyan-300 hover:underline"
+                            title="Ver detalhes completos"
+                          >
+                            {v.chamado||"N/A"}
+                          </button>
+                        </td>
+
+                        <td className="max-w-[260px] px-4 py-4">
+                          <p className="truncate font-black text-slate-100">
+                            {v.escola||"N/A"}
+                          </p>
+                          <p className="mt-1 text-xs font-medium text-slate-400">
+                            Prevista: {formatarDataBR(v.data_prevista)}
+                          </p>
+                          {isDataPrevistaVencida(v,hojeTabela)&&(
+                            <span className="mt-2 inline-block rounded-lg border border-amber-500/25 bg-amber-500/10 px-2 py-1 text-[11px] font-semibold text-amber-200">
+                              Data prevista vencida
+                            </span>
+                          )}
+                        </td>
+
+                        <td className="px-4 py-4">
+                          <span
+                            className={`inline-block rounded-full border px-3 py-1.5 text-xs font-bold ${getStatusClasses(
+                              v.status
+                            )}`}
+                          >
+                            {textoSeguro(v.status,"Pendente")}
+                          </span>
+                        </td>
+
+                        <td className="px-4 py-4 text-slate-400">
+                          <div className="flex flex-col">
+                            <span className="font-black text-slate-200">
+                              {v.categoria||"N/A"}
+                            </span>
+                            <span className="mt-1 text-xs text-slate-400">
+                              {v.subcategoria||"N/A"}
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="max-w-[320px] px-4 py-4 text-slate-400">
+                          <div className="flex flex-col gap-1">
+                            <span className="truncate text-xs italic">
+                              “{v.descricao||"Sem descrição"}”
+                            </span>
+                            <span className="truncate text-xs font-semibold text-blue-300">
+                              R: {v.resolucao||"Sem resolução"}
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="px-4 py-4">
+                          <div className="flex items-center gap-3">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-blue-500/25 bg-blue-500/10 text-[11px] font-black text-blue-300">
+                              {getInitials(v.tecnico)}
+                            </span>
+                            <div>
+                              <p className="font-black text-slate-100">
+                                {v.tecnico||"Não atribuído"}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-400">
+                                {tecnicosAtivosSet.has(normalizarTexto(v.tecnico))
+                                  ? "Ativo"
+                                  :"Histórico"}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+
+                        <td className="px-4 py-4 text-xs font-medium text-slate-300">
+                          {v.abertura_por||"N/A"}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+
+          <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 lg:hidden">
+            {chamadosPaginados.length===0? (
+              <div className="md:col-span-2">
+                <EmptyState
+                  icon="🔍"
+                  title="Nenhum chamado encontrado"
+                  description="Ajuste os filtros ou limpe a seleção para consultar outros chamados."
+                />
+              </div>
+            ):(
+              chamadosPaginados.map((visita) => (
+                <ChamadoMobileCard
+                  key={visita.id}
+                  visita={visita}
+                  tecnicoAtivo={tecnicosAtivosSet.has(normalizarTexto(visita.tecnico))}
+                  dataPrevistaVencida={isDataPrevistaVencida(visita,hojeTabela)}
+                  onDetalhes={() => setChamadoSelecionado(visita)}
+                />
+              ))
+            )}
+          </div>
+
+          <PaginacaoChamados {...paginacaoTabelaProps} prefixo="rodape" />
+        </section>
       </Glass>
 
       {/* MODAL GERADOR DE LISTA DE CHAMADOS */}
@@ -2302,6 +2611,159 @@ export default function FieldsPage() {
 /* -------------------------------------------------------------------------- */
 /* COMPONENTES                                                                */
 /* -------------------------------------------------------------------------- */
+
+function PaginacaoChamados({
+  prefixo,
+  pagina,
+  totalPaginas,
+  totalRegistros,
+  inicio,
+  fim,
+  registrosPorPagina,
+  onPaginaChange,
+  onRegistrosChange,
+}: {
+  prefixo: string
+  pagina: number
+  totalPaginas: number
+  totalRegistros: number
+  inicio: number
+  fim: number
+  registrosPorPagina: number
+  onPaginaChange: (value: number) => void
+  onRegistrosChange: (value: number) => void
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-900/40 p-3 sm:p-4 xl:flex-row xl:items-center xl:justify-between">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 xl:flex-1">
+        <p className="text-xs leading-relaxed text-slate-300" aria-live={prefixo==="topo"? "polite":"off"}>
+          {totalRegistros>0? (
+            <>
+              Mostrando <strong className="text-white">{formatarNumero(inicio)}–{formatarNumero(fim)}</strong>
+              {" "}de <strong className="text-white">{formatarNumero(totalRegistros)}</strong> chamados
+            </>
+          ):(
+            "Nenhum chamado para exibir"
+          )}
+        </p>
+        <div className="flex shrink-0 items-center gap-2">
+          <label htmlFor={`fields-quantidade-${prefixo}`} className="text-xs text-slate-300">Por página</label>
+          <select
+            id={`fields-quantidade-${prefixo}`}
+            value={registrosPorPagina}
+            onChange={(e) => onRegistrosChange(Number(e.target.value))}
+            className="min-h-[44px] rounded-xl border border-slate-700 bg-[#020617] px-2 py-2 text-base text-white outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 sm:text-sm"
+          >
+            <option value={25}>25</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+          </select>
+        </div>
+      </div>
+      <nav aria-label={`Paginação dos chamados — ${prefixo}`} className="flex min-w-0 items-center justify-between gap-2 xl:justify-end">
+        <button
+          type="button"
+          onClick={() => onPaginaChange(Math.max(1,pagina-1))}
+          disabled={pagina<=1}
+          className="inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-slate-200 transition hover:border-blue-500/50 hover:text-blue-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:cursor-default disabled:opacity-35"
+        >
+          <span aria-hidden="true">←</span> <span className="sr-only sm:not-sr-only">Anterior</span>
+        </button>
+        <span className="min-w-[40px] whitespace-nowrap text-center text-xs font-semibold text-slate-300">
+          <span className="sr-only">Página </span>{formatarNumero(pagina)}
+          <span className="sr-only"> de </span><span aria-hidden="true"> / </span>
+          {formatarNumero(totalPaginas)}
+        </span>
+        <button
+          type="button"
+          onClick={() => onPaginaChange(Math.min(totalPaginas,pagina+1))}
+          disabled={pagina>=totalPaginas}
+          className="inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-slate-200 transition hover:border-blue-500/50 hover:text-blue-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:cursor-default disabled:opacity-35"
+        >
+          <span className="sr-only sm:not-sr-only">Próxima</span> <span aria-hidden="true">→</span>
+        </button>
+      </nav>
+    </div>
+  )
+}
+
+function ChamadoMobileCard({
+  visita,
+  tecnicoAtivo,
+  dataPrevistaVencida,
+  onDetalhes,
+}: {
+  visita: any
+  tecnicoAtivo: boolean
+  dataPrevistaVencida: boolean
+  onDetalhes: () => void
+}) {
+  return (
+    <article aria-label={`Chamado ${visita.chamado||"sem código"}`} className="min-w-0 overflow-hidden rounded-2xl border border-slate-700/80 bg-slate-900/50 p-4 shadow-lg shadow-slate-950/15">
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+        <button
+          type="button"
+          onClick={onDetalhes}
+          aria-label={`Ver detalhes do chamado ${visita.chamado||"sem código"}`}
+          className="min-h-[44px] min-w-0 flex-1 break-all text-left text-sm font-black leading-relaxed text-blue-300 outline-none hover:text-cyan-200 focus-visible:rounded-lg focus-visible:ring-2 focus-visible:ring-blue-400"
+        >
+          {visita.chamado||"N/A"}
+        </button>
+        <span className={`max-w-full break-words rounded-full border px-3 py-1.5 text-xs font-bold ${getStatusClasses(visita.status)}`}>
+          {textoSeguro(visita.status,"Pendente")}
+        </span>
+      </div>
+
+      <h4 className="mt-2 break-words text-base font-bold leading-snug text-white [overflow-wrap:anywhere]">
+        {textoSeguro(visita.escola,"Escola não informada")}
+      </h4>
+
+      <div className="mt-4 grid min-w-0 grid-cols-2 gap-x-4 gap-y-4 text-sm">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-slate-400">Data prevista</p>
+          <p className="mt-1 font-semibold text-slate-200">{formatarDataBR(visita.data_prevista)}</p>
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-slate-400">Técnico</p>
+          <p className="mt-1 break-words font-semibold leading-relaxed text-slate-200 [overflow-wrap:anywhere]">{textoSeguro(visita.tecnico,"Não atribuído")}</p>
+          <p className="mt-1 text-[11px] text-slate-400">{tecnicoAtivo? "Ativo":"Histórico"}</p>
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-slate-400">Categoria</p>
+          <p className="mt-1 break-words font-semibold leading-relaxed text-slate-200 [overflow-wrap:anywhere]">{textoSeguro(visita.categoria)}</p>
+          <p className="mt-1 break-words text-xs leading-relaxed text-slate-400 [overflow-wrap:anywhere]">{textoSeguro(visita.subcategoria,"Sem subcategoria")}</p>
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-slate-400">Aberto por</p>
+          <p className="mt-1 break-words text-sm leading-relaxed text-slate-200 [overflow-wrap:anywhere]">{textoSeguro(visita.abertura_por)}</p>
+        </div>
+      </div>
+
+      {dataPrevistaVencida&&(
+        <p className="mt-4 inline-block max-w-full rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs font-semibold text-amber-200">Data prevista vencida</p>
+      )}
+
+      <div className="mt-4 space-y-3 border-t border-slate-700/70 pt-4">
+        <div>
+          <p className="text-xs font-medium text-slate-400">Descrição</p>
+          <p className="mt-1 line-clamp-2 break-words text-sm leading-relaxed text-slate-300 [overflow-wrap:anywhere]">{textoSeguro(visita.descricao,"Sem descrição registrada.")}</p>
+        </div>
+        <div>
+          <p className="text-xs font-medium text-blue-300">Resolução</p>
+          <p className="mt-1 line-clamp-2 break-words text-sm leading-relaxed text-slate-300 [overflow-wrap:anywhere]">{textoSeguro(visita.resolucao,"Sem resolução registrada.")}</p>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={onDetalhes}
+        className="mt-4 inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-3 text-sm font-bold text-blue-200 transition hover:bg-blue-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+      >
+        Ver detalhes completos <span aria-hidden="true">↗</span>
+      </button>
+    </article>
+  )
+}
 
 function Glass({
   children,

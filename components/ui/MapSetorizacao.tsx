@@ -1,52 +1,25 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useId, useMemo, useRef, useState } from "react"
 import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
-
-type EscolaMapa = {
-  id: string
-  nome_escola?: string | null
-  cie?: string | number | null
-  latitude?: string | number | null
-  longitude?: string | number | null
-  tecnico_atribuido?: string | null
-}
+import {
+  getCoordenadas,
+  getTecnicos,
+  getTecnicoVisual,
+  SEM_TECNICO,
+  textoSeguro,
+  type EscolaMapa
+} from "@/lib/fieldsMap"
 
 type MapSetorizacaoProps = {
   escolas: EscolaMapa[]
   selected?: EscolaMapa | null
   onSelect?: (escola: EscolaMapa) => void
-}
-
-const techColors: Record<string, string> = {
-  "Matheus Paiva Guedes": "blue",
-  "Ricardo Ramos Julio": "green",
-  "Felype Aquino dos Santos": "violet",
-  "Ricardo Lee Recabarren Medina": "gold",
-  "Allan Vieira Napoleão": "red",
-  "Willian Andrade Braga": "orange",
-  "Onezimo dos Santos Neto": "yellow",
-  "Ederson de Assis": "black",
-  "Gabriel de Amorim Sparano": "grey",
-}
-
-const hexColors: Record<string, string> = {
-  blue: "#2b82cb",
-  green: "#2aad27",
-  violet: "#9c2bc5",
-  gold: "#cb8427",
-  red: "#cb2b3e",
-  orange: "#f29b27",
-  yellow: "#cac428",
-  black: "#3d3d3d",
-  grey: "#7b7b7b",
-}
-
-function textoSeguro(value: unknown, fallback = "") {
-  const text = String(value ?? "").trim()
-  return text || fallback
+  fitBoundsKey?: number
+  filtroTecnico?: string
+  onFilterTecnico?: (id: string) => void
 }
 
 function escapeHtml(value: string) {
@@ -58,403 +31,551 @@ function escapeHtml(value: string) {
     .replaceAll("'", "&#039;")
 }
 
-function getInitials(name?: string | null) {
-  const clean = textoSeguro(name)
-
-  if (!clean || clean === "Sem Técnico") return "⚠️"
-
-  const parts = clean.split(/\s+/).filter(Boolean)
-
-  if (parts.length >= 2) {
-    return `${parts[0][0]}${parts[1][0]}`.toUpperCase()
-  }
-
-  return clean.substring(0, 2).toUpperCase()
+function createMarkerIcon(
+  tecnico: string | null | undefined,
+  selected: boolean
+) {
+  const visual = getTecnicoVisual(tecnico)
+  const size = selected ? 42 : 34
+  return L.divIcon({
+    className: "fields-marker-icon",
+    html: `<div class="fields-marker-dot${selected ? " is-selected" : ""}" style="width:${size}px;height:${size}px;background-color:${visual.cor}"><span>${escapeHtml(visual.iniciais)}</span></div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+    popupAnchor: [0, -size / 2 - 5]
+  })
 }
 
-function getTecnicoNome(value?: string | null) {
-  return textoSeguro(value, "Sem Técnico")
-}
-
-function getTecnicoColor(tecnico?: string | null) {
-  const nome = getTecnicoNome(tecnico)
-  const colorKey = techColors[nome] || "grey"
-
-  return {
-    colorKey,
-    bgColor: hexColors[colorKey] || hexColors.grey,
-  }
-}
-
-function getCoordenadas(escola: EscolaMapa): [number, number] | null {
-  const latitude = Number(escola.latitude)
-  const longitude = Number(escola.longitude)
-
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null
-  if (latitude === 0 && longitude === 0) return null
-
-  return [latitude, longitude]
-}
-
-function MapResizeFix() {
+function MapCamera({
+  coordenadasKey,
+  fitBoundsKey
+}: {
+  coordenadasKey: string
+  fitBoundsKey: number
+}) {
   const map = useMap()
+  const [size, setSize] = useState({ width: 0, height: 0 })
 
-  useMemo(() => {
-    window.setTimeout(() => {
-      map.invalidateSize()
-    }, 250)
+  useEffect(() => {
+    let frame = 0
+    const resize = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        map.invalidateSize({ pan: false, debounceMoveend: true })
+        const next = map.getSize()
+        setSize((previous) =>
+          previous.width === next.x && previous.height === next.y
+            ? previous
+            : { width: next.x, height: next.y }
+        )
+      })
+    }
+    const observer =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(resize) : null
+    observer?.observe(map.getContainer())
+    window.addEventListener("resize", resize)
+    resize()
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener("resize", resize)
+      cancelAnimationFrame(frame)
+    }
   }, [map])
 
+  useEffect(() => {
+    if (!coordenadasKey || !size.width || !size.height) return
+    const pontos = coordenadasKey.split(";").map((item) => {
+      const [latitude, longitude] = item.split(",").map(Number)
+      return L.latLng(latitude, longitude)
+    })
+    const frame = requestAnimationFrame(() => {
+      map.invalidateSize({ pan: false })
+      map.fitBounds(L.latLngBounds(pontos), {
+        paddingTopLeft: [48, 48],
+        paddingBottomRight: [map.getSize().x >= 900 ? 300 : 48, 60],
+        maxZoom: pontos.length === 1 ? 15 : 13,
+        animate: false
+      })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [map, coordenadasKey, fitBoundsKey, size.width, size.height])
+
   return null
+}
+
+function EscolaMarker({
+  escola,
+  coordenadas,
+  icon,
+  selected,
+  onSelect
+}: {
+  escola: EscolaMapa
+  coordenadas: [number, number]
+  icon: L.DivIcon
+  selected: boolean
+  onSelect: (escola: EscolaMapa) => void
+}) {
+  const map = useMap()
+  const marker = useRef<L.Marker | null>(null)
+  const visual = getTecnicoVisual(escola.tecnico_atribuido)
+
+  useEffect(() => {
+    if (!selected) return
+    const frame = requestAnimationFrame(() => {
+      map.panTo(coordenadas, { animate: false })
+      marker.current?.openPopup()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [map, selected, coordenadas])
+
+  return (
+    <Marker
+      ref={marker}
+      position={coordenadas}
+      icon={icon}
+      title={`${textoSeguro(escola.nome_escola, "Unidade escolar")} — ${visual.nome}`}
+      alt={textoSeguro(escola.nome_escola, "Unidade escolar")}
+      eventHandlers={{ click: () => onSelect(escola) }}
+    >
+      <Popup minWidth={190} maxWidth={280} closeButton>
+        <div className="fields-school-popup">
+          <p className="fields-popup-label">Unidade escolar</p>
+          <h3>{textoSeguro(escola.nome_escola, "Unidade escolar")}</h3>
+          <p className="fields-popup-cie">
+            CIE: {textoSeguro(escola.cie, "S/N")}
+          </p>
+          <div className="fields-popup-technician">
+            <span
+              className="fields-tech-avatar"
+              style={{ backgroundColor: visual.cor }}
+            >
+              {visual.iniciais}
+            </span>
+            <div>
+              <p className="fields-popup-label">Técnico responsável</p>
+              <p className="fields-popup-name">{visual.nome}</p>
+            </div>
+          </div>
+          <a
+            className="fields-popup-directions"
+            href={`https://www.google.com/maps/dir/?api=1&destination=${coordenadas[0]},${coordenadas[1]}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Abrir rota ↗
+          </a>
+        </div>
+      </Popup>
+    </Marker>
+  )
 }
 
 export default function MapSetorizacao({
   escolas,
   selected,
   onSelect,
+  fitBoundsKey = 0,
+  filtroTecnico = "",
+  onFilterTecnico
 }: MapSetorizacaoProps) {
-  const [legendaAberta, setLegendaAberta] = useState(true)
+  const [legendaAberta, setLegendaAberta] = useState(false)
+  const [selectedLocal, setSelectedLocal] = useState<string | null>(null)
+  const legendaId = useId()
 
-  const escolasComCoordenadas = useMemo(() => {
-    return escolas
-      .map((escola) => ({
-        escola,
-        coordenadas: getCoordenadas(escola),
-      }))
-      .filter(
-        (
-          item
-        ): item is {
-          escola: EscolaMapa
-          coordenadas: [number, number]
-        } => Boolean(item.coordenadas)
-      )
-  }, [escolas])
-
-  const iconCache = useMemo(() => {
-    const cache = new Map<string, L.DivIcon>()
-
-    function getMarkerIcon(tecnico?: string | null, ativo = false) {
-      const nomeTecnico = getTecnicoNome(tecnico)
-      const cacheKey = `${nomeTecnico}-${ativo ? "ativo" : "normal"}`
-
-      const cached = cache.get(cacheKey)
-      if (cached) return cached
-
-      const { bgColor } = getTecnicoColor(nomeTecnico)
-      const initials = escapeHtml(getInitials(nomeTecnico))
-      const size = ativo ? 48 : 42
-      const borderColor = ativo ? "#67e8f9" : "#ffffff"
-      const shadow = ativo
-        ? "0 0 0 5px rgba(103,232,249,0.20), 0 14px 32px rgba(2,6,23,0.42)"
-        : "0 10px 24px rgba(2,6,23,0.32)"
-
-      const icon = L.divIcon({
-        className: "custom-initials-icon",
-        html: `
-          <div class="custom-initials-marker" style="
-            width: ${size}px;
-            height: ${size}px;
-            background: radial-gradient(circle at 32% 26%, rgba(255,255,255,0.30), transparent 28%), ${bgColor};
-            border: 2px solid ${borderColor};
-            box-shadow: ${shadow};
-          ">
-            <span>${initials}</span>
-          </div>
-        `,
-        iconSize: [size, size],
-        iconAnchor: [size / 2, size / 2],
-        popupAnchor: [0, -(size / 2) - 4],
-      })
-
-      cache.set(cacheKey, icon)
-      return icon
-    }
-
-    return {
-      getMarkerIcon,
-    }
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 768px)")
+    const update = () => setLegendaAberta(media.matches)
+    update()
+    media.addEventListener("change", update)
+    return () => media.removeEventListener("change", update)
   }, [])
 
+  const escolasNoMapa = useMemo(
+    () =>
+      escolas.flatMap((escola) => {
+        const coordenadas = getCoordenadas(escola)
+        return coordenadas ? [{ escola, coordenadas }] : []
+      }),
+    [escolas]
+  )
+  const tecnicos = useMemo(
+    () => getTecnicos(escolasNoMapa.map(({ escola }) => escola)),
+    [escolasNoMapa]
+  )
+  const coordenadasKey = useMemo(
+    () =>
+      escolasNoMapa.map(({ coordenadas }) => coordenadas.join(",")).join(";"),
+    [escolasNoMapa]
+  )
+  const selectedId = selected === undefined ? selectedLocal : selected?.id
+  const icons = useMemo(() => {
+    const cache = new Map<string, L.DivIcon>()
+    for (const tecnico of tecnicos) {
+      cache.set(tecnico.id, createMarkerIcon(tecnico.nome, false))
+      cache.set(`${tecnico.id}:selected`, createMarkerIcon(tecnico.nome, true))
+    }
+    return cache
+  }, [tecnicos])
+  const totalTecnicos = tecnicos.filter(
+    (tecnico) => tecnico.id !== SEM_TECNICO
+  ).length
+
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-[1.5rem]">
+    <div className="fields-map relative h-full w-full overflow-hidden">
       <MapContainer
         center={[-23.45, -46.53]}
         zoom={12}
         scrollWheelZoom={false}
-        attributionControl={false}
         preferCanvas
-        className="h-full w-full rounded-[1.5rem]"
-        style={{
-          height: "100%",
-          width: "100%",
-          borderRadius: "1.5rem",
-          background: "#020617",
-        }}
+        style={{ height: "100%", width: "100%", background: "#0f172a" }}
       >
-        <MapResizeFix />
-
+        <MapCamera
+          coordenadasKey={coordenadasKey}
+          fitBoundsKey={fitBoundsKey}
+        />
         <TileLayer
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+          maxZoom={19}
           updateWhenIdle
           updateWhenZooming={false}
-          keepBuffer={3}
+          keepBuffer={2}
         />
-
-        {escolasComCoordenadas.map(({ escola, coordenadas }) => {
-          const tecnico = getTecnicoNome(escola.tecnico_atribuido)
-          const selectedId = selected?.id ? String(selected.id) : ""
-          const ativo = selectedId === String(escola.id)
-
+        {escolasNoMapa.map(({ escola, coordenadas }) => {
+          const visual = getTecnicoVisual(escola.tecnico_atribuido)
+          const isSelected = String(selectedId) === String(escola.id)
           return (
-            <Marker
+            <EscolaMarker
               key={escola.id}
-              position={coordenadas}
-              icon={iconCache.getMarkerIcon(tecnico, ativo)}
-              eventHandlers={{
-                click: () => {
-                  if (onSelect) onSelect(escola)
-                },
+              escola={escola}
+              coordenadas={coordenadas}
+              selected={isSelected}
+              icon={icons.get(`${visual.id}${isSelected ? ":selected" : ""}`)!}
+              onSelect={(item) => {
+                setSelectedLocal(item.id)
+                onSelect?.(item)
               }}
-            >
-              <Popup closeButton>
-                <div className="min-w-[240px] max-w-[300px] rounded-2xl bg-[#020617] text-white">
-                  <div className="mb-3 border-b border-slate-800 pb-3">
-                    <p className="text-sm font-black uppercase leading-snug tracking-wide text-white">
-                      {textoSeguro(escola.nome_escola, "Unidade escolar")}
-                    </p>
-
-                    <p className="mt-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                      CIE:{" "}
-                      <span className="font-black text-cyan-300">
-                        {textoSeguro(escola.cie, "S/N")}
-                      </span>
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    <span className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">
-                      Técnico responsável
-                    </span>
-
-                    <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/80 p-3">
-                      <span
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/40 text-[10px] font-black text-white shadow-lg"
-                        style={{
-                          backgroundColor: getTecnicoColor(tecnico).bgColor,
-                        }}
-                      >
-                        {getInitials(tecnico)}
-                      </span>
-
-                      <span className="text-xs font-black leading-snug text-cyan-200">
-                        {tecnico === "Sem Técnico"
-                          ? "⚠️ Sem atribuição"
-                          : tecnico}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </Popup>
-            </Marker>
+            />
           )
         })}
       </MapContainer>
 
-      <button
-        type="button"
-        onClick={() => setLegendaAberta((prev) => !prev)}
-        className="absolute bottom-4 right-4 z-[1001] inline-flex items-center justify-center gap-2 rounded-2xl border border-cyan-500/25 bg-[#020617]/95 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-cyan-300 shadow-2xl shadow-slate-950/40 backdrop-blur-md transition hover:border-cyan-400/40 hover:bg-slate-950 md:hidden"
-      >
-        {legendaAberta ? "Ocultar legenda" : "Ver legenda"}
-      </button>
-
-      <div
-        className={`absolute z-[1000] rounded-2xl border border-slate-800 bg-[#020617]/95 p-4 shadow-2xl shadow-slate-950/40 backdrop-blur-md transition-all duration-300
-        ${
-          legendaAberta
-            ? "bottom-20 right-4 max-h-[38vh] w-[min(280px,calc(100vw-2rem))] translate-y-0 opacity-100 md:bottom-6 md:right-6 md:max-h-[340px] md:w-[280px]"
-            : "pointer-events-none bottom-20 right-4 max-h-0 w-[min(280px,calc(100vw-2rem))] translate-y-4 overflow-hidden opacity-0 md:pointer-events-auto md:bottom-6 md:right-6 md:max-h-[340px] md:w-[280px] md:translate-y-0 md:opacity-100"
-        }`}
-      >
-        <div className="mb-3 flex items-center justify-between gap-3 border-b border-slate-800 pb-3">
-          <div>
-            <h4 className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-300">
-              Legenda acessível
-            </h4>
-            <p className="mt-1 text-[10px] font-medium text-slate-500">
-              Técnicos por iniciais
-            </p>
-          </div>
-
-          <span className="rounded-full border border-cyan-500/25 bg-cyan-500/10 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-cyan-300">
-            {Object.keys(techColors).length}
-          </span>
-        </div>
-
-        <div className="custom-map-scrollbar max-h-[260px] space-y-2 overflow-y-auto pr-2 md:max-h-[270px]">
-          {Object.entries(techColors).map(([name, colorName]) => {
-            const initials = getInitials(name)
-
-            return (
-              <div
-                key={name}
-                className="flex items-center gap-3 rounded-xl border border-slate-900 bg-slate-950/60 px-3 py-2"
-              >
-                <div
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/30 text-[9px] font-black text-white shadow-sm"
-                  style={{ backgroundColor: hexColors[colorName] }}
-                  title={name}
-                >
-                  {initials}
-                </div>
-
-                <span
-                  className="truncate text-[11px] font-bold text-slate-300"
-                  title={name}
-                >
-                  {name}
-                </span>
-              </div>
-            )
-          })}
-
-          <div className="flex items-center gap-3 rounded-xl border border-yellow-500/20 bg-yellow-500/10 px-3 py-2">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-yellow-200/40 bg-[#7b7b7b] text-[11px] font-black text-white shadow-sm">
-              ⚠️
+      {tecnicos.length > 0 && (
+        <div className="fields-legend-wrapper">
+          <button
+            type="button"
+            className="fields-legend-toggle"
+            aria-expanded={legendaAberta}
+            aria-controls={legendaId}
+            onClick={() => setLegendaAberta((anterior) => !anterior)}
+          >
+            <span className="fields-legend-indicator" aria-hidden="true" />
+            Técnicos no mapa{" "}
+            <span className="fields-legend-total">{totalTecnicos}</span>
+            <span aria-hidden="true">{legendaAberta ? "⌃" : "⌄"}</span>
+          </button>
+          {legendaAberta && (
+            <div
+              id={legendaId}
+              className="fields-legend-panel"
+              aria-label="Legenda de técnicos"
+            >
+              <p className="fields-legend-description">
+                {onFilterTecnico
+                  ? "Toque no técnico para filtrar."
+                  : "Cores e iniciais por responsável."}
+              </p>
+              <ul className="fields-legend-list">
+                {tecnicos.map((tecnico) => (
+                  <li key={tecnico.id}>
+                    <button
+                      type="button"
+                      className="fields-legend-item"
+                      aria-pressed={filtroTecnico === tecnico.id}
+                      disabled={!onFilterTecnico}
+                      onClick={() =>
+                        onFilterTecnico?.(
+                          filtroTecnico === tecnico.id ? "" : tecnico.id
+                        )
+                      }
+                    >
+                      <span
+                        className="fields-tech-avatar"
+                        style={{ backgroundColor: tecnico.cor }}
+                      >
+                        {tecnico.iniciais}
+                      </span>
+                      <span className="fields-legend-name">{tecnico.nome}</span>
+                      <span
+                        className="fields-legend-count"
+                        aria-label={`${tecnico.quantidade} escolas`}
+                      >
+                        {tecnico.quantidade}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
             </div>
-
-            <span className="text-[11px] font-bold text-yellow-200">
-              Unidade sem atribuição
-            </span>
-          </div>
+          )}
         </div>
-      </div>
+      )}
 
       <style jsx global>{`
-        .custom-initials-icon {
-          background: transparent !important;
-          border: none !important;
-          outline: none !important;
-          box-shadow: none !important;
+        .fields-map {
+          isolation: isolate;
         }
-
-        .custom-initials-icon::before,
-        .custom-initials-icon::after {
-          display: none !important;
-          content: none !important;
+        .fields-map .leaflet-container {
+          font-family: inherit;
         }
-
-        .custom-initials-marker {
+        .fields-map .leaflet-control-zoom {
+          overflow: hidden;
+          border: 1px solid #334155;
+          border-radius: 12px;
+          box-shadow: 0 8px 20px #02061733;
+        }
+        .fields-map .leaflet-control-zoom a {
+          width: 42px;
+          height: 42px;
+          line-height: 42px;
+          color: #e2e8f0;
+          background: #0f172a;
+          border-color: #334155;
+        }
+        .fields-map .leaflet-control-zoom a:hover {
+          background: #1e293b;
+          color: #67e8f9;
+        }
+        .fields-map .leaflet-control-attribution {
+          font-size: 10px;
+          color: #cbd5e1;
+          background: #020617df;
+        }
+        .fields-map .leaflet-control-attribution a {
+          color: #67e8f9;
+        }
+        .fields-map .fields-marker-icon {
+          background: transparent;
+          border: 0;
+        }
+        .fields-map .fields-marker-dot {
           display: flex;
           align-items: center;
           justify-content: center;
-          border-radius: 9999px;
-          color: #ffffff;
-          font-weight: 950;
+          border: 2px solid #fff;
+          border-radius: 50%;
+          color: #fff;
+          font-size: 10px;
+          font-weight: 900;
+          text-shadow: 0 1px 2px #0009;
+          box-shadow: 0 4px 12px #02061766;
+        }
+        .fields-map .fields-marker-dot.is-selected {
+          border-color: #67e8f9;
+          box-shadow:
+            0 0 0 4px #22d3ee44,
+            0 4px 12px #02061766;
+        }
+        .fields-map .fields-marker-icon:hover .fields-marker-dot {
+          filter: brightness(1.12);
+        }
+        .fields-map .leaflet-marker-icon:focus-visible {
+          outline: 3px solid #22d3ee;
+          outline-offset: 5px;
+          border-radius: 50%;
+        }
+        .fields-map .leaflet-popup-content-wrapper {
+          border: 1px solid #334155;
+          border-radius: 18px;
+          background: #020617;
+          color: #f8fafc;
+          box-shadow: 0 20px 40px #02061755;
+        }
+        .fields-map .leaflet-popup-content {
+          margin: 18px;
+          font-family: inherit;
+        }
+        .fields-map .leaflet-popup-tip {
+          background: #020617;
+        }
+        .fields-map a.leaflet-popup-close-button {
+          color: #94a3b8;
+          font-size: 22px;
+          width: 30px;
+          height: 30px;
+        }
+        .fields-map .fields-school-popup h3 {
+          margin: 7px 12px 8px 0;
+          font-size: 14px;
+          line-height: 1.4;
+          font-weight: 800;
+          overflow-wrap: anywhere;
+        }
+        .fields-map .fields-popup-label {
+          margin: 0;
+          color: #94a3b8;
+          font-size: 10px;
+          font-weight: 700;
+        }
+        .fields-map .fields-popup-cie {
+          margin: 0;
+          color: #67e8f9;
+          font-size: 12px;
+        }
+        .fields-map .fields-popup-technician {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+          margin: 16px 0 10px;
+          padding-top: 12px;
+          border-top: 1px solid #1e293b;
+        }
+        .fields-map .fields-popup-name {
+          margin: 3px 0 0;
+          font-size: 12px;
+          font-weight: 700;
+          overflow-wrap: anywhere;
+        }
+        .fields-map .fields-tech-avatar {
+          display: inline-flex;
+          flex: none;
+          width: 30px;
+          height: 30px;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid #ffffff66;
+          border-radius: 50%;
+          color: #fff;
+          font-size: 10px;
+          font-weight: 900;
+        }
+        .fields-map a.fields-popup-directions {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          min-height: 44px;
+          margin-top: 12px;
+          border: 1px solid #22d3ee44;
+          border-radius: 10px;
+          color: #67e8f9;
+          background: #06b6d415;
+          font-size: 12px;
+          font-weight: 700;
+          text-decoration: none;
+        }
+        .fields-map .fields-legend-wrapper {
+          position: absolute;
+          z-index: 800;
+          top: 12px;
+          right: 12px;
+          width: 260px;
+          max-width: calc(100% - 84px);
+        }
+        .fields-map .fields-legend-toggle {
+          display: flex;
+          width: 100%;
+          min-height: 44px;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 12px;
+          border: 1px solid #334155;
+          border-radius: 12px;
+          color: #e2e8f0;
+          background: #020617ed;
           font-size: 11px;
-          line-height: 1;
-          text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
-          transition:
-            transform 0.18s ease,
-            filter 0.18s ease,
-            box-shadow 0.18s ease;
-          will-change: transform;
+          font-weight: 700;
+          box-shadow: 0 8px 24px #02061733;
         }
-
-        .custom-initials-marker span {
-          transform: translateY(0.5px);
+        .fields-map .fields-legend-indicator {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #22d3ee;
         }
-
-        .custom-initials-icon:hover .custom-initials-marker {
-          transform: scale(1.08);
-          filter: brightness(1.08);
+        .fields-map .fields-legend-total {
+          margin-left: auto;
+          border-radius: 6px;
+          background: #06b6d422;
+          color: #67e8f9;
+          padding: 2px 6px;
         }
-
-        .leaflet-div-icon {
-          background: transparent !important;
-          border: none !important;
+        .fields-map .fields-legend-panel {
+          margin-top: 8px;
+          padding: 12px;
+          border: 1px solid #334155;
+          border-radius: 14px;
+          background: #020617ed;
+          box-shadow: 0 8px 24px #02061733;
         }
-
-        .leaflet-marker-icon {
-          background: transparent !important;
-          border: none !important;
-          outline: none !important;
+        .fields-map .fields-legend-description {
+          margin: 0 0 8px;
+          font-size: 11px;
+          color: #94a3b8;
         }
-
-        .leaflet-popup-content-wrapper {
-          overflow: hidden !important;
-          border: 1px solid rgba(51, 65, 85, 0.95) !important;
-          border-radius: 1.25rem !important;
-          background: #020617 !important;
-          color: #f8fafc !important;
-          box-shadow: 0 22px 60px rgba(2, 6, 23, 0.52) !important;
-        }
-
-        .leaflet-popup-content {
-          margin: 0 !important;
-          color: #f8fafc !important;
-          font-family: inherit !important;
-        }
-
-        .leaflet-popup-tip {
-          background: #020617 !important;
-          border: 1px solid rgba(51, 65, 85, 0.95) !important;
-        }
-
-        .leaflet-popup-close-button {
-          top: 10px !important;
-          right: 10px !important;
-          width: 28px !important;
-          height: 28px !important;
-          border-radius: 9999px !important;
-          color: #94a3b8 !important;
-          font-size: 18px !important;
-          font-weight: 900 !important;
-          transition: all 0.2s ease !important;
-        }
-
-        .leaflet-popup-close-button:hover {
-          background: rgba(239, 68, 68, 0.12) !important;
-          color: #fecaca !important;
-        }
-
-        .custom-map-scrollbar {
+        .fields-map .fields-legend-list {
+          max-height: min(240px, 36vh);
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          margin: 0;
+          padding: 0;
+          list-style: none;
           scrollbar-width: thin;
-          scrollbar-color: #475569 rgba(15, 23, 42, 0.5);
+          scrollbar-color: #475569 transparent;
         }
-
-        .custom-map-scrollbar::-webkit-scrollbar {
-          width: 7px;
+        .fields-map .fields-legend-item {
+          display: flex;
+          width: 100%;
+          min-height: 48px;
+          align-items: center;
+          gap: 9px;
+          padding: 8px 4px;
+          border: 0;
+          border-radius: 8px;
+          text-align: left;
+          color: #cbd5e1;
+          background: transparent;
         }
-
-        .custom-map-scrollbar::-webkit-scrollbar-track {
-          background: rgba(15, 23, 42, 0.5);
-          border-radius: 999px;
+        .fields-map .fields-legend-item:hover:not(:disabled),
+        .fields-map .fields-legend-item[aria-pressed="true"] {
+          background: #06b6d41a;
+          color: #67e8f9;
         }
-
-        .custom-map-scrollbar::-webkit-scrollbar-thumb {
-          background-color: #334155;
-          border-radius: 999px;
-          border: 2px solid transparent;
-          background-clip: padding-box;
+        .fields-map .fields-legend-item:disabled {
+          cursor: default;
         }
-
-        .custom-map-scrollbar::-webkit-scrollbar-thumb:hover {
-          background-color: #475569;
+        .fields-map .fields-legend-name {
+          flex: 1;
+          min-width: 0;
+          font-size: 11px;
+          font-weight: 600;
+          line-height: 1.4;
+          overflow-wrap: anywhere;
         }
-
-        @media (max-width: 768px) {
-          .leaflet-popup-content-wrapper {
-            max-width: calc(100vw - 40px) !important;
+        .fields-map .fields-legend-count {
+          flex: none;
+          font-size: 11px;
+          font-weight: 800;
+          color: #94a3b8;
+        }
+        .fields-map button:focus-visible,
+        .fields-map a:focus-visible {
+          outline: 2px solid #22d3ee;
+          outline-offset: 2px;
+        }
+        @media (max-width: 767px) {
+          .fields-map .fields-legend-wrapper {
+            width: 220px;
           }
-
-          .leaflet-popup-content {
-            max-width: calc(100vw - 40px) !important;
+          .fields-map .fields-legend-list {
+            max-height: min(190px, 28vh);
           }
-
-          .custom-initials-marker {
-            font-size: 10px;
+          .fields-map .leaflet-popup-content-wrapper {
+            max-width: calc(100vw - 72px);
+          }
+          .fields-map .leaflet-popup-content {
+            margin: 16px;
+            max-width: calc(100vw - 108px);
           }
         }
       `}</style>

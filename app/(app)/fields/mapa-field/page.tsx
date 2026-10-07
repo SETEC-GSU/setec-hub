@@ -4,538 +4,603 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
-  type ReactNode,
+  type ReactNode
 } from "react"
-import { createClient } from "@/lib/supabase"
 import dynamic from "next/dynamic"
+import { createClient } from "@/lib/supabase"
+import {
+  filtrarEscolas,
+  getCoordenadas,
+  getTecnicoId,
+  getTecnicos,
+  getTecnicoVisual,
+  SEM_TECNICO,
+  textoSeguro,
+  type EscolaMapa
+} from "@/lib/fieldsMap"
 
-const MapSetorizacao = dynamic(
-  () => import("@/components/ui/MapSetorizacao"),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="flex h-full min-h-[420px] items-center justify-center bg-[#020617]">
-        <div className="flex flex-col items-center gap-4">
-          <div className="h-12 w-12 animate-spin rounded-full border-2 border-cyan-500 border-t-transparent" />
-          <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-500">
-            Carregando mapa
-          </p>
-        </div>
-      </div>
-    ),
-  }
-)
+const MapSetorizacao = dynamic(() => import("@/components/ui/MapSetorizacao"), {
+  ssr: false,
+  loading: () => (
+    <div
+      role="status"
+      className="flex h-full items-center justify-center bg-slate-950 text-sm text-slate-400"
+    >
+      <span className="mr-3 h-5 w-5 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
+      Carregando mapa…
+    </div>
+  )
+})
 
-type EscolaMapa = {
-  id: string
-  nome_escola: string | null
-  cie: string | number | null
-  latitude: string | number | null
-  longitude: string | number | null
-  tecnico_atribuido: string | null
-}
-
-type Feedback = {
-  tipo: "success" | "error" | "info"
-  texto: string
-} | null
-
-function textoSeguro(value: unknown, fallback = "") {
-  const text = String(value ?? "").trim()
-  return text || fallback
-}
-
-function normalizar(value: unknown) {
-  return String(value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim()
-}
-
-function temCoordenada(escola: EscolaMapa) {
-  const latitude = Number(escola.latitude)
-  const longitude = Number(escola.longitude)
-
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false
-  if (latitude === 0 && longitude === 0) return false
-
-  return true
-}
+type Feedback = { tipo: "success" | "error"; texto: string } | null
+type Visualizacao = "mapa" | "lista"
+const TAMANHO_LOTE = 500
+const ESCOLAS_POR_PAGINA = 24
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message
-  return "Não foi possível carregar o mapa de setorização."
+  if (error && typeof error === "object" && "message" in error) {
+    return String(error.message)
+  }
+  return "Não foi possível carregar as escolas. Tente atualizar novamente."
 }
 
 export default function MapaGeograficoSetorizacao() {
   const supabase = useMemo(() => createClient(), [])
-
+  const request = useRef<AbortController | null>(null)
+  const mapaSection = useRef<HTMLElement | null>(null)
   const [escolas, setEscolas] = useState<EscolaMapa[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [busca, setBusca] = useState("")
-  const [filtroTecnico, setFiltroTecnico] = useState("Todos")
+  const [filtroTecnico, setFiltroTecnico] = useState("")
+  const [visualizacao, setVisualizacao] = useState<Visualizacao>("mapa")
+  const [pagina, setPagina] = useState(1)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [fitBoundsKey, setFitBoundsKey] = useState(0)
   const [feedback, setFeedback] = useState<Feedback>(null)
 
   const carregarDados = useCallback(
     async (modo: "inicial" | "manual" = "inicial") => {
+      request.current?.abort()
+      const controller = new AbortController()
+      request.current = controller
       if (modo === "inicial") setLoading(true)
-      if (modo === "manual") setRefreshing(true)
-
+      setRefreshing(modo === "manual")
       setFeedback(null)
 
       try {
-        const { data, error } = await supabase
-          .from("escolas")
-          .select("id, nome_escola, cie, latitude, longitude, tecnico_atribuido")
-          .order("nome_escola", { ascending: true })
-
-        if (error) throw error
-
-        setEscolas((data || []) as EscolaMapa[])
-
+        // Paginação explícita para não cortar escolas no limite padrão da API.
+        const resultado: EscolaMapa[] = []
+        let inicio = 0
+        while (!controller.signal.aborted) {
+          const { data, error } = await supabase
+            .from("escolas")
+            .select(
+              "id, nome_escola, cie, latitude, longitude, tecnico_atribuido"
+            )
+            .order("nome_escola", { ascending: true })
+            .order("id", { ascending: true })
+            .range(inicio, inicio + TAMANHO_LOTE - 1)
+            .abortSignal(controller.signal)
+          if (controller.signal.aborted) return
+          if (error) throw error
+          const lote = (data || []) as EscolaMapa[]
+          resultado.push(...lote)
+          if (lote.length < TAMANHO_LOTE) break
+          inicio += lote.length
+        }
+        if (controller.signal.aborted) return
+        setEscolas(resultado)
         if (modo === "manual") {
           setFeedback({
             tipo: "success",
-            texto: "Mapa atualizado com sucesso.",
+            texto: "Escolas e atribuições atualizadas."
           })
         }
       } catch (error) {
+        if (controller.signal.aborted) return
         console.error("[Mapa de Setorização] Erro ao carregar:", error)
-
-        setFeedback({
-          tipo: "error",
-          texto: getErrorMessage(error),
-        })
+        setFeedback({ tipo: "error", texto: getErrorMessage(error) })
       } finally {
-        setLoading(false)
-        setRefreshing(false)
+        if (!controller.signal.aborted) {
+          setLoading(false)
+          setRefreshing(false)
+        }
       }
     },
     [supabase]
   )
 
   useEffect(() => {
-    carregarDados("inicial")
+    void carregarDados("inicial")
+    return () => request.current?.abort()
   }, [carregarDados])
 
   useEffect(() => {
-    if (!feedback) return
-
-    const timer = window.setTimeout(() => {
-      setFeedback(null)
-    }, 5000)
-
+    if (feedback?.tipo !== "success") return
+    const timer = window.setTimeout(() => setFeedback(null), 5000)
     return () => window.clearTimeout(timer)
   }, [feedback])
 
+  const tecnicos = useMemo(() => getTecnicos(escolas), [escolas])
+  const tecnicosAtribuidos = useMemo(
+    () => tecnicos.filter((tecnico) => tecnico.id !== SEM_TECNICO),
+    [tecnicos]
+  )
   const stats = useMemo(() => {
-    const total = escolas.length
-    const comCoordenada = escolas.filter(temCoordenada).length
-    const semCoordenada = total - comCoordenada
-    const semTecnico = escolas.filter(
-      (escola) => !textoSeguro(escola.tecnico_atribuido)
-    ).length
-    const comTecnico = total - semTecnico
-
-    const percentualMapeado =
-      total > 0 ? Math.round((comCoordenada / total) * 100) : 0
-
+    let mapeadas = 0
+    let semTecnico = 0
+    for (const escola of escolas) {
+      if (getCoordenadas(escola)) mapeadas += 1
+      if (getTecnicoId(escola.tecnico_atribuido) === SEM_TECNICO)
+        semTecnico += 1
+    }
     return {
-      total,
-      comCoordenada,
-      semCoordenada,
+      total: escolas.length,
+      mapeadas,
+      semCoordenadas: escolas.length - mapeadas,
       semTecnico,
-      comTecnico,
-      percentualMapeado,
+      percentual: escolas.length
+        ? Math.round((mapeadas / escolas.length) * 100)
+        : 0
     }
   }, [escolas])
+  const escolasFiltradas = useMemo(
+    () => filtrarEscolas(escolas, busca, filtroTecnico),
+    [escolas, busca, filtroTecnico]
+  )
+  const escolasNoMapa = useMemo(
+    () => escolasFiltradas.filter((escola) => Boolean(getCoordenadas(escola))),
+    [escolasFiltradas]
+  )
+  const selected =
+    escolasNoMapa.find((escola) => escola.id === selectedId) || null
+  const filtrosAtivos = Boolean(busca.trim() || filtroTecnico)
+  const totalPaginas = Math.max(
+    1,
+    Math.ceil(escolasFiltradas.length / ESCOLAS_POR_PAGINA)
+  )
+  const paginaAtual = Math.min(pagina, totalPaginas)
+  const escolasNaPagina = escolasFiltradas.slice(
+    (paginaAtual - 1) * ESCOLAS_POR_PAGINA,
+    paginaAtual * ESCOLAS_POR_PAGINA
+  )
+  const semCoordenadasFiltradas = escolasFiltradas.length - escolasNoMapa.length
 
-  const listaTecnicosSelect = useMemo(() => {
-    const nomes = new Set<string>()
+  useEffect(() => {
+    setPagina(1)
+    setSelectedId(null)
+  }, [busca, filtroTecnico])
 
-    escolas.forEach((escola) => {
-      const tecnico = textoSeguro(escola.tecnico_atribuido)
-      if (tecnico) nomes.add(tecnico)
-    })
-
-    return Array.from(nomes).sort((a, b) => a.localeCompare(b, "pt-BR"))
-  }, [escolas])
-
-  const escolasFiltradas = useMemo(() => {
-    const termo = normalizar(busca)
-
-    return escolas.filter((escola) => {
-      const tecnico = textoSeguro(escola.tecnico_atribuido)
-
-      const matchBusca = termo
-        ? [escola.nome_escola, escola.cie, escola.tecnico_atribuido]
-            .map(normalizar)
-            .join(" ")
-            .includes(termo)
-        : true
-
-      const matchTecnico =
-        filtroTecnico === "Todos"
-          ? true
-          : filtroTecnico === "Sem Técnico"
-            ? !tecnico
-            : tecnico === filtroTecnico
-
-      return matchBusca && matchTecnico && temCoordenada(escola)
-    })
-  }, [busca, escolas, filtroTecnico])
-
-  const filtrosAtivos = Boolean(busca.trim()) || filtroTecnico !== "Todos"
+  useEffect(() => {
+    if (
+      filtroTecnico &&
+      !tecnicos.some((tecnico) => tecnico.id === filtroTecnico)
+    ) {
+      setFiltroTecnico("")
+    }
+  }, [tecnicos, filtroTecnico])
 
   function limparFiltros() {
     setBusca("")
-    setFiltroTecnico("Todos")
+    setFiltroTecnico("")
+    setSelectedId(null)
+  }
+
+  function localizarEscola(escola: EscolaMapa) {
+    setSelectedId(escola.id)
+    setVisualizacao("mapa")
+    requestAnimationFrame(() =>
+      mapaSection.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+      })
+    )
   }
 
   if (loading) return <LoadingPage />
 
   return (
-    <div className="mx-auto max-w-[1700px] space-y-6 pb-8">
-      <section className="relative overflow-hidden rounded-[2.25rem] border border-cyan-500/20 bg-[#020617] p-5 shadow-2xl shadow-cyan-950/10 md:p-7">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(6,182,212,0.22),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(37,99,235,0.16),transparent_34%)]" />
-        <div className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-cyan-500/10 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-28 left-1/3 h-64 w-64 rounded-full bg-blue-500/10 blur-3xl" />
-
-        <div className="relative z-10 flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
-          <div className="max-w-4xl">
-            <div className="mb-4 flex flex-wrap gap-2">
-              <Badge color="cyan">Mapa Field</Badge>
-              <Badge color="blue">Georreferenciamento</Badge>
-              <Badge color="emerald">Setorização</Badge>
+    <div className="mx-auto w-full min-w-0 max-w-[1700px] space-y-5 pb-8">
+      <section className="relative overflow-hidden rounded-3xl border border-cyan-500/20 bg-[#020617] p-5 shadow-xl sm:p-6 lg:p-7">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(6,182,212,0.15),transparent_65%)]" />
+        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-500/25 bg-cyan-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-cyan-300">
+                <Icon name="pin" className="h-3 w-3" /> Fields
+              </span>
+              <span className="text-xs text-slate-500">
+                Georreferenciamento · Setorização
+              </span>
             </div>
-
-            <h1 className="text-3xl font-black tracking-tight text-white md:text-5xl">
+            <h1 className="text-2xl font-black tracking-tight text-white sm:text-3xl lg:text-4xl">
               Mapa de{" "}
-              <span className="bg-gradient-to-r from-cyan-300 via-blue-400 to-blue-600 bg-clip-text text-transparent">
+              <span className="bg-gradient-to-r from-cyan-300 to-blue-400 bg-clip-text text-transparent">
                 Setorização
               </span>
             </h1>
-
-            <p className="mt-4 max-w-3xl text-sm font-medium leading-relaxed text-slate-400 md:text-base">
-              Visualização geográfica da malha de atendimento dos Fields, com
-              filtros por unidade escolar, CIE e técnico atribuído.
+            <p className="mt-3 max-w-2xl text-sm leading-relaxed text-slate-400">
+              Encontre as escolas, acompanhe os responsáveis e planeje o
+              atendimento da região.
             </p>
           </div>
-
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:min-w-[620px]">
-            <MiniStat label="Total UEs" value={stats.total} tone="slate" />
-
-            <MiniStat
-              label="Mapeadas"
-              value={stats.comCoordenada}
-              detail={`${stats.percentualMapeado}%`}
-              tone="cyan"
-            />
-
-            <MiniStat
-              label="Sem coordenada"
-              value={stats.semCoordenada}
-              tone="orange"
-            />
-
-            <MiniStat
-              label="Sem técnico"
-              value={stats.semTecnico}
-              tone="red"
-            />
+          <div className="flex shrink-0 items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/50 px-4 py-3">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-300">
+              <Icon name="users" />
+            </span>
+            <div>
+              <p className="text-lg font-black leading-tight text-white">
+                {tecnicosAtribuidos.length}
+              </p>
+              <p className="text-xs text-slate-400">
+                técnicos vinculados às escolas
+              </p>
+            </div>
           </div>
+        </div>
+        <div className="relative mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <MiniStat
+            label="Unidades escolares"
+            value={stats.total}
+            icon="school"
+            tone="slate"
+          />
+          <MiniStat
+            label="No mapa"
+            value={stats.mapeadas}
+            detail={`${stats.percentual}% do total`}
+            icon="pin"
+            tone="cyan"
+          />
+          <MiniStat
+            label="Sem coordenadas"
+            value={stats.semCoordenadas}
+            icon="location-off"
+            tone="orange"
+          />
+          <MiniStat
+            label="Sem técnico"
+            value={stats.semTecnico}
+            icon="users"
+            tone="rose"
+          />
         </div>
       </section>
 
       {feedback && (
         <div
-          className={`rounded-2xl border px-5 py-4 text-sm font-bold ${
-            feedback.tipo === "success"
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-              : feedback.tipo === "error"
-                ? "border-red-500/30 bg-red-500/10 text-red-300"
-                : "border-blue-500/30 bg-blue-500/10 text-blue-300"
-          }`}
+          role={feedback.tipo === "error" ? "alert" : "status"}
+          className={`flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm ${feedback.tipo === "error" ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"}`}
         >
-          {feedback.texto}
+          <p className="min-w-0 flex-1 break-words">{feedback.texto}</p>
+          <button
+            type="button"
+            aria-label="Fechar aviso"
+            onClick={() => setFeedback(null)}
+            className="-my-2 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg hover:bg-white/5"
+          >
+            <Icon name="close" />
+          </button>
         </div>
       )}
 
-      <section className="rounded-[2rem] border border-slate-800 bg-[#020617] p-4 shadow-xl shadow-slate-950/20 md:p-5">
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_280px_auto_auto]">
-          <div className="relative">
-            <span className="pointer-events-none absolute inset-y-0 left-5 flex items-center text-slate-500">
-              🔍
-            </span>
-
-            <input
-              type="text"
-              placeholder="Buscar por escola, CIE ou técnico..."
-              value={busca}
-              onChange={(event) => setBusca(event.target.value)}
-              className="w-full rounded-2xl border border-slate-800 bg-slate-950 py-4 pl-14 pr-4 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-500/60 focus:ring-1 focus:ring-cyan-500/50"
-            />
+      <section
+        aria-label="Filtros das escolas"
+        className="rounded-3xl border border-slate-800 bg-[#020617] p-4 sm:p-5"
+      >
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(180px,280px)_auto] md:items-end">
+          <div className="min-w-0">
+            <label
+              htmlFor="mapa-fields-busca"
+              className="mb-2 block text-xs font-semibold text-slate-400"
+            >
+              Buscar escola, CIE ou técnico
+            </label>
+            <div className="relative">
+              <Icon
+                name="search"
+                className="pointer-events-none absolute left-3.5 top-3.5 h-5 w-5 text-slate-500"
+              />
+              <input
+                id="mapa-fields-busca"
+                type="search"
+                placeholder="Nome da escola, CIE ou responsável…"
+                value={busca}
+                onChange={(event) => setBusca(event.target.value)}
+                className="h-12 w-full rounded-xl border border-slate-700 bg-slate-900/70 pl-11 pr-3 text-base text-white outline-none placeholder:text-sm placeholder:text-slate-500 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15"
+              />
+            </div>
           </div>
-
-          <select
-            value={filtroTecnico}
-            onChange={(event) => setFiltroTecnico(event.target.value)}
-            className="w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 text-sm font-bold text-white outline-none transition focus:border-cyan-500/60 focus:ring-1 focus:ring-cyan-500/50"
-          >
-            <option value="Todos">Todos os técnicos</option>
-            <option value="Sem Técnico">Sem técnico</option>
-
-            {listaTecnicosSelect.map((tecnico) => (
-              <option key={tecnico} value={tecnico}>
-                {tecnico}
-              </option>
-            ))}
-          </select>
-
-          <div className="flex items-center justify-center rounded-2xl border border-cyan-500/25 bg-cyan-500/10 px-5 py-4 text-sm font-black uppercase tracking-widest text-cyan-300">
-            {escolasFiltradas.length} exibidas
+          <div className="min-w-0">
+            <label
+              htmlFor="mapa-fields-tecnico"
+              className="mb-2 block text-xs font-semibold text-slate-400"
+            >
+              Técnico responsável
+            </label>
+            <select
+              id="mapa-fields-tecnico"
+              value={filtroTecnico}
+              onChange={(event) => setFiltroTecnico(event.target.value)}
+              className="h-12 w-full min-w-0 rounded-xl border border-slate-700 bg-slate-900/70 px-3 text-base text-white outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/15"
+            >
+              <option value="">Todos os técnicos</option>
+              <option value={SEM_TECNICO}>Sem técnico</option>
+              {tecnicosAtribuidos.map((tecnico) => (
+                <option key={tecnico.id} value={tecnico.id}>
+                  {tecnico.nome} ({tecnico.quantidade})
+                </option>
+              ))}
+            </select>
           </div>
-
           <button
             type="button"
-            onClick={() => carregarDados("manual")}
+            onClick={() => void carregarDados("manual")}
             disabled={refreshing}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-blue-500/25 bg-blue-500/10 px-5 py-4 text-sm font-black uppercase tracking-widest text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-cyan-500/25 bg-cyan-500/10 px-4 text-sm font-bold text-cyan-300 transition hover:bg-cyan-500/20 disabled:cursor-wait disabled:opacity-60"
           >
-            <span className={refreshing ? "animate-spin" : ""}>↻</span>
-            Atualizar
+            <Icon
+              name="refresh"
+              className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+            />
+            {refreshing ? "Atualizando…" : "Atualizar"}
           </button>
         </div>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 pt-3">
+          <p role="status" className="text-xs text-slate-400">
+            <strong className="font-bold text-cyan-300">
+              {escolasNoMapa.length}
+            </strong>{" "}
+            no mapa
+            <span className="mx-2 text-slate-700">/</span>
+            {escolasFiltradas.length} escolas encontradas
+          </p>
+          {filtrosAtivos && (
+            <button
+              type="button"
+              onClick={limparFiltros}
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-3 text-xs font-bold text-cyan-300 hover:bg-cyan-500/10"
+            >
+              <Icon name="close" className="h-3.5 w-3.5" /> Limpar filtros
+            </button>
+          )}
+        </div>
+      </section>
 
-        {(filtrosAtivos || stats.semCoordenada > 0) && (
-          <div className="mt-4 flex flex-col gap-3 border-t border-slate-800 pt-4 md:flex-row md:items-center md:justify-between">
-            <div className="flex flex-wrap gap-2">
-              {stats.semCoordenada > 0 && (
-                <span className="rounded-full border border-orange-500/25 bg-orange-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-orange-300">
-                  {stats.semCoordenada} escola(s) sem coordenada não aparecem no mapa
-                </span>
-              )}
+      <section
+        ref={mapaSection}
+        aria-label="Visualização das escolas"
+        className="scroll-mt-4 overflow-hidden rounded-3xl border border-slate-800 bg-[#020617] shadow-xl"
+      >
+        <div className="flex flex-col gap-3 border-b border-slate-800 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <div
+            className="flex rounded-xl border border-slate-800 bg-slate-900/60 p-1"
+            role="group"
+            aria-label="Modo de visualização"
+          >
+            <ViewButton
+              active={visualizacao === "mapa"}
+              onClick={() => setVisualizacao("mapa")}
+              icon="map"
+            >
+              Mapa
+            </ViewButton>
+            <ViewButton
+              active={visualizacao === "lista"}
+              onClick={() => setVisualizacao("lista")}
+              icon="list"
+            >
+              Lista de escolas
+            </ViewButton>
+          </div>
+          {visualizacao === "mapa" && (
+            <button
+              type="button"
+              disabled={escolasNoMapa.length === 0}
+              onClick={() => {
+                setSelectedId(null)
+                setFitBoundsKey((key) => key + 1)
+              }}
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-3 text-xs font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+            >
+              <Icon name="focus" className="h-4 w-4" /> Enquadrar escolas
+            </button>
+          )}
+        </div>
 
-              {filtrosAtivos && (
-                <span className="rounded-full border border-cyan-500/25 bg-cyan-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-cyan-300">
-                  Filtro ativo
-                </span>
+        {visualizacao === "mapa" ? (
+          <>
+            <div className="mapa-fields-map relative h-[58svh] min-h-[360px] sm:h-[62vh] sm:min-h-[440px] lg:h-[580px]">
+              <MapSetorizacao
+                escolas={escolasNoMapa}
+                selected={selected}
+                onSelect={(escola) => setSelectedId(escola.id)}
+                fitBoundsKey={fitBoundsKey}
+                filtroTecnico={filtroTecnico}
+                onFilterTecnico={setFiltroTecnico}
+              />
+              {escolasNoMapa.length === 0 && (
+                <div className="absolute inset-0 z-[900] flex flex-col items-center justify-center bg-slate-950/95 p-6 text-center">
+                  <Icon name="map" className="mb-4 h-10 w-10 text-slate-600" />
+                  <h2 className="text-base font-bold text-white">
+                    Nenhuma escola no mapa
+                  </h2>
+                  <p className="mt-2 max-w-sm text-sm leading-relaxed text-slate-400">
+                    {semCoordenadasFiltradas > 0
+                      ? "As escolas encontradas precisam de coordenadas válidas. Você pode consultá-las na lista."
+                      : "Ajuste os filtros ou atualize os dados para tentar novamente."}
+                  </p>
+                  <div className="mt-5 flex flex-wrap justify-center gap-2">
+                    {filtrosAtivos && (
+                      <button
+                        type="button"
+                        onClick={limparFiltros}
+                        className="min-h-11 rounded-xl bg-cyan-600 px-4 text-sm font-bold text-white"
+                      >
+                        Limpar filtros
+                      </button>
+                    )}
+                    {semCoordenadasFiltradas > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setVisualizacao("lista")}
+                        className="min-h-11 rounded-xl border border-slate-700 bg-slate-900 px-4 text-sm font-bold text-slate-200"
+                      >
+                        Ver lista de escolas
+                      </button>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
-
-            {filtrosAtivos && (
-              <button
-                type="button"
-                onClick={limparFiltros}
-                className="self-start rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-300 transition hover:border-cyan-500/40 hover:text-cyan-300 md:self-auto"
-              >
-                Limpar filtros
-              </button>
+            <div className="flex flex-col gap-2 border-t border-slate-800 px-4 py-3 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+              <p>Clique em uma escola para ver o responsável e abrir a rota.</p>
+              {semCoordenadasFiltradas > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setVisualizacao("lista")}
+                  className="min-h-11 text-left font-semibold text-amber-300"
+                >
+                  {semCoordenadasFiltradas} sem coordenadas · Consultar na lista
+                  ↗
+                </button>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="p-4 sm:p-5">
+            {escolasFiltradas.length === 0 ? (
+              <div className="py-14 text-center">
+                <h2 className="font-bold text-white">
+                  Nenhuma escola encontrada
+                </h2>
+                <p className="mt-2 text-sm text-slate-400">
+                  Tente outro nome, CIE ou técnico.
+                </p>
+                {filtrosAtivos && (
+                  <button
+                    type="button"
+                    onClick={limparFiltros}
+                    className="mt-4 min-h-11 rounded-xl bg-cyan-500/10 px-4 text-sm font-bold text-cyan-300"
+                  >
+                    Limpar filtros
+                  </button>
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {escolasNaPagina.map((escola) => {
+                    const tecnico = getTecnicoVisual(escola.tecnico_atribuido)
+                    const coordenadas = getCoordenadas(escola)
+                    return (
+                      <article
+                        key={escola.id}
+                        className="flex min-w-0 flex-col rounded-2xl border border-slate-800 bg-slate-900/40 p-4"
+                      >
+                        <p className="mb-2 text-[11px] font-bold text-cyan-300">
+                          CIE {textoSeguro(escola.cie, "S/N")}
+                        </p>
+                        <h3 className="break-words text-sm font-bold leading-relaxed text-white">
+                          {textoSeguro(escola.nome_escola, "Unidade escolar")}
+                        </h3>
+                        <div className="mt-4 flex items-center gap-2.5">
+                          <span
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/30 text-[10px] font-black text-white"
+                            style={{ backgroundColor: tecnico.cor }}
+                          >
+                            {tecnico.iniciais}
+                          </span>
+                          <p className="min-w-0 break-words text-xs leading-relaxed text-slate-300">
+                            {tecnico.nome}
+                          </p>
+                        </div>
+                        <div className="mt-auto flex items-center justify-between gap-2 pt-4">
+                          <span
+                            className={`text-[11px] font-semibold ${coordenadas ? "text-emerald-300" : "text-amber-300"}`}
+                          >
+                            {coordenadas
+                              ? "Localização cadastrada"
+                              : "Sem coordenadas"}
+                          </span>
+                          {coordenadas && (
+                            <button
+                              type="button"
+                              onClick={() => localizarEscola(escola)}
+                              className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-bold text-cyan-300 hover:bg-cyan-500/10"
+                            >
+                              Ver no mapa{" "}
+                              <Icon name="pin" className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+                {totalPaginas > 1 && (
+                  <nav
+                    aria-label="Paginação das escolas"
+                    className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4"
+                  >
+                    <p className="text-xs text-slate-400">
+                      Página {paginaAtual} de {totalPaginas} ·{" "}
+                      {escolasFiltradas.length} escolas
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={paginaAtual === 1}
+                        onClick={() => setPagina(paginaAtual - 1)}
+                        className="min-h-11 rounded-xl border border-slate-700 px-4 text-xs font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                      >
+                        Anterior
+                      </button>
+                      <button
+                        type="button"
+                        disabled={paginaAtual === totalPaginas}
+                        onClick={() => setPagina(paginaAtual + 1)}
+                        className="min-h-11 rounded-xl border border-slate-700 px-4 text-xs font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                      >
+                        Próxima
+                      </button>
+                    </div>
+                  </nav>
+                )}
+              </>
             )}
           </div>
         )}
       </section>
-
-      <section className="relative overflow-hidden rounded-[2.25rem] border border-slate-800 bg-[#020617] shadow-2xl shadow-slate-950/20">
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-[5] h-px bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent" />
-
-        <div className="mapa-fields-map relative h-[62vh] min-h-[460px] overflow-hidden rounded-[2.25rem] md:h-[calc(100vh-360px)] md:min-h-[560px]">
-          {escolasFiltradas.length === 0 ? (
-            <div className="absolute inset-0 z-[500] flex flex-col items-center justify-center bg-[#020617]/85 p-6 text-center backdrop-blur-md">
-              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-slate-800 bg-slate-950 text-3xl">
-                🗺️
-              </div>
-
-              <p className="text-sm font-black uppercase tracking-[0.18em] text-white">
-                Nenhuma escola encontrada
-              </p>
-
-              <p className="mt-2 max-w-md text-sm font-medium leading-relaxed text-slate-500">
-                Ajuste os filtros, limpe a busca ou verifique se as escolas
-                possuem latitude e longitude cadastradas.
-              </p>
-
-              {filtrosAtivos && (
-                <button
-                  type="button"
-                  onClick={limparFiltros}
-                  className="mt-5 rounded-2xl bg-cyan-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white transition hover:bg-cyan-700"
-                >
-                  Limpar filtros
-                </button>
-              )}
-            </div>
-          ) : null}
-
-          <MapSetorizacao escolas={escolasFiltradas} />
-        </div>
-      </section>
-
-      <style jsx global>{`
-        .mapa-fields-map .leaflet-container {
-          height: 100%;
-          min-height: inherit;
-          background: #020617;
-          font-family: inherit;
-        }
-
-        .mapa-fields-map .leaflet-control-container {
-          font-family: inherit;
-        }
-
-        .mapa-fields-map .leaflet-pane,
-        .mapa-fields-map .leaflet-tile-pane,
-        .mapa-fields-map .leaflet-overlay-pane,
-        .mapa-fields-map .leaflet-shadow-pane,
-        .mapa-fields-map .leaflet-marker-pane,
-        .mapa-fields-map .leaflet-tooltip-pane,
-        .mapa-fields-map .leaflet-popup-pane {
-          outline: none !important;
-        }
-
-        .mapa-fields-map .leaflet-tile {
-          border: none !important;
-          outline: 1px solid transparent !important;
-          box-shadow: none !important;
-          background: transparent !important;
-          image-rendering: auto !important;
-          -webkit-backface-visibility: hidden !important;
-          backface-visibility: hidden !important;
-          transform: translateZ(0);
-        }
-
-        .mapa-fields-map .leaflet-marker-icon,
-        .mapa-fields-map .leaflet-marker-shadow {
-          outline: none !important;
-          box-shadow: none !important;
-        }
-
-        .mapa-fields-map .leaflet-control {
-          border-radius: 1rem !important;
-          border: 1px solid rgba(51, 65, 85, 0.95) !important;
-          background: rgba(2, 6, 23, 0.92) !important;
-          color: #e2e8f0 !important;
-          box-shadow: 0 18px 50px rgba(2, 6, 23, 0.35) !important;
-          backdrop-filter: blur(12px);
-        }
-
-        .mapa-fields-map .leaflet-control a {
-          background: rgba(15, 23, 42, 0.98) !important;
-          color: #e2e8f0 !important;
-          border-color: rgba(51, 65, 85, 0.95) !important;
-        }
-
-        .mapa-fields-map .leaflet-control a:hover {
-          background: rgba(30, 41, 59, 0.98) !important;
-          color: #67e8f9 !important;
-        }
-
-        .mapa-fields-map .leaflet-popup-content-wrapper,
-        .mapa-fields-map .leaflet-popup-tip {
-          background: #020617 !important;
-          color: #f8fafc !important;
-          border: 1px solid rgba(51, 65, 85, 0.95) !important;
-          box-shadow: 0 18px 50px rgba(2, 6, 23, 0.45) !important;
-        }
-
-        .mapa-fields-map .leaflet-popup-content {
-          margin: 14px 16px !important;
-          font-family: inherit !important;
-          color: #f8fafc !important;
-        }
-
-        .mapa-fields-map .leaflet-popup-content * {
-          color: #f8fafc !important;
-        }
-
-        .mapa-fields-map .leaflet-popup-content strong,
-        .mapa-fields-map .leaflet-popup-content b,
-        .mapa-fields-map .leaflet-popup-content h1,
-        .mapa-fields-map .leaflet-popup-content h2,
-        .mapa-fields-map .leaflet-popup-content h3,
-        .mapa-fields-map .leaflet-popup-content h4 {
-          color: #ffffff !important;
-          font-weight: 800 !important;
-        }
-
-        .mapa-fields-map .leaflet-popup-content small,
-        .mapa-fields-map .leaflet-popup-content .muted,
-        .mapa-fields-map .leaflet-popup-content .secondary {
-          color: #94a3b8 !important;
-        }
-
-        .mapa-fields-map .leaflet-popup-close-button {
-          color: #ffffff !important;
-          font-size: 18px !important;
-          font-weight: 700 !important;
-        }
-
-        .mapa-fields-map .leaflet-popup-close-button:hover {
-          color: #67e8f9 !important;
-          background: transparent !important;
-        }
-
-        .mapa-fields-map .leaflet-control-attribution {
-          display: none !important;
-        }
-
-        .mapa-fields-map .legend,
-        .mapa-fields-map .map-legend,
-        .mapa-fields-map .leaflet-control-layers,
-        .mapa-fields-map .leaflet-bottom.leaflet-right .leaflet-control,
-        .mapa-fields-map .leaflet-bottom.leaflet-left .leaflet-control {
-          max-width: min(360px, calc(100vw - 48px));
-          max-height: 34vh;
-          overflow-y: auto;
-        }
-
-        @media (max-width: 768px) {
-          .mapa-fields-map {
-            height: 64vh !important;
-            min-height: 480px !important;
-          }
-
-          .mapa-fields-map .leaflet-top.leaflet-left {
-            top: 12px !important;
-            left: 12px !important;
-          }
-
-          .mapa-fields-map .leaflet-top.leaflet-right {
-            top: 12px !important;
-            right: 12px !important;
-          }
-
-          .mapa-fields-map .leaflet-bottom.leaflet-right {
-            right: 12px !important;
-            bottom: 12px !important;
-          }
-
-          .mapa-fields-map .leaflet-bottom.leaflet-left {
-            left: 12px !important;
-            bottom: 12px !important;
-          }
-
-          .mapa-fields-map .legend,
-          .mapa-fields-map .map-legend,
-          .mapa-fields-map .leaflet-control-layers,
-          .mapa-fields-map .leaflet-bottom.leaflet-right .leaflet-control,
-          .mapa-fields-map .leaflet-bottom.leaflet-left .leaflet-control {
-            max-width: calc(100vw - 40px) !important;
-            max-height: 30vh !important;
-            overflow-y: auto !important;
-            font-size: 11px !important;
-          }
-        }
-
-        select option {
-          background-color: #0f172a;
-          color: #f8fafc;
-        }
-      `}</style>
     </div>
+  )
+}
+
+function ViewButton({
+  active,
+  onClick,
+  icon,
+  children
+}: {
+  active: boolean
+  onClick: () => void
+  icon: IconName
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={`inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg px-3 text-xs font-bold transition sm:flex-none sm:px-4 ${active ? "bg-cyan-500/15 text-cyan-300 shadow-sm" : "text-slate-400 hover:text-white"}`}
+    >
+      <Icon name={icon} className="h-4 w-4" />
+      {children}
+    </button>
   )
 }
 
@@ -543,76 +608,135 @@ function MiniStat({
   label,
   value,
   detail,
-  tone,
+  icon,
+  tone
 }: {
   label: string
-  value: string | number
+  value: number
   detail?: string
-  tone: "slate" | "cyan" | "orange" | "red"
+  icon: IconName
+  tone: "slate" | "cyan" | "orange" | "rose"
 }) {
-  const styles = {
-    slate: "border-slate-800 bg-slate-950/70 text-slate-300",
-    cyan: "border-cyan-500/25 bg-cyan-500/10 text-cyan-300",
-    orange: "border-orange-500/25 bg-orange-500/10 text-orange-300",
-    red: "border-red-500/25 bg-red-500/10 text-red-300",
+  const tones = {
+    slate: "border-slate-800 bg-slate-900/50 text-slate-400",
+    cyan: "border-cyan-500/20 bg-cyan-500/5 text-cyan-300",
+    orange: "border-amber-500/20 bg-amber-500/5 text-amber-300",
+    rose: "border-rose-500/20 bg-rose-500/5 text-rose-300"
   }
-
-  const bars = {
-    slate: "bg-slate-500",
-    cyan: "bg-cyan-500",
-    orange: "bg-orange-500",
-    red: "bg-red-500",
-  }
-
   return (
-    <div className={`rounded-2xl border p-4 shadow-xl ${styles[tone]}`}>
-      <p className="text-[10px] font-black uppercase tracking-[0.18em] opacity-80">
-        {label}
-      </p>
-
-      <div className="mt-2 flex items-end gap-2">
-        <p className="text-2xl font-black text-white md:text-3xl">{value}</p>
-
-        {detail && (
-          <span className="mb-1 text-xs font-black uppercase tracking-widest opacity-80">
-            {detail}
-          </span>
-        )}
+    <div className={`min-w-0 rounded-2xl border p-3.5 sm:p-4 ${tones[tone]}`}>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[11px] font-semibold leading-relaxed">{label}</p>
+        <Icon name={icon} className="h-4 w-4 shrink-0 opacity-70" />
       </div>
-
-      <div className={`mt-3 h-1 rounded-full ${bars[tone]}`} />
+      <p className="mt-2 text-2xl font-black text-white sm:text-3xl">{value}</p>
+      {detail && (
+        <p className="mt-1 text-[10px] font-semibold opacity-80">{detail}</p>
+      )}
     </div>
   )
 }
 
-function Badge({
-  children,
-  color,
+type IconName =
+  | "map"
+  | "list"
+  | "pin"
+  | "search"
+  | "refresh"
+  | "close"
+  | "focus"
+  | "users"
+  | "school"
+  | "location-off"
+function Icon({
+  name,
+  className = "h-5 w-5"
 }: {
-  children: ReactNode
-  color: "cyan" | "blue" | "emerald"
+  name: IconName
+  className?: string
 }) {
-  const styles = {
-    cyan: "border-cyan-500/25 bg-cyan-500/10 text-cyan-300",
-    blue: "border-blue-500/25 bg-blue-500/10 text-blue-300",
-    emerald: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
+  const paths: Record<IconName, ReactNode> = {
+    map: (
+      <>
+        <path d="m9 18-6 3V6l6-3 6 3 6-3v15l-6 3-6-3Z" />
+        <path d="M9 3v15M15 6v15" />
+      </>
+    ),
+    list: (
+      <>
+        <path d="M9 6h12M9 12h12M9 18h12" />
+        <path d="M3 6h.01M3 12h.01M3 18h.01" />
+      </>
+    ),
+    pin: (
+      <>
+        <path d="M20 10c0 6-8 11-8 11S4 16 4 10a8 8 0 1 1 16 0Z" />
+        <circle cx="12" cy="10" r="2.5" />
+      </>
+    ),
+    search: (
+      <>
+        <circle cx="10.5" cy="10.5" r="6.5" />
+        <path d="m16 16 4.5 4.5" />
+      </>
+    ),
+    refresh: (
+      <>
+        <path d="M20 7a8.2 8.2 0 0 0-14-2L3 8m0-5v5h5M4 17a8.2 8.2 0 0 0 14 2l3-3m0 5v-5h-5" />
+      </>
+    ),
+    close: <path d="m6 6 12 12M6 18 18 6" />,
+    focus: (
+      <>
+        <path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" />
+        <circle cx="12" cy="12" r="3" />
+      </>
+    ),
+    users: (
+      <>
+        <circle cx="9" cy="7" r="3" />
+        <path d="M3 21v-2a6 6 0 0 1 12 0v2M17 4a3 3 0 0 1 0 6m1 5a5 5 0 0 1 3 4v2" />
+      </>
+    ),
+    school: (
+      <>
+        <path d="M4 21V7l8-4 8 4v14H4Zm6 0v-5h4v5M8 9h1m6 0h1M8 12h1m6 0h1" />
+      </>
+    ),
+    "location-off": (
+      <>
+        <path d="m3 3 18 18M20 10c0 1.5-.5 3-1.4 4.4M9 2.6A8 8 0 0 1 20 10M4.5 7.5C2 15 12 21 12 21s2.5-1.6 4.6-4.1" />
+      </>
+    )
   }
-
   return (
-    <span
-      className={`inline-flex rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${styles[color]}`}
+    <svg
+      className={className}
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
     >
-      {children}
-    </span>
+      {paths[name]}
+    </svg>
   )
 }
 
 function LoadingPage() {
   return (
-    <div className="mx-auto max-w-[1700px] space-y-6 pb-8">
-      <div className="h-64 animate-pulse rounded-[2.25rem] border border-slate-800 bg-slate-900/40" />
-      <div className="h-24 animate-pulse rounded-[2rem] border border-slate-800 bg-slate-900/40" />
-      <div className="h-[62vh] min-h-[460px] animate-pulse rounded-[2.25rem] border border-slate-800 bg-slate-900/40" />
+    <div
+      role="status"
+      aria-label="Carregando mapa de setorização"
+      className="mx-auto w-full max-w-[1700px] space-y-5 pb-8"
+    >
+      <div className="h-64 animate-pulse rounded-3xl border border-slate-800 bg-slate-900/40" />
+      <div className="h-40 animate-pulse rounded-3xl border border-slate-800 bg-slate-900/40" />
+      <div className="h-[58svh] min-h-[360px] animate-pulse rounded-3xl border border-slate-800 bg-slate-900/40" />
     </div>
   )
 }

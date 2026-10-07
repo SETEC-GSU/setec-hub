@@ -1,16 +1,24 @@
 "use client"
 
 import Image from "next/image"
+
 import { useState, type FormEvent, type ReactNode } from "react"
+
 import { createClient } from "@/lib/supabase"
+
+import { registrarLoginComPrazo } from "@/lib/loginAudit"
 
 export default function LoginPage() {
   const supabase = createClient()
 
   const [email, setEmail] = useState("")
+
   const [password, setPassword] = useState("")
+
   const [showPassword, setShowPassword] = useState(false)
+
   const [error, setError] = useState("")
+
   const [loading, setLoading] = useState(false)
 
   function getLoginErrorMessage(err: unknown) {
@@ -41,28 +49,36 @@ export default function LoginPage() {
     e.preventDefault()
 
     setError("")
+
     setLoading(true)
 
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email: email.trim().toLowerCase(),
+
         password,
       })
 
       if (error) {
         console.error("Erro retornado pelo Supabase Auth:", error)
+
         setError(getLoginErrorMessage(error))
+
         return
       }
 
       if (!data.session || !data.user) {
         setError("Não foi possível iniciar a sessão. Tente novamente.")
+
         return
       }
+
+      await registrarLoginComPrazo(supabase, data.session)
 
       window.location.href = "/"
     } catch (err) {
       console.error("Erro inesperado ao realizar login:", err)
+
       setError(getLoginErrorMessage(err))
     } finally {
       setLoading(false)
@@ -72,8 +88,10 @@ export default function LoginPage() {
   return (
     <main className="grid min-h-screen w-full grid-cols-1 bg-[#020617] text-white lg:grid-cols-[1.15fr_0.85fr]">
       {/* PAINEL INSTITUCIONAL - APARECE SOMENTE NO DESKTOP */}
+
       <section className="relative hidden overflow-hidden border-r border-slate-800 bg-[#020617] p-10 lg:flex lg:flex-col lg:justify-between xl:p-14">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.22),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(6,182,212,0.12),transparent_30%)]" />
+
         <div className="pointer-events-none absolute -bottom-24 -right-24 h-96 w-96 rounded-full bg-blue-500/10 blur-3xl" />
 
         <div className="relative z-10">
@@ -91,35 +109,42 @@ export default function LoginPage() {
 
           <p className="mt-6 max-w-2xl text-lg font-medium leading-relaxed text-slate-400">
             Ambiente restrito para acompanhamento de chamados, inventário,
-            unidades escolares, atendimentos técnicos e indicadores operacionais.
+            unidades escolares, atendimentos técnicos e indicadores
+            operacionais.
           </p>
         </div>
 
         <div className="relative z-10 grid grid-cols-3 gap-4">
           <FeatureCard
             title="Controle"
+
             description="Perfis e permissões por função."
           />
 
           <FeatureCard
             title="Operação"
+
             description="Chamados e registros integrados."
           />
 
           <FeatureCard
             title="Gestão"
+
             description="Dados para decisão institucional."
           />
         </div>
       </section>
 
       {/* LOGIN - NO MOBILE APARECE SOMENTE ESSA PARTE */}
+
       <section className="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-8 sm:px-6 lg:px-10">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(37,99,235,0.16),transparent_34%)] lg:hidden" />
+
         <div className="pointer-events-none absolute left-1/2 top-1/2 h-80 w-80 -translate-x-1/2 -translate-y-1/2 rounded-full bg-blue-500/10 blur-3xl lg:hidden" />
 
         <form
           onSubmit={handleLogin}
+
           className="relative z-10 w-full max-w-[430px] rounded-[2rem] border border-slate-800 bg-slate-950/85 p-5 shadow-2xl backdrop-blur-xl sm:p-8"
         >
           <div className="mb-8 text-center">
@@ -143,11 +168,17 @@ export default function LoginPage() {
 
                 <input
                   type="email"
+
                   value={email}
+
                   onChange={(e) => setEmail(e.target.value)}
+
                   placeholder="nome@educacao.sp.gov.br"
+
                   required
+
                   autoComplete="email"
+
                   className="w-full border-none bg-transparent text-sm font-semibold text-white outline-none placeholder:text-slate-600"
                 />
               </div>
@@ -159,19 +190,29 @@ export default function LoginPage() {
 
                 <input
                   type={showPassword ? "text" : "password"}
+
                   value={password}
+
                   onChange={(e) => setPassword(e.target.value)}
+
                   placeholder="Digite sua senha"
+
                   required
+
                   autoComplete="current-password"
+
                   className="w-full border-none bg-transparent text-sm font-semibold text-white outline-none placeholder:text-slate-600"
                 />
 
                 <button
                   type="button"
+
                   onClick={() => setShowPassword((value) => !value)}
+
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-500 transition-all hover:bg-slate-800 hover:text-blue-300"
+
                   aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+
                   title={showPassword ? "Ocultar senha" : "Mostrar senha"}
                 >
                   {showPassword ? (
@@ -192,7 +233,9 @@ export default function LoginPage() {
 
           <button
             type="submit"
+
             disabled={loading}
+
             className="mt-6 flex w-full items-center justify-center gap-3 rounded-2xl bg-blue-600 px-5 py-4 text-sm font-bold text-white shadow-lg shadow-blue-950/30 transition-all hover:bg-blue-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading && (
@@ -217,15 +260,17 @@ export default function LoginPage() {
   )
 }
 
-
 function BrandLogo({
   size,
+
   className = "",
 }: {
   size: "large" | "compact"
+
   className?: string
 }) {
   const [imageError, setImageError] = useState(false)
+
   const isLarge = size === "large"
 
   return (
@@ -244,11 +289,17 @@ function BrandLogo({
         {!imageError ? (
           <Image
             src="/brand/setec-hub-icon.png"
+
             alt="Símbolo SETEC Hub"
+
             fill
+
             priority
+
             sizes={isLarge ? "76px" : "58px"}
+
             onError={() => setImageError(true)}
+
             className="object-contain"
           />
         ) : (
@@ -267,12 +318,15 @@ function BrandLogo({
       <div className="min-w-0 text-left">
         <div
           className={`flex items-baseline whitespace-nowrap font-black tracking-tight ${
-            isLarge ? "text-[2.35rem] leading-none" : "text-[1.75rem] leading-none"
+            isLarge
+              ? "text-[2.35rem] leading-none"
+              : "text-[1.75rem] leading-none"
           }`}
         >
           <span className="bg-gradient-to-r from-blue-300 via-blue-400 to-blue-600 bg-clip-text text-transparent">
             SETEC
           </span>
+
           <span className="ml-1.5 font-light text-slate-100">Hub</span>
         </div>
 
@@ -292,9 +346,11 @@ function BrandLogo({
 
 function FieldGroup({
   label,
+
   children,
 }: {
   label: string
+
   children: ReactNode
 }) {
   return (
@@ -310,9 +366,11 @@ function FieldGroup({
 
 function FeatureCard({
   title,
+
   description,
 }: {
   title: string
+
   description: string
 }) {
   return (
@@ -328,18 +386,25 @@ function FeatureCard({
 
 function SvgBase({
   children,
+
   className = "",
 }: {
   children: ReactNode
+
   className?: string
 }) {
   return (
     <svg
       className={className}
+
       xmlns="http://www.w3.org/2000/svg"
+
       fill="none"
+
       viewBox="0 0 24 24"
+
       strokeWidth={2}
+
       stroke="currentColor"
     >
       {children}
@@ -352,7 +417,9 @@ function MailIcon({ className = "" }: { className?: string }) {
     <SvgBase className={className}>
       <path
         strokeLinecap="round"
+
         strokeLinejoin="round"
+
         d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0l-7.5-4.615a2.25 2.25 0 0 1-1.07-1.916V6.75"
       />
     </SvgBase>
@@ -364,7 +431,9 @@ function LockIcon({ className = "" }: { className?: string }) {
     <SvgBase className={className}>
       <path
         strokeLinecap="round"
+
         strokeLinejoin="round"
+
         d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z"
       />
     </SvgBase>
@@ -376,13 +445,17 @@ function EyeIcon({ className = "" }: { className?: string }) {
     <SvgBase className={className}>
       <path
         strokeLinecap="round"
+
         strokeLinejoin="round"
+
         d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z"
       />
 
       <path
         strokeLinecap="round"
+
         strokeLinejoin="round"
+
         d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
       />
     </SvgBase>
@@ -394,7 +467,9 @@ function EyeOffIcon({ className = "" }: { className?: string }) {
     <SvgBase className={className}>
       <path
         strokeLinecap="round"
+
         strokeLinejoin="round"
+
         d="M3.98 8.223A10.477 10.477 0 0 0 2.036 12.322a1.012 1.012 0 0 0 0 .639C3.423 17.49 7.36 20.5 12 20.5c1.568 0 3.061-.316 4.418-.887M6.228 6.228A10.45 10.45 0 0 1 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639a10.523 10.523 0 0 1-4.293 5.346M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.792 7.792L21 21m-3.33-3.33-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.243 4.243L9.878 9.878"
       />
     </SvgBase>

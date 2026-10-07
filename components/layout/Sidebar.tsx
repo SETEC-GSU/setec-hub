@@ -1,40 +1,40 @@
 import { getUser } from "@/lib/getUser"
 import { canAccess } from "@/lib/canAccess"
-import SidebarClient, { type SidebarSection } from "./SidebarClient"
+import SidebarClient, {
+  type SidebarItem,
+  type SidebarSection,
+} from "./SidebarClient"
 
 type CanAccessRole = Parameters<typeof canAccess>[0]
 type CanAccessPermission = Parameters<typeof canAccess>[1]
-
-type AppUserMinimal = {
-  role: string
-}
+type AppUserMinimal = { role: string }
 
 function getDevFallbackUser(): AppUserMinimal | null {
   if (process.env.NODE_ENV === "production") return null
-
-  return {
-    role: "admin",
-  }
+  return { role: "admin" }
 }
 
 function safeCanAccess(role: string, permission: string) {
   try {
-    return canAccess(
-      role as CanAccessRole,
-      permission as CanAccessPermission
-    )
+    return canAccess(role as CanAccessRole, permission as CanAccessPermission)
   } catch {
     return false
   }
 }
 
 export default async function Sidebar() {
-  const user = (await getUser()) || getDevFallbackUser()
-
+  const authenticatedUser = await getUser()
+  const user = authenticatedUser || getDevFallbackUser()
   if (!user?.role) return null
-
   const userRole = String(user.role || "")
-
+  const primaryItems: SidebarItem[] = [
+    {
+      href: "/calendario-seintec",
+      label: "Calendário SEINTEC–SETEC",
+      icon: "📅",
+      permission: "calendario.seintec.view",
+    },
+  ]
   const sections: SidebarSection[] = [
     {
       title: "🎫 Chamados",
@@ -231,6 +231,12 @@ export default async function Sidebar() {
           permission: "usuarios.view",
         },
         {
+          href: "/admin/acessos",
+          label: "Monitor de Acessos",
+          icon: "🛡️",
+          permission: "logins.view",
+        },
+        {
           href: "/gestao-equipamentos",
           label: "Gestão de Equipamentos",
           icon: "💻",
@@ -240,7 +246,7 @@ export default async function Sidebar() {
           href: "/saresp/gestao",
           label: "Gestão SARESP",
           icon: "📝",
-          permission: "gestao.equipamentos",
+          permission: "gestao.saresp",
         },
         {
           href: "/fields/credenciais-escolas/gestao",
@@ -290,8 +296,11 @@ export default async function Sidebar() {
   const filteredSections = sections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) =>
-        safeCanAccess(userRole, String(item.permission || ""))
+      items: section.items.filter(
+        (item) =>
+          safeCanAccess(userRole, item.permission) &&
+          (item.permission !== "logins.view" ||
+            authenticatedUser?.role === "admin"),
       ),
     }))
     .filter((section) => section.items.length > 0)
@@ -299,6 +308,9 @@ export default async function Sidebar() {
   return (
     <SidebarClient
       sections={filteredSections}
+      primaryItems={primaryItems.filter((item) =>
+        safeCanAccess(userRole, item.permission),
+      )}
       showHome={safeCanAccess(userRole, "dashboard.view")}
       userRole={userRole}
     />

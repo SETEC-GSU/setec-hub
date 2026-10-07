@@ -40,11 +40,8 @@ export type Permission =
   | "saresp.view"
   | "gestao.saresp"
   | "gestao.apoiousuario"
-
-
-
-  
-
+  | "calendario.seintec.view"
+  | "logins.view"
 
 export const rolePermissions: Record<Role, Permission[]> = {
   admin: [
@@ -86,10 +83,10 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "credenciais.escolas.view",
     "saresp.view",
     "gestao.saresp",
-    "gestao.apoiousuario"
-
+    "gestao.apoiousuario",
+    "calendario.seintec.view",
+    "logins.view",
   ],
-
   analista: [
     "dashboard.view",
     "chamados.view",
@@ -121,8 +118,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "fields.relatorio",
     "credenciais.escolas.view",
     "saresp.view",
+    "calendario.seintec.view",
   ],
-
   chefia_ure: [
     "dashboard.view",
     "chamados.view",
@@ -139,8 +136,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "fields.painel",
     "fields.mapa",
     "inventario.vgeral",
+    "calendario.seintec.view",
   ],
-
   gestao_escolas: [
     "dashboard.view",
     "chamados.view",
@@ -152,9 +149,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "painel.chamados",
     "segundo.link",
     "fields.painel",
-    "fields.mapa"
+    "fields.mapa",
   ],
-
   dirigente: [
     "dashboard.view",
     "chamados.view",
@@ -177,10 +173,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "segundo.link",
     "avaliacoes.field",
     "fields.painel",
-    "fields.mapa"
-  
+    "fields.mapa",
+    "calendario.seintec.view",
   ],
-
   seintec: [
     "dashboard.view",
     "chamados.view",
@@ -216,9 +211,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "credenciais.escolas.view",
     "saresp.view",
     "gestao.saresp",
-    "gestao.apoiousuario"
-
-
+    "gestao.apoiousuario",
+    "calendario.seintec.view",
   ],
 }
 
