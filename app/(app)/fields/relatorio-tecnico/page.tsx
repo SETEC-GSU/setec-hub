@@ -10,6 +10,13 @@ import {
 } from "react";
 import { createClient } from "@/lib/supabase";
 import SerialBarcodeScanner from "@/components/SerialBarcodeScanner";
+import CampoChamadoField from "@/components/relatorios/CampoChamadoField";
+import CampoLocalAtendimento from "@/components/relatorios/CampoLocalAtendimento";
+import type { LocalAtendimento } from "@/lib/relatorios/types";
+import { leituraComPrazo } from "@/lib/relatorios/consulta";
+import { erroFormatoChamado, validarChamadoNaBase, nomeNormalizado } from "@/lib/relatorios/chamado";
+import { carregarHistoricoCompleto } from "@/lib/relatorios/historico";
+
 import {
   LIMITE_RETORNO_CHAMADO,
   LIMITE_SEGURO_RETORNO_CHAMADO,
@@ -71,6 +78,8 @@ type ItemParecer = {
 
 type ParecerHistorico = {
   id: string;
+  local_atendimento?: LocalAtendimento;
+  field_visita_id?: string | null;
   escola_id: string | null;
   escola_nome: string;
   cie?: string | null;
@@ -199,6 +208,7 @@ type ModeloRapido = {
 
 type FormularioEstado = {
   editandoParecerId: string | null;
+  localAtendimento: LocalAtendimento;
   escolaDigitada: string;
   dataAtendimento: string;
   turno: string;
@@ -326,6 +336,7 @@ function resolverPeriodoPreset(preset: PeriodoIndicadoresPreset) {
 function criarAssinaturaFormulario(estado: FormularioEstado) {
   return JSON.stringify({
     editandoParecerId: estado.editandoParecerId,
+    localAtendimento: estado.localAtendimento || "escola",
     escolaDigitada: estado.escolaDigitada,
     dataAtendimento: estado.dataAtendimento,
     turno: estado.turno,
@@ -356,6 +367,7 @@ function formularioTemConteudo(estado: FormularioEstado) {
 
   return Boolean(
     estado.editandoParecerId ||
+      estado.localAtendimento === "ure" ||
       estado.escolaDigitada.trim() ||
       estado.turno.trim() ||
       estado.chamadoReferencia.trim() ||
@@ -1132,11 +1144,11 @@ function montarHtmlPdf(parecer: ParecerHistorico) {
 
     <section class="headline">
       <div class="school-card">
-        <h2 class="card-title">Unidade Escolar</h2>
+        <h2 class="card-title">${parecer.local_atendimento === "ure" ? "Unidade Regional de Ensino" : "Unidade Escolar"}</h2>
 
         <div class="info-grid">
           <div>
-            <p class="label">Escola</p>
+            <p class="label">${parecer.local_atendimento === "ure" ? "Unidade" : "Escola"}</p>
             <p class="value">${escapeHtml(parecer.escola_nome || "Não informado")}</p>
           </div>
 
@@ -1173,7 +1185,7 @@ function montarHtmlPdf(parecer: ParecerHistorico) {
 
           <div>
             <p class="label">Turno / referência</p>
-            <p class="value">${escapeHtml(parecer.turno || "Não informado")} • ${escapeHtml(parecer.chamado_referencia || "Sem referência")}</p>
+            <p class="value">${escapeHtml(parecer.turno || "Não informado")} • ${escapeHtml(parecer.chamado_referencia || (parecer.local_atendimento === "ure" ? "Atendimento interno — sem chamado" : "Sem referência"))}</p>
           </div>
         </div>
       </div>
@@ -1238,7 +1250,7 @@ function montarHtmlPdf(parecer: ParecerHistorico) {
       </div>
 
       <div class="signature">
-        Responsável da Unidade Escolar<br />
+        ${parecer.local_atendimento === "ure" ? "Responsável pelo atendimento na URE" : "Responsável da Unidade Escolar"}<br />
         Assinatura / Carimbo
       </div>
     </footer>
@@ -1439,6 +1451,9 @@ export default function ParecerTecnicoPage() {
   const [modelos, setModelos] = useState<EquipamentoModelo[]>([]);
   const [historico, setHistorico] = useState<ParecerHistorico[]>([]);
   const [historicoAberto, setHistoricoAberto] = useState(false);
+  const [carregandoHistorico, setCarregandoHistorico] = useState(false);
+  const [historicoCarregado, setHistoricoCarregado] = useState(false);
+  const [erroHistorico, setErroHistorico] = useState<string | null>(null);
   const [adicionarItemModalAberto, setAdicionarItemModalAberto] =
     useState(false);
   const [buscaHistorico, setBuscaHistorico] = useState("");
@@ -1450,6 +1465,7 @@ export default function ParecerTecnicoPage() {
     null,
   );
 
+  const [localAtendimento, setLocalAtendimento] = useState<LocalAtendimento>("escola");
   const [escolaDigitada, setEscolaDigitada] = useState("");
   const [dataAtendimento, setDataAtendimento] = useState(hojeIso());
   const [turno, setTurno] = useState("");
@@ -1474,6 +1490,7 @@ export default function ParecerTecnicoPage() {
   const formularioEstadoAtual = useMemo<FormularioEstado>(
     () => ({
       editandoParecerId,
+      localAtendimento,
       escolaDigitada,
       dataAtendimento,
       turno,
@@ -1484,6 +1501,7 @@ export default function ParecerTecnicoPage() {
     }),
     [
       editandoParecerId,
+      localAtendimento,
       escolaDigitada,
       dataAtendimento,
       turno,
@@ -1699,38 +1717,10 @@ export default function ParecerTecnicoPage() {
 
   const buscarHistorico = useCallback(
     async (authUserId: string, email: string, isGestaoLocal: boolean) => {
-      let pareceresQuery = supabase
-        .from("pareceres_tecnicos")
-        .select(
-          `
-          *,
-          pareceres_tecnicos_itens (*)
-        `,
-        )
-        .order("created_at", { ascending: false });
-
-      if (!isGestaoLocal) {
-        pareceresQuery = pareceresQuery
-          .or(`created_by_auth.eq.${authUserId},tecnico_email.eq.${email}`)
-          .limit(50);
-      }
-
-      const { data: pareceresData, error: pareceresError } =
-        await pareceresQuery;
-
-      if (pareceresError) throw pareceresError;
-
-      const pareceresCarregados = (pareceresData || []) as ParecerHistorico[];
-
-      return isGestaoLocal
-        ? pareceresCarregados
-        : pareceresCarregados.filter(
-            (parecer) =>
-              parecer.created_by_auth === authUserId ||
-              normalizarTexto(parecer.tecnico_email) === normalizarTexto(email),
-          );
-    },
-    [supabase],
+      return carregarHistoricoCompleto<ParecerHistorico>(supabase,
+        "pareceres_tecnicos", "*, pareceres_tecnicos_itens (*)",
+        isGestaoLocal ? undefined : { authUserId, email });
+    }, [supabase],
   );
 
   const aplicarHistorico = useCallback(
@@ -1779,9 +1769,11 @@ export default function ParecerTecnicoPage() {
 
   const atualizarHistoricoSilencioso = useCallback(async () => {
     if (!usuario?.auth_user_id || !usuario.email) return;
-    if (realtimeRefreshInFlightRef.current) return;
+    if ((!historicoAberto && !editandoParecerId) || realtimeRefreshInFlightRef.current) return;
 
     realtimeRefreshInFlightRef.current = true;
+    setCarregandoHistorico(true);
+    setErroHistorico(null);
 
     try {
       const pareceresVisiveis = await buscarHistorico(
@@ -1791,13 +1783,16 @@ export default function ParecerTecnicoPage() {
       );
 
       aplicarHistorico(pareceresVisiveis);
+      setHistoricoCarregado(true);
     } catch (error) {
       console.error("Erro ao atualizar relatórios em tempo real:", error);
       setRealtimeStatus("erro");
+      setErroHistorico("Não foi possível consultar o histórico. O formulário e os dados já carregados foram mantidos.");
     } finally {
       realtimeRefreshInFlightRef.current = false;
+      setCarregandoHistorico(false);
     }
-  }, [aplicarHistorico, buscarHistorico, isGestao, usuario]);
+  }, [aplicarHistorico, buscarHistorico, editandoParecerId, historicoAberto, isGestao, usuario]);
 
   const carregar = useCallback(async () => {
     try {
@@ -1807,7 +1802,7 @@ export default function ParecerTecnicoPage() {
       const {
         data: { user },
         error: authError,
-      } = await supabase.auth.getUser();
+      } = await leituraComPrazo(supabase.auth.getUser(), "Não foi possível conferir a sessão a tempo. Atualize a página para tentar novamente.");
 
       if (authError) throw authError;
 
@@ -1819,7 +1814,7 @@ export default function ParecerTecnicoPage() {
         { data: perfilData },
         { data: escolasData, error: escolasError },
         { data: modelosData, error: modelosError },
-      ] = await Promise.all([
+      ] = await leituraComPrazo(Promise.all([
         supabase
           .from("usuarios")
           .select("id, nome, email, role, setor")
@@ -1837,17 +1832,13 @@ export default function ParecerTecnicoPage() {
             "id, equipamento, tipo, marca, uso, finalidade, ano_recebimento, imagem_url",
           )
           .order("equipamento", { ascending: true }),
-      ]);
+      ]), "Não foi possível carregar escolas e modelos a tempo. Atualize a página para tentar novamente.");
 
       if (escolasError) throw escolasError;
       if (modelosError) throw modelosError;
 
       const perfil = perfilData as UsuarioPerfil | null;
       const rolePerfil = perfil?.role || null;
-      const isGestaoLocal =
-        normalizarTexto(rolePerfil) === "admin" ||
-        normalizarTexto(rolePerfil) === "seintec";
-
       const usuarioAtual: UsuarioPerfil = {
         id: perfil?.id || user.id,
         auth_user_id: user.id,
@@ -1861,13 +1852,8 @@ export default function ParecerTecnicoPage() {
       setEscolas((escolasData || []) as Escola[]);
       setModelos((modelosData || []) as EquipamentoModelo[]);
 
-      const pareceresVisiveis = await buscarHistorico(
-        user.id,
-        user.email,
-        isGestaoLocal,
-      );
-
-      setHistorico(pareceresVisiveis);
+      // O histórico completo não participa da abertura do formulário.
+      // É consultado quando o usuário abre seus relatórios.
     } catch (error: any) {
       console.error("Erro ao carregar relatório técnico:", error);
 
@@ -1880,11 +1866,15 @@ export default function ParecerTecnicoPage() {
     } finally {
       setLoading(false);
     }
-  }, [buscarHistorico, supabase]);
+  }, [supabase]);
 
   useEffect(() => {
     carregar();
   }, [carregar]);
+
+  useEffect(() => {
+    if (historicoAberto) void atualizarHistoricoSilencioso();
+  }, [historicoAberto, atualizarHistoricoSilencioso]);
 
   useEffect(() => {
     if (!usuario?.auth_user_id || !usuario.email) return;
@@ -2240,6 +2230,7 @@ export default function ParecerTecnicoPage() {
       recuperacaoLocal.rascunhoVersaoCarregada || null,
     );
     setRascunhoConflito(null);
+    setLocalAtendimento(recuperacaoLocal.localAtendimento === "ure" ? "ure" : "escola");
     setEscolaDigitada(recuperacaoLocal.escolaDigitada || "");
     setDataAtendimento(recuperacaoLocal.dataAtendimento || hojeIso());
     setTurno(recuperacaoLocal.turno || "");
@@ -2391,6 +2382,7 @@ export default function ParecerTecnicoPage() {
     const itemInicial = novoItem();
     const estadoLimpo: FormularioEstado = {
       editandoParecerId: null,
+      localAtendimento: "escola",
       escolaDigitada: "",
       dataAtendimento: hojeIso(),
       turno: "",
@@ -2403,6 +2395,7 @@ export default function ParecerTecnicoPage() {
     setEditandoParecerId(null);
     setRascunhoVersaoCarregada(null);
     setRascunhoConflito(null);
+    setLocalAtendimento(estadoLimpo.localAtendimento);
     setEscolaDigitada(estadoLimpo.escolaDigitada);
     setDataAtendimento(estadoLimpo.dataAtendimento);
     setTurno(estadoLimpo.turno);
@@ -2500,7 +2493,8 @@ export default function ParecerTecnicoPage() {
       setEditandoParecerId(rascunho.id);
       setRascunhoVersaoCarregada(getVersaoParecer(rascunho));
       setRascunhoConflito(null);
-      setEscolaDigitada(rascunho.escola_nome || "");
+      setLocalAtendimento(rascunho.local_atendimento === "ure" ? "ure" : "escola");
+      setEscolaDigitada(rascunho.local_atendimento === "ure" ? "" : rascunho.escola_nome || "");
       setDataAtendimento(rascunho.data_atendimento || hojeIso());
       setTurno(rascunho.turno === "Noite" ? "" : rascunho.turno || "");
       setChamadoReferencia(rascunho.chamado_referencia || "");
@@ -2532,7 +2526,8 @@ export default function ParecerTecnicoPage() {
       setBaselineSignature(
         criarAssinaturaFormulario({
           editandoParecerId: rascunho.id,
-          escolaDigitada: rascunho.escola_nome || "",
+          localAtendimento: rascunho.local_atendimento === "ure" ? "ure" : "escola",
+          escolaDigitada: rascunho.local_atendimento === "ure" ? "" : rascunho.escola_nome || "",
           dataAtendimento: rascunho.data_atendimento || hojeIso(),
           turno: rascunho.turno === "Noite" ? "" : rascunho.turno || "",
           chamadoReferencia: rascunho.chamado_referencia || "",
@@ -2582,6 +2577,8 @@ export default function ParecerTecnicoPage() {
 
   function coletarPendencias(finalizar: boolean) {
     const pendencias: PendenciaValidacao[] = [];
+    const erroChamado = erroFormatoChamado(chamadoReferencia, localAtendimento === "escola");
+    if (erroChamado) pendencias.push({ id: "parecer-chamado", titulo: "Número do chamado FIELD", detalhe: erroChamado });
 
     if (!usuario?.email) {
       pendencias.push({
@@ -2592,7 +2589,7 @@ export default function ParecerTecnicoPage() {
       });
     }
 
-    if (!escolaSelecionada) {
+    if (localAtendimento === "escola" && !escolaSelecionada) {
       pendencias.push({
         id: "parecer-escola",
         titulo: "Unidade Escolar",
@@ -2788,15 +2785,19 @@ export default function ParecerTecnicoPage() {
     setSalvando(true);
 
     try {
+      const vinculoChamado = chamadoReferencia.trim()
+        ? await validarChamadoNaBase(supabase, chamadoReferencia) : null;
+      const escolaDoAtendimento = localAtendimento === "escola" ? escolaSelecionada : null;
       const itensValidos = itens.filter(itemPossuiConteudo);
 
       const parecerPayload = {
-        escola_id: escolaSelecionada!.id,
-        escola_nome: escolaSelecionada!.nome_escola || "Escola não informada",
-        cie: escolaSelecionada!.cie || null,
-        endereco: escolaSelecionada!.endereco || null,
-        telefone: escolaSelecionada!.telefone || null,
-        email: escolaSelecionada!.email || null,
+        local_atendimento: localAtendimento,
+        escola_id: escolaDoAtendimento?.id || null,
+        escola_nome: localAtendimento === "ure" ? "URE" : escolaDoAtendimento?.nome_escola || "Escola não informada",
+        cie: escolaDoAtendimento?.cie || null,
+        endereco: escolaDoAtendimento?.endereco || null,
+        telefone: escolaDoAtendimento?.telefone || null,
+        email: escolaDoAtendimento?.email || null,
 
         tecnico_usuario_id: usuario?.id || null,
         tecnico_nome:
@@ -2806,7 +2807,8 @@ export default function ParecerTecnicoPage() {
 
         data_atendimento: dataAtendimento,
         turno: turno || null,
-        chamado_referencia: chamadoReferencia.trim() || null,
+        chamado_referencia: vinculoChamado?.chamado || null,
+        field_visita_id: vinculoChamado?.visita_id || null,
         resumo_atendimento: resumoAtendimento.trim() || null,
         observacoes_gerais: observacoesGerais.trim() || null,
 
@@ -3007,6 +3009,7 @@ export default function ParecerTecnicoPage() {
         throw itensError;
       }
 
+      window.dispatchEvent(new Event("hub-relatorios-atualizados"));
       const parecerCompleto: ParecerHistorico = {
         ...(parecerCriado as ParecerHistorico),
         pareceres_tecnicos_itens: itensCriados || [],
@@ -3043,8 +3046,9 @@ export default function ParecerTecnicoPage() {
         }
       }
 
+      setHistorico((atuais) => [parecerCompleto, ...atuais.filter((p) => p.id !== parecerCompleto.id)]);
       limparFormulario(true);
-      await carregar();
+      // Não recarrega catálogos nem oculta o formulário após uma gravação.
     } catch (error: any) {
       console.error("Erro ao salvar parecer técnico:", error);
 
@@ -3432,7 +3436,7 @@ export default function ParecerTecnicoPage() {
               <span aria-hidden="true">📁</span>
               <span>{isGestao ? "Abrir relatórios" : "Meus relatórios"}</span>
               <span className="rounded-full border border-blue-400/25 bg-blue-500/15 px-2 py-0.5 text-[10px] text-blue-100">
-                {historico.length}
+                {historicoCarregado ? historico.length : "Consultar"}
               </span>
             </button>
 
@@ -3505,26 +3509,7 @@ export default function ParecerTecnicoPage() {
         </section>
       )}
 
-      {isGestao && (
-        <DashboardGestao
-          dados={dashboardGestao}
-          onDeleteItem={excluirEquipamentoGestao}
-          deletingItemId={deletandoItemId}
-          periodoPreset={periodoPreset}
-          periodoInicio={periodoInicio}
-          periodoFim={periodoFim}
-          periodoDescricao={periodoDescricao}
-          onPeriodoPresetChange={alterarPeriodoPreset}
-          onPeriodoInicioChange={(value) => {
-            setPeriodoPreset("personalizado");
-            setPeriodoInicio(value);
-          }}
-          onPeriodoFimChange={(value) => {
-            setPeriodoPreset("personalizado");
-            setPeriodoFim(value);
-          }}
-        />
-      )}
+
 
       {rascunhoConflito && editandoParecerId && (
         <div className="rounded-2xl border border-red-500/35 bg-red-500/10 p-5 shadow-lg shadow-red-950/10">
@@ -3642,11 +3627,11 @@ export default function ParecerTecnicoPage() {
 
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
             <div className="rounded-xl border border-slate-800 bg-slate-950/75 px-3 py-2 text-center">
-              <p className="text-lg font-black text-white">{resumoHistorico.total}</p>
+              <p className="text-lg font-black text-white">{historicoCarregado ? resumoHistorico.total : "—"}</p>
               <p className="text-[8px] font-black uppercase tracking-widest text-slate-600">Total</p>
             </div>
             <div className="hidden rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] px-3 py-2 text-center sm:block">
-              <p className="text-lg font-black text-emerald-300">{resumoHistorico.finalizados}</p>
+              <p className="text-lg font-black text-emerald-300">{historicoCarregado ? resumoHistorico.finalizados : "—"}</p>
               <p className="text-[8px] font-black uppercase tracking-widest text-emerald-500/70">Finalizados</p>
             </div>
             <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-blue-500/25 bg-blue-500/10 text-xl font-black text-blue-300 transition group-hover:translate-x-1 group-hover:bg-blue-500/20">
@@ -3669,13 +3654,17 @@ export default function ParecerTecnicoPage() {
               </h2>
 
               <p className="mt-2 text-sm font-medium leading-relaxed text-blue-100/60">
-                Selecione a escola, informe a data e descreva o resumo geral da
-                visita técnica.
+                Escolha onde o atendimento foi realizado, informe a data e descreva
+                o resumo geral da atividade técnica.
               </p>
             </div>
 
+            <div className="mb-5">
+              <CampoLocalAtendimento id="parecer-local" value={localAtendimento} onChange={setLocalAtendimento} />
+            </div>
+
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-              <div className="md:col-span-2">
+              {localAtendimento === "escola" ? <div className="md:col-span-2">
                 <label className="mb-2 block text-xs font-black uppercase tracking-widest text-slate-500">
                   Unidade Escolar *
                 </label>
@@ -3705,9 +3694,13 @@ export default function ParecerTecnicoPage() {
                     aparece na lista.
                   </p>
                 )}
-              </div>
+              </div> : <div className="rounded-2xl border border-blue-400/20 bg-blue-500/5 p-4 md:col-span-2">
+                <p className="text-xs font-bold uppercase tracking-widest text-blue-300">Unidade Regional de Ensino</p>
+                <p className="mt-2 text-sm font-semibold text-white">Atendimento interno na URE</p>
+                <p className="mt-1 text-xs text-slate-400">Não é necessário selecionar uma escola para este parecer.</p>
+              </div>}
 
-              {escolaSelecionada && (
+              {localAtendimento === "escola" && escolaSelecionada && (
                 <div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 p-4 md:col-span-2">
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                     <InfoBox
@@ -3769,16 +3762,13 @@ export default function ParecerTecnicoPage() {
               </div>
 
               <div className="md:col-span-2">
-                <label className="mb-2 block text-xs font-black uppercase tracking-widest text-slate-500">
-                  Chamado / referência
-                </label>
-
-                <input
-                  value={chamadoReferencia}
-                  onChange={(event) => setChamadoReferencia(event.target.value)}
-                  placeholder="Exemplo: STI-26/0000"
-                  className="w-full rounded-2xl border border-slate-700 bg-slate-900/60 px-4 py-4 text-sm font-semibold text-white outline-none transition-all placeholder:text-slate-600 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
-                />
+                <CampoChamadoField id="parecer-chamado" value={chamadoReferencia} onChange={setChamadoReferencia} obrigatorio={localAtendimento === "escola"}
+                  onSelect={(vinculo) => {
+                    if (localAtendimento === "ure" || escolaDigitada.trim()) return;
+                    const nome = nomeNormalizado(vinculo.escola.replace(/^\d+\s*[-–]\s*/, ""));
+                    const escola = escolas.find(e => nomeNormalizado(e.nome_escola || "") === nome);
+                    if (escola) setEscolaDigitada(escola.nome_escola || "");
+                  }} />
               </div>
 
               <div className="md:col-span-2">
@@ -3791,7 +3781,7 @@ export default function ParecerTecnicoPage() {
                   rows={5}
                   value={resumoAtendimento}
                   onChange={(event) => setResumoAtendimento(event.target.value)}
-                  placeholder="Descreva o contexto geral do atendimento realizado na escola..."
+                  placeholder="Descreva o contexto geral do atendimento realizado na escola ou na URE..."
                   className="w-full resize-none rounded-2xl border border-slate-700/90 bg-slate-900/60 px-4 py-4 text-sm font-medium text-white outline-none transition-all placeholder:text-slate-600 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 focus:shadow-[0_0_0_4px_rgba(6,182,212,0.08)]"
                 />
               </div>
@@ -4555,15 +4545,15 @@ export default function ParecerTecnicoPage() {
 
               <div className="relative z-10 mt-5 grid grid-cols-3 gap-2 sm:max-w-md">
                 <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
-                  <p className="text-lg font-black text-white">{resumoHistorico.total}</p>
+                  <p className="text-lg font-black text-white">{historicoCarregado ? resumoHistorico.total : "—"}</p>
                   <p className="text-[8px] font-black uppercase tracking-widest text-slate-600">Total</p>
                 </div>
                 <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] px-3 py-2">
-                  <p className="text-lg font-black text-emerald-300">{resumoHistorico.finalizados}</p>
+                  <p className="text-lg font-black text-emerald-300">{historicoCarregado ? resumoHistorico.finalizados : "—"}</p>
                   <p className="text-[8px] font-black uppercase tracking-widest text-emerald-500/70">Finalizados</p>
                 </div>
                 <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/[0.06] px-3 py-2">
-                  <p className="text-lg font-black text-yellow-300">{resumoHistorico.rascunhos}</p>
+                  <p className="text-lg font-black text-yellow-300">{historicoCarregado ? resumoHistorico.rascunhos : "—"}</p>
                   <p className="text-[8px] font-black uppercase tracking-widest text-yellow-500/70">Rascunhos</p>
                 </div>
               </div>
@@ -4620,7 +4610,33 @@ export default function ParecerTecnicoPage() {
             </div>
 
             <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-4 sm:p-5 lg:p-6">
-              {historico.length === 0 ? (
+              <div className="mb-4 space-y-3">
+                {carregandoHistorico && <p role="status" className="rounded-xl border border-blue-500/25 bg-blue-500/10 p-3 text-sm text-blue-200">Consultando relatórios… Você pode fechar esta janela e continuar o preenchimento.</p>}
+                {erroHistorico && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{erroHistorico}</p>}
+                <button type="button" disabled={carregandoHistorico} onClick={() => void atualizarHistoricoSilencioso()} className="min-h-[44px] rounded-xl border border-slate-700 px-4 py-2 text-xs font-bold text-slate-200 disabled:opacity-50">Atualizar histórico</button>
+              </div>
+      {isGestao && historicoCarregado && (
+        <DashboardGestao
+          dados={dashboardGestao}
+          onDeleteItem={excluirEquipamentoGestao}
+          deletingItemId={deletandoItemId}
+          periodoPreset={periodoPreset}
+          periodoInicio={periodoInicio}
+          periodoFim={periodoFim}
+          periodoDescricao={periodoDescricao}
+          onPeriodoPresetChange={alterarPeriodoPreset}
+          onPeriodoInicioChange={(value) => {
+            setPeriodoPreset("personalizado");
+            setPeriodoInicio(value);
+          }}
+          onPeriodoFimChange={(value) => {
+            setPeriodoPreset("personalizado");
+            setPeriodoFim(value);
+          }}
+        />
+      )}
+
+              {!historicoCarregado ? null : historico.length === 0 ? (
                 <div className="flex min-h-[360px] flex-col items-center justify-center rounded-[1.75rem] border border-dashed border-slate-800 bg-slate-950/40 p-8 text-center">
                   <p className="text-4xl opacity-70">📭</p>
                   <p className="mt-4 text-lg font-black text-white">Nenhum relatório encontrado</p>
@@ -4692,7 +4708,7 @@ export default function ParecerTecnicoPage() {
                           <div className="min-w-0 rounded-xl border border-slate-800 bg-[#020617] p-3">
                             <p className="text-[8px] font-black uppercase tracking-widest text-slate-600">Referência</p>
                             <p className="mt-1 truncate text-xs font-black text-slate-300">
-                              {parecer.chamado_referencia || "Sem referência"}
+                              {parecer.chamado_referencia || (parecer.local_atendimento === "ure" ? "Atendimento interno — sem chamado" : "Sem referência")}
                             </p>
                           </div>
                         </div>
@@ -4714,7 +4730,7 @@ export default function ParecerTecnicoPage() {
                                   onClick={() => abrirRetornoChamado(parecer)}
                                   className="min-h-[44px] rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 text-[10px] font-black uppercase tracking-widest text-blue-300 transition hover:bg-blue-500 hover:text-white"
                                 >
-                                  Gerar retorno
+                                  {parecer.local_atendimento === "ure" && !parecer.chamado_referencia ? "Gerar resumo" : "Gerar retorno"}
                                 </button>
                               </>
                             )}
@@ -4873,7 +4889,7 @@ export default function ParecerTecnicoPage() {
                     Retorno padronizado
                   </p>
                   <h2 id="retorno-chamado-titulo" className="text-xl font-black tracking-tight text-white sm:text-2xl">
-                    Texto pronto para o chamado
+                    {retornoChamadoModal.parecer.local_atendimento === "ure" && !retornoChamadoModal.parecer.chamado_referencia ? "Resumo pronto do atendimento na URE" : "Texto pronto para o chamado"}
                   </h2>
                   <p id="retorno-chamado-descricao" className="mt-2 text-sm font-medium leading-relaxed text-slate-400">
                     Equipamentos separados, texto editável e limite de 10.000 caracteres.
@@ -4895,7 +4911,7 @@ export default function ParecerTecnicoPage() {
               <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
                 <div className="col-span-2 sm:col-span-1">
                   <InfoBox
-                    label="Unidade Escolar"
+                    label={retornoChamadoModal.parecer.local_atendimento === "ure" ? "Unidade Regional de Ensino" : "Unidade Escolar"}
                     value={retornoChamadoModal.parecer.escola_nome || "Não informada"}
                   />
                 </div>
@@ -5095,7 +5111,7 @@ export default function ParecerTecnicoPage() {
                 }}
                 className="w-full rounded-2xl border border-blue-500/30 bg-blue-500/10 px-5 py-4 text-sm font-black uppercase tracking-widest text-blue-300 transition-all hover:bg-blue-500 hover:text-white"
               >
-                Gerar retorno para o chamado
+                {pdfPronto.parecer.local_atendimento === "ure" && !pdfPronto.parecer.chamado_referencia ? "Gerar resumo do atendimento" : "Gerar retorno para o chamado"}
               </button>
 
               <button

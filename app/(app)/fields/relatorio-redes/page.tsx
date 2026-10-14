@@ -10,6 +10,13 @@ import {
   type ReactNode,
 } from "react"
 import { createClient } from "@/lib/supabase"
+import CampoChamadoField from "@/components/relatorios/CampoChamadoField";
+import CampoLocalAtendimento from "@/components/relatorios/CampoLocalAtendimento";
+import type { LocalAtendimento } from "@/lib/relatorios/types";
+import { leituraComPrazo } from "@/lib/relatorios/consulta";
+import { erroFormatoChamado, validarChamadoNaBase, nomeNormalizado } from "@/lib/relatorios/chamado";
+import { carregarHistoricoCompleto } from "@/lib/relatorios/historico";
+
 
 type UsuarioPerfil = {
   id: string
@@ -89,6 +96,7 @@ type ItemRedeBanco = {
 
 type RelatorioRedeHistorico = {
   id: string
+  local_atendimento?: LocalAtendimento
   field_visita_id?: string | null
   escola_id?: string | null
   escola_nome: string
@@ -123,6 +131,7 @@ type MensagemTela = {
 } | null
 
 type FormSnapshot = {
+  localAtendimento?: LocalAtendimento
   version: 1
   savedAt: string
   userId: string
@@ -740,9 +749,9 @@ function montarHtmlPdf(relatorio: RelatorioRedeHistorico) {
 
     <section class="headline">
       <div class="card">
-        <h2 class="card-title">Unidade Escolar</h2>
+        <h2 class="card-title">${relatorio.local_atendimento === "ure" ? "Unidade Regional de Ensino" : "Unidade Escolar"}</h2>
         <div class="info-grid">
-          <div><p class="label">Escola</p><p class="value">${escapeHtml(relatorio.escola_nome)}</p></div>
+          <div><p class="label">${relatorio.local_atendimento === "ure" ? "Unidade" : "Escola"}</p><p class="value">${escapeHtml(relatorio.escola_nome)}</p></div>
           <div><p class="label">CIE</p><p class="value">${escapeHtml(relatorio.cie || "Não informado")}</p></div>
           <div><p class="label">Endereço</p><p class="value">${escapeHtml(relatorio.endereco || "Não informado")}</p></div>
           <div><p class="label">Contato</p><p class="value">${escapeHtml(relatorio.telefone || "Não informado")} • ${escapeHtml(relatorio.email || "Não informado")}</p></div>
@@ -752,7 +761,7 @@ function montarHtmlPdf(relatorio: RelatorioRedeHistorico) {
         <h2 class="card-title">Atendimento</h2>
         <div class="info-grid compact">
           <div><p class="label">Técnico responsável</p><p class="value">${escapeHtml(relatorio.tecnico_nome)}</p></div>
-          <div><p class="label">Turno / chamado</p><p class="value">${escapeHtml(relatorio.turno || "Não informado")} • ${escapeHtml(relatorio.chamado_referencia || "Sem referência")}</p></div>
+          <div><p class="label">Turno / chamado</p><p class="value">${escapeHtml(relatorio.turno || "Não informado")} • ${escapeHtml(relatorio.chamado_referencia || (relatorio.local_atendimento === "ure" ? "Atendimento interno — sem chamado" : "Sem referência"))}</p></div>
           <div><p class="label">Classificação</p><p class="value">${escapeHtml(relatorio.categoria)} • ${escapeHtml(relatorio.subcategoria || "Não informada")}</p></div>
         </div>
       </div>
@@ -782,7 +791,7 @@ function montarHtmlPdf(relatorio: RelatorioRedeHistorico) {
 
     <footer class="footer">
       <div class="signature">${escapeHtml(relatorio.tecnico_nome)}<br />Técnico Responsável</div>
-      <div class="signature">Responsável da Unidade Escolar<br />Assinatura / Carimbo</div>
+      <div class="signature">${relatorio.local_atendimento === "ure" ? "Responsável pelo atendimento na URE" : "Responsável da Unidade Escolar"}<br />Assinatura / Carimbo</div>
     </footer>
 
     <p class="note">Documento gerado pelo SETEC Hub. Este relatório registra as informações técnicas declaradas no atendimento de redes.</p>
@@ -857,7 +866,7 @@ ${itensTexto}${relatorio.observacoes_gerais ? `
 Observações gerais:
 ${relatorio.observacoes_gerais}` : ""}
 
-Com base nos testes e procedimentos registrados, este é o retorno técnico para atualização do chamado. O relatório completo permanece disponível no SETEC Hub para consulta.
+${relatorio.local_atendimento === "ure" && !relatorio.chamado_referencia ? "Este documento registra os testes e procedimentos do atendimento interno na URE." : "Com base nos testes e procedimentos registrados, este é o retorno técnico para atualização do chamado."} O relatório completo permanece disponível no SETEC Hub para consulta.
 
 Atenciosamente,
 ${relatorio.tecnico_nome}`
@@ -867,6 +876,7 @@ export default function RelatorioTecnicoRedesPage() {
   const supabase = useMemo(() => createClient(), [])
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const realtimeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const salvandoRef = useRef(false)
 
   const [loading, setLoading] = useState(true)
   const [salvando, setSalvando] = useState(false)
@@ -876,6 +886,13 @@ export default function RelatorioTecnicoRedesPage() {
   const [historico, setHistorico] = useState<RelatorioRedeHistorico[]>([])
 
   const [historicoAberto, setHistoricoAberto] = useState(false)
+  const [carregandoHistorico, setCarregandoHistorico] = useState(false)
+  const [historicoCarregado, setHistoricoCarregado] = useState(false)
+  const [erroHistorico, setErroHistorico] = useState<string | null>(null)
+  const acessoHistoricoRef = useRef<{ authUserId: string; email: string; gestao: boolean } | null>(null)
+  const historicoEmConsultaRef = useRef(false)
+  const historicoAbertoRef = useRef(false)
+  historicoAbertoRef.current = historicoAberto
   const [buscaHistorico, setBuscaHistorico] = useState("")
   const [statusHistorico, setStatusHistorico] = useState<
     "todos" | "rascunho" | "finalizado"
@@ -888,6 +905,7 @@ export default function RelatorioTecnicoRedesPage() {
     useState<RelatorioRedeHistorico | null>(null)
 
   const [editandoId, setEditandoId] = useState<string | null>(null)
+  const [localAtendimento, setLocalAtendimento] = useState<LocalAtendimento>("escola")
   const [escolaDigitada, setEscolaDigitada] = useState("")
   const [dataAtendimento, setDataAtendimento] = useState(hojeIso())
   const [turno, setTurno] = useState("")
@@ -940,6 +958,7 @@ export default function RelatorioTecnicoRedesPage() {
       savedAt: new Date().toISOString(),
       userId: usuario.id,
       editandoId,
+      localAtendimento,
       escolaDigitada,
       dataAtendimento,
       turno,
@@ -958,6 +977,7 @@ export default function RelatorioTecnicoRedesPage() {
     chamadoReferencia,
     dataAtendimento,
     editandoId,
+    localAtendimento,
     escolaDigitada,
     itens,
     observacoesGerais,
@@ -973,20 +993,24 @@ export default function RelatorioTecnicoRedesPage() {
     : ""
 
   const carregarHistorico = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("relatorios_redes")
-      .select(`
-        *,
-        relatorios_redes_itens (*)
-      `)
-      .order("created_at", { ascending: false })
-
-    if (error) {
-      console.error("Erro ao carregar relatórios de redes:", error)
-      return
+    const acesso = acessoHistoricoRef.current
+    if (!acesso || historicoEmConsultaRef.current) return
+    historicoEmConsultaRef.current = true
+    setCarregandoHistorico(true)
+    setErroHistorico(null)
+    try {
+      const data = await carregarHistoricoCompleto<RelatorioRedeHistorico>(supabase,
+        "relatorios_redes", "*, relatorios_redes_itens (*)",
+        acesso.gestao ? undefined : { authUserId: acesso.authUserId, email: acesso.email })
+      setHistorico(data)
+      setHistoricoCarregado(true)
+    } catch (error) {
+      console.warn("Histórico de redes não atualizado:", error)
+      setErroHistorico("O histórico não pôde ser atualizado. Os dados já carregados e o preenchimento foram mantidos.")
+    } finally {
+      historicoEmConsultaRef.current = false
+      setCarregandoHistorico(false)
     }
-
-    setHistorico((data || []) as RelatorioRedeHistorico[])
   }, [supabase])
 
   const carregarTudo = useCallback(async () => {
@@ -996,7 +1020,7 @@ export default function RelatorioTecnicoRedesPage() {
       const {
         data: { user },
         error: authError,
-      } = await supabase.auth.getUser()
+      } = await leituraComPrazo(supabase.auth.getUser(), "Não foi possível conferir a sessão a tempo. Atualize a página para tentar novamente.")
 
       if (authError || !user) {
         throw new Error("Não foi possível identificar o usuário autenticado.")
@@ -1004,20 +1028,20 @@ export default function RelatorioTecnicoRedesPage() {
 
       let perfil: UsuarioPerfil | null = null
 
-      const perfilId = await supabase
+      const perfilId = await leituraComPrazo(supabase
         .from("usuarios")
         .select("id, nome, email, role, setor")
         .eq("id", user.id)
-        .maybeSingle()
+        .maybeSingle())
 
       if (perfilId.data) {
         perfil = perfilId.data as UsuarioPerfil
       } else if (user.email) {
-        const perfilEmail = await supabase
+        const perfilEmail = await leituraComPrazo(supabase
           .from("usuarios")
           .select("id, nome, email, role, setor")
           .ilike("email", user.email)
-          .maybeSingle()
+          .maybeSingle())
 
         perfil = (perfilEmail.data || null) as UsuarioPerfil | null
       }
@@ -1032,18 +1056,22 @@ export default function RelatorioTecnicoRedesPage() {
         }
       }
 
+      acessoHistoricoRef.current = {
+        authUserId: user.id, email: user.email || "",
+        gestao: ["admin", "seintec"].includes(normalizarTexto(perfil.role)),
+      }
       setUsuario(perfil)
 
-      const escolasResult = await supabase
+      const escolasResult = await leituraComPrazo(supabase
         .from("escolas")
         .select("id, nome_escola, cie, endereco, telefone, email")
-        .order("nome_escola", { ascending: true })
+        .order("nome_escola", { ascending: true }))
 
       if (escolasResult.error) throw escolasResult.error
 
       setEscolas((escolasResult.data || []) as Escola[])
 
-      await carregarHistorico()
+      // O histórico é carregado somente quando aberto.
 
       const key = `setec-hub:relatorio-redes:${perfil.id}`
       const local = window.localStorage.getItem(key)
@@ -1074,11 +1102,15 @@ export default function RelatorioTecnicoRedesPage() {
     } finally {
       setLoading(false)
     }
-  }, [carregarHistorico, supabase])
+  }, [supabase])
 
   useEffect(() => {
     carregarTudo()
   }, [carregarTudo])
+
+  useEffect(() => {
+    if (historicoAberto) void carregarHistorico()
+  }, [historicoAberto, carregarHistorico])
 
   useEffect(() => {
     const channel = supabase
@@ -1088,7 +1120,8 @@ export default function RelatorioTecnicoRedesPage() {
         { event: "*", schema: "public", table: "relatorios_redes" },
         () => {
           if (realtimeTimerRef.current) clearTimeout(realtimeTimerRef.current)
-          realtimeTimerRef.current = setTimeout(() => carregarHistorico(), 300)
+          if (!historicoAbertoRef.current || salvandoRef.current) return
+          realtimeTimerRef.current = setTimeout(() => carregarHistorico(), 850)
         },
       )
       .on(
@@ -1096,7 +1129,8 @@ export default function RelatorioTecnicoRedesPage() {
         { event: "*", schema: "public", table: "relatorios_redes_itens" },
         () => {
           if (realtimeTimerRef.current) clearTimeout(realtimeTimerRef.current)
-          realtimeTimerRef.current = setTimeout(() => carregarHistorico(), 300)
+          if (!historicoAbertoRef.current || salvandoRef.current) return
+          realtimeTimerRef.current = setTimeout(() => carregarHistorico(), 850)
         },
       )
       .subscribe()
@@ -1111,6 +1145,7 @@ export default function RelatorioTecnicoRedesPage() {
     if (!autosaveKey || !formularioSnapshot || loading) return
 
     const possuiConteudo = Boolean(
+      formularioSnapshot.localAtendimento === "ure" ||
       formularioSnapshot.escolaDigitada.trim() ||
         formularioSnapshot.chamadoReferencia.trim() ||
         formularioSnapshot.resumoAtendimento.trim() ||
@@ -1146,6 +1181,7 @@ export default function RelatorioTecnicoRedesPage() {
 
   useEffect(() => {
     const possuiConteudo = Boolean(
+      localAtendimento === "ure" ||
       escolaDigitada.trim() ||
         chamadoReferencia.trim() ||
         resumoAtendimento.trim() ||
@@ -1160,7 +1196,7 @@ export default function RelatorioTecnicoRedesPage() {
 
     window.addEventListener("beforeunload", beforeUnload)
     return () => window.removeEventListener("beforeunload", beforeUnload)
-  }, [chamadoReferencia, escolaDigitada, itens, resumoAtendimento, salvando])
+  }, [chamadoReferencia, localAtendimento, escolaDigitada, itens, resumoAtendimento, salvando])
 
   useEffect(() => {
     if (!mensagem) return
@@ -1213,6 +1249,7 @@ export default function RelatorioTecnicoRedesPage() {
 
   function aplicarSnapshot(snapshot: FormSnapshot) {
     setEditandoId(snapshot.editandoId)
+    setLocalAtendimento(snapshot.localAtendimento === "ure" ? "ure" : "escola")
     setEscolaDigitada(snapshot.escolaDigitada)
     setDataAtendimento(snapshot.dataAtendimento)
     setTurno(snapshot.turno)
@@ -1240,6 +1277,7 @@ export default function RelatorioTecnicoRedesPage() {
 
   function limparFormulario() {
     setEditandoId(null)
+    setLocalAtendimento("escola")
     setEscolaDigitada("")
     setDataAtendimento(hojeIso())
     setTurno("")
@@ -1323,8 +1361,10 @@ export default function RelatorioTecnicoRedesPage() {
 
   function validarFormulario() {
     const erros: string[] = []
+    const erroChamado = erroFormatoChamado(chamadoReferencia, localAtendimento === "escola")
+    if (erroChamado) erros.push(erroChamado)
 
-    if (!escolaDigitada.trim()) erros.push("Selecione a unidade escolar.")
+    if (localAtendimento === "escola" && !escolaDigitada.trim()) erros.push("Selecione a unidade escolar.")
     if (!dataAtendimento) erros.push("Informe a data do atendimento.")
     if (!categoriaFinal) erros.push("Informe a categoria.")
     if (!subcategoriaFinal) erros.push("Informe a subcategoria.")
@@ -1345,7 +1385,7 @@ export default function RelatorioTecnicoRedesPage() {
   }
 
   async function salvar(status: "rascunho" | "finalizado") {
-    if (salvando) return
+    if (salvandoRef.current) return
 
     const erros = validarFormulario()
     if (erros.length) {
@@ -1356,20 +1396,25 @@ export default function RelatorioTecnicoRedesPage() {
       return
     }
 
+    salvandoRef.current = true
     setSalvando(true)
     setMensagem(null)
 
     try {
+      const vinculoChamado = chamadoReferencia.trim()
+        ? await validarChamadoNaBase(supabase, chamadoReferencia) : null
+      const escolaDoAtendimento = localAtendimento === "escola" ? escolaSelecionada : null
       const payloadRelatorio = {
         id: editandoId,
-        field_visita_id: null,
-        escola_id: escolaSelecionada?.id || null,
-        escola_nome: escolaDigitada.trim(),
-        cie: escolaSelecionada?.cie || null,
-        endereco: escolaSelecionada?.endereco || null,
-        telefone: escolaSelecionada?.telefone || null,
-        email: escolaSelecionada?.email || null,
-        chamado_referencia: chamadoReferencia.trim() || null,
+        local_atendimento: localAtendimento,
+        field_visita_id: vinculoChamado?.visita_id || null,
+        escola_id: escolaDoAtendimento?.id || null,
+        escola_nome: localAtendimento === "ure" ? "URE" : escolaDigitada.trim(),
+        cie: escolaDoAtendimento?.cie || null,
+        endereco: escolaDoAtendimento?.endereco || null,
+        telefone: escolaDoAtendimento?.telefone || null,
+        email: escolaDoAtendimento?.email || null,
+        chamado_referencia: vinculoChamado?.chamado || null,
         categoria: categoriaFinal,
         subcategoria: subcategoriaFinal,
         descricao_demanda: null,
@@ -1420,7 +1465,8 @@ export default function RelatorioTecnicoRedesPage() {
 
       if (error) throw error
 
-      await carregarHistorico()
+      if (historicoAbertoRef.current) void carregarHistorico()
+      window.dispatchEvent(new Event("hub-relatorios-atualizados"))
 
       if (status === "rascunho") {
         setEditandoId(String(idSalvo))
@@ -1429,34 +1475,22 @@ export default function RelatorioTecnicoRedesPage() {
           texto: "Rascunho salvo com segurança.",
         })
       } else {
-        const { data: relatorioFinalizado, error: relatorioError } =
-          await supabase
-            .from("relatorios_redes")
-            .select(`
-              *,
-              relatorios_redes_itens (*)
-            `)
-            .eq("id", String(idSalvo))
-            .single()
-
-        if (relatorioError) {
-          console.warn(
-            "Relatório finalizado, mas não foi possível recarregar os dados:",
-            relatorioError,
-          )
+        // A gravação já foi confirmada. Uma falha nesta leitura não deve
+        // parecer falha de envio nem incentivar a criação de um duplicado.
+        try {
+          const { data: relatorioFinalizado, error: relatorioError } =
+            await leituraComPrazo(supabase
+              .from("relatorios_redes")
+              .select("*, relatorios_redes_itens (*)")
+              .eq("id", String(idSalvo))
+              .single(), "O documento demorou a carregar.")
+          if (relatorioError) throw relatorioError
+          if (relatorioFinalizado) setRelatorioFinalizadoModal(relatorioFinalizado as RelatorioRedeHistorico)
+          setMensagem({ tipo: "success", texto: "Relatório de redes finalizado com sucesso." })
+        } catch (erroLeitura) {
+          console.warn("Relatório salvo; consulta do PDF indisponível:", erroLeitura)
+          setMensagem({ tipo: "info", texto: "Relatório finalizado e salvo com sucesso. Abra o histórico para gerar o PDF; a consulta do documento está indisponível agora." })
         }
-
-        setMensagem({
-          tipo: "success",
-          texto: "Relatório de redes finalizado com sucesso.",
-        })
-
-        if (relatorioFinalizado) {
-          setRelatorioFinalizadoModal(
-            relatorioFinalizado as RelatorioRedeHistorico,
-          )
-        }
-
         limparFormulario()
       }
     } catch (error) {
@@ -1469,6 +1503,7 @@ export default function RelatorioTecnicoRedesPage() {
             : "Não foi possível salvar o relatório.",
       })
     } finally {
+      salvandoRef.current = false
       setSalvando(false)
     }
   }
@@ -1480,7 +1515,8 @@ export default function RelatorioTecnicoRedesPage() {
     const subcategoria = resolveOption(relatorio.subcategoria, SUBCATEGORIAS)
 
     setEditandoId(relatorio.id)
-    setEscolaDigitada(relatorio.escola_nome)
+    setLocalAtendimento(relatorio.local_atendimento === "ure" ? "ure" : "escola")
+    setEscolaDigitada(relatorio.local_atendimento === "ure" ? "" : relatorio.escola_nome)
     setDataAtendimento(relatorio.data_atendimento)
     setTurno(relatorio.turno || "")
     setChamadoReferencia(relatorio.chamado_referencia || "")
@@ -1629,7 +1665,7 @@ export default function RelatorioTecnicoRedesPage() {
               <HistoryIcon className="h-5 w-5" />
               Relatórios registrados
               <span className="rounded-full bg-blue-500/15 px-2.5 py-1 text-[10px]">
-                {totais.total}
+                {historicoCarregado ? totais.total : "Consultar"}
               </span>
             </button>
           </div>
@@ -1695,13 +1731,14 @@ export default function RelatorioTecnicoRedesPage() {
               Dados do atendimento
             </h2>
             <p className="mt-2 text-sm font-medium leading-relaxed text-blue-100/60">
-              Identifique a unidade, informe o chamado atendido e registre os dados gerais da demanda de redes.
+              Escolha o local do atendimento e registre os dados gerais da demanda de redes. Na URE, o chamado é opcional.
             </p>
           </div>
 
           <div className="space-y-5">
+            <CampoLocalAtendimento id="redes-local" value={localAtendimento} onChange={setLocalAtendimento} />
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <Field label="Unidade escolar" required>
+              {localAtendimento === "escola" ? <Field label="Unidade escolar" required>
                 <input
                   list="escolas-redes-list"
                   value={escolaDigitada}
@@ -1714,7 +1751,7 @@ export default function RelatorioTecnicoRedesPage() {
                     <option key={escola.id} value={escola.nome_escola || ""} />
                   ))}
                 </datalist>
-              </Field>
+              </Field> : <Field label="Unidade"><input value="URE — atendimento interno" readOnly className={inputClassName} aria-label="Unidade do atendimento interno" /></Field>}
 
               <Field label="Data do atendimento" required>
                 <input
@@ -1738,14 +1775,13 @@ export default function RelatorioTecnicoRedesPage() {
                 </select>
               </Field>
 
-              <Field label="Chamado de referência">
-                <input
-                  value={chamadoReferencia}
-                  onChange={(event) => setChamadoReferencia(event.target.value)}
-                  placeholder="STI-XX/XXXX"
-                  className={inputClassName}
-                />
-              </Field>
+              <CampoChamadoField id="relatorio-redes-chamado" value={chamadoReferencia} onChange={setChamadoReferencia} obrigatorio={localAtendimento === "escola"}
+                onSelect={(vinculo) => {
+                  if (localAtendimento === "ure" || escolaDigitada.trim()) return;
+                  const nome = nomeNormalizado(vinculo.escola.replace(/^\d+\s*[-–]\s*/, ""));
+                  const escola = escolas.find(e => nomeNormalizado(e.nome_escola || "") === nome);
+                  if (escola) setEscolaDigitada(escola.nome_escola || "");
+                }} />
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -1795,7 +1831,7 @@ export default function RelatorioTecnicoRedesPage() {
                 value={resumoAtendimento}
                 onChange={(event) => setResumoAtendimento(event.target.value)}
                 rows={7}
-                placeholder="Descreva a solicitação do chamado e os principais pontos de atenção."
+                placeholder="Descreva a demanda atendida e os principais pontos de atenção."
                 className={textareaClassName}
               />
             </Field>
@@ -2356,7 +2392,7 @@ export default function RelatorioTecnicoRedesPage() {
                       Finalizar relatório
                     </span>
                     <span className="mt-1 block text-[10px] font-semibold text-emerald-950/75">
-                      Gerar PDF e retorno para o chamado atendido
+                      {localAtendimento === "ure" && !chamadoReferencia.trim() ? "Gerar PDF do atendimento interno na URE" : "Gerar PDF e retorno para o chamado atendido"}
                     </span>
                   </span>
                 </button>
@@ -2382,7 +2418,7 @@ export default function RelatorioTecnicoRedesPage() {
                 </h2>
 
                 <p className="mt-2 text-sm font-medium leading-relaxed text-slate-400">
-                  O relatório da escola {relatorioFinalizadoModal.escola_nome} foi salvo. Agora você pode abrir o PDF ou gerar o texto de retorno para o chamado atendido.
+                  {relatorioFinalizadoModal.local_atendimento === "ure" && !relatorioFinalizadoModal.chamado_referencia ? "O relatório do atendimento na URE foi salvo. Agora você pode abrir o PDF ou gerar o resumo do atendimento interno." : <>O relatório da escola {relatorioFinalizadoModal.escola_nome} foi salvo. Agora você pode abrir o PDF ou gerar o texto de retorno para o chamado atendido.</>}
                 </p>
 
                 {relatorioFinalizadoModal.chamado_referencia && (
@@ -2413,7 +2449,7 @@ export default function RelatorioTecnicoRedesPage() {
                 }}
                 className="w-full rounded-2xl border border-blue-500/30 bg-blue-500/10 px-5 py-4 text-sm font-black uppercase tracking-widest text-blue-300 transition hover:bg-blue-500 hover:text-white"
               >
-                Gerar retorno para o chamado
+                {relatorioFinalizadoModal.local_atendimento === "ure" && !relatorioFinalizadoModal.chamado_referencia ? "Gerar resumo do atendimento" : "Gerar retorno para o chamado"}
               </button>
 
               <button
@@ -2538,6 +2574,11 @@ export default function RelatorioTecnicoRedesPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+              <div className="mb-4 space-y-3">
+                {carregandoHistorico && <p role="status" className="rounded-xl border border-blue-500/25 bg-blue-500/10 p-3 text-sm text-blue-200">Consultando relatórios… Você pode fechar esta janela e continuar o preenchimento.</p>}
+                {erroHistorico && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{erroHistorico}</p>}
+                <button type="button" disabled={carregandoHistorico} onClick={() => void carregarHistorico()} className="min-h-[44px] rounded-xl border border-slate-700 px-4 py-2 text-xs font-bold text-slate-200 disabled:opacity-50">Atualizar histórico</button>
+              </div>
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 {historicoFiltrado.map((relatorio) => (
                   <article
@@ -2620,7 +2661,7 @@ export default function RelatorioTecnicoRedesPage() {
                 ))}
               </div>
 
-              {historicoFiltrado.length === 0 && (
+              {!carregandoHistorico && historicoCarregado && historicoFiltrado.length === 0 && (
                 <div className="flex min-h-[300px] items-center justify-center rounded-2xl border border-dashed border-slate-800 text-center text-sm font-medium text-slate-600">
                   Nenhum relatório encontrado.
                 </div>

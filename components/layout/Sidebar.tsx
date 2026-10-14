@@ -137,6 +137,12 @@ export default async function Sidebar() {
           permission: "fields.view",
         },
         {
+          href: "/fields/central-relatorios",
+          label: "Central de Relatórios",
+          icon: "📊",
+          permission: "fields.relatorio",
+        },
+        {
           href: "/fields/relatorio-tecnico",
           label: "Relatório - Equipamentos",
           icon: "📋",
@@ -299,6 +305,8 @@ export default async function Sidebar() {
       items: section.items.filter(
         (item) =>
           safeCanAccess(userRole, item.permission) &&
+          (item.href !== "/fields/central-relatorios" ||
+            ["admin", "seintec", "analista"].includes(String(authenticatedUser?.role || "").trim().toLowerCase())) &&
           (item.permission !== "logins.view" ||
             authenticatedUser?.role === "admin"),
       ),
