@@ -10,6 +10,11 @@ import {
 } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase"
+import { createChamado } from "../actions"
+import { encontrarServico, servicosDaOrigem } from "@/lib/chamados/catalogo"
+import { validarPedido, type PedidoChamado } from "@/lib/chamados/validacao"
+import { modeloDescricao, descricaoSoModelo, contemRoteiro, adicionarRoteiro } from "@/lib/chamados/modelosDescricao"
+import SeletorServico, { CamposServico } from "@/components/chamados/SeletorServico"
 
 type Prioridade = "critica" | "alta" | "media" | "baixa"
 
@@ -54,246 +59,10 @@ const initialForm: FormState = {
   descricao: "",
 }
 
-const solicitacoesURE: SolicitacaoOption[] = [
-  {
-    value: "Agendamento reunião Microsoft Teams",
-    label: "Agendamento de reunião Microsoft Teams",
-    prioridade: "alta",
-    sla_horas: 24,
-    tecnologia: "Microsoft Teams",
-    helper:
-      "Use para criação, organização ou configuração de reuniões institucionais.",
-    template: `- TÍTULO DA REUNIÃO:
-- ENVIAR CONVITE PARA:
-- PÚBLICO-ALVO:
-- DATA E HORÁRIO:
-- DESEJA GRAVAÇÃO? (SIM/NÃO):
-- DESABILITAR LOBBY? (SIM/NÃO):
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Equipamentos para eventos",
-    label: "Equipamentos para eventos",
-    prioridade: "critica",
-    sla_horas: 8,
-    tecnologia: "Equipamentos e apoio operacional",
-    helper:
-      "Use para solicitar notebook, projetor, caixa de som, microfone ou outros equipamentos para eventos.",
-    template: `- EQUIPAMENTO(S) SOLICITADO(S):
-- QUANTIDADE:
-- LOCAL DO EVENTO:
-- DATA E HORÁRIO DO EVENTO:
-- DATA DE RETIRADA:
-- DATA DE DEVOLUÇÃO:
-- RESPONSÁVEL PELA RETIRADA:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Equipamento para uso externo (empréstimo)",
-    label: "Equipamento para uso externo (empréstimo)",
-    prioridade: "media",
-    sla_horas: 48,
-    tecnologia: "Controle de empréstimo de equipamentos",
-    helper:
-      "Use para solicitação formal de equipamento para uso externo ou atividade fora do ambiente habitual.",
-    template: `- EQUIPAMENTO SOLICITADO:
-- FINALIDADE DO USO:
-- DATA DE RETIRADA:
-- DATA DE DEVOLUÇÃO:
-- RESPONSÁVEL PELO EQUIPAMENTO:
-- LOCAL DE USO:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Apoio técnico em eventos",
-    label: "Apoio técnico em eventos",
-    prioridade: "critica",
-    sla_horas: 8,
-    tecnologia: "Suporte técnico presencial",
-    helper:
-      "Use quando houver necessidade de acompanhamento técnico em reunião, formação, transmissão ou evento.",
-    template: `- NOME DO EVENTO:
-- LOCAL:
-- DATA E HORÁRIO:
-- TIPO DE APOIO NECESSÁRIO:
-- EQUIPAMENTOS ENVOLVIDOS:
-- RESPONSÁVEL PELO EVENTO:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Publicação no site",
-    label: "Publicação no site",
-    prioridade: "alta",
-    sla_horas: 24,
-    tecnologia: "Site institucional / WordPress",
-    helper:
-      "Use para publicação, atualização ou correção de conteúdo no site institucional.",
-    permiteAnexo: true,
-    template: `- TÍTULO DA PUBLICAÇÃO:
-- TEXTO DA PUBLICAÇÃO:
-- DATA DE PUBLICAÇÃO DESEJADA:
-- LINK(S), SE HOUVER:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Manutenção de equipamentos",
-    label: "Manutenção de equipamentos",
-    prioridade: "media",
-    sla_horas: 48,
-    tecnologia: "Notebooks, desktops e periféricos",
-    helper:
-      "Use para registrar problemas em equipamentos da URE, incluindo falhas físicas ou de funcionamento.",
-    permiteAnexo: true,
-    template: `- TIPO DE EQUIPAMENTO:
-- PATRIMÔNIO/SÉRIE, SE HOUVER:
-- LOCAL ONDE O EQUIPAMENTO ESTÁ:
-- PROBLEMA IDENTIFICADO:
-- TESTES JÁ REALIZADOS:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "VPN",
-    label: "VPN",
-    prioridade: "media",
-    sla_horas: 48,
-    tecnologia: "Acesso remoto / VPN",
-    helper: "Use para solicitação, ajuste ou suporte relacionado ao acesso VPN.",
-    template: `- NOME COMPLETO:
-- LOGIN/E-MAIL INSTITUCIONAL:
-- SETOR:
-- JUSTIFICATIVA PARA USO:
-- EQUIPAMENTO UTILIZADO:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Instalação ou alteração de ramal",
-    label: "Instalação ou alteração de ramal",
-    prioridade: "baixa",
-    sla_horas: 72,
-    tecnologia: "Telefonia / ramal",
-    helper:
-      "Use para instalação, alteração, remanejamento ou ajuste de ramal.",
-    template: `- SETOR:
-- LOCAL/SALA:
-- RAMAL ATUAL, SE HOUVER:
-- SOLICITAÇÃO DESEJADA:
-- RESPONSÁVEL PELO SETOR:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Manutenção ou instalação de ponto de rede",
-    label: "Manutenção ou instalação de ponto de rede",
-    prioridade: "media",
-    sla_horas: 48,
-    tecnologia: "Rede lógica",
-    helper:
-      "Use para solicitação relacionada a ponto de rede, cabeamento ou conectividade local.",
-    permiteAnexo: true,
-    template: `- LOCAL/SALA:
-- QUANTIDADE DE PONTOS NECESSÁRIOS:
-- EXISTE PONTO PRÓXIMO? (SIM/NÃO):
-- JUSTIFICATIVA:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Liberação de perfil rede corporativa",
-    label: "Liberação de perfil de rede corporativa",
-    prioridade: "baixa",
-    sla_horas: 72,
-    tecnologia: "Rede corporativa / permissões",
-    helper:
-      "Use para solicitação de acesso a pastas ou recursos de rede corporativa.",
-    template: `- NOME COMPLETO:
-- LOGIN/E-MAIL INSTITUCIONAL:
-- SETOR:
-- PASTA/RECURSO QUE DESEJA ACESSO:
-- JUSTIFICATIVA:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Troca de toner ou manutenção impressora",
-    label: "Troca de toner ou manutenção de impressora",
-    prioridade: "alta",
-    sla_horas: 24,
-    tecnologia: "Impressoras / toners",
-    helper:
-      "Use para troca de toner, falha de impressão ou manutenção em impressora.",
-    template: `- IMPRESSORA:
-- LOCAL/SETOR:
-- TIPO DE TONER, SE SOUBER:
-- PROBLEMA IDENTIFICADO:
-- NÚMERO DO CHAMADO, SE HOUVER:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Criação de formulário",
-    label: "Criação de formulário",
-    prioridade: "media",
-    sla_horas: 48,
-    tecnologia: "Microsoft Forms / Google Forms",
-    helper: "Use para solicitação de formulários institucionais.",
-    template: `- OBJETIVO DO FORMULÁRIO:
-- PÚBLICO-ALVO:
-- CAMPOS/PERGUNTAS NECESSÁRIAS:
-- PRAZO DE UTILIZAÇÃO:
-- RESPONSÁVEL PELO ACOMPANHAMENTO:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Criação de dashboards",
-    label: "Criação de dashboards",
-    prioridade: "media",
-    sla_horas: 48,
-    tecnologia: "Power BI / indicadores",
-    helper:
-      "Use para solicitação relacionada a painel, relatório ou indicador visual.",
-    template: `- OBJETIVO DO DASHBOARD:
-- BASE DE DADOS DISPONÍVEL:
-- INDICADORES DESEJADOS:
-- PÚBLICO QUE UTILIZARÁ:
-- PRAZO DE ENTREGA DESEJADO:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Instalação de segundo monitor",
-    label: "Instalação de segundo monitor",
-    prioridade: "baixa",
-    sla_horas: 72,
-    tecnologia: "Estação de trabalho",
-    helper: "Use para solicitação de instalação ou ajuste de segundo monitor.",
-    template: `- SETOR:
-- ESTAÇÃO/USUÁRIO:
-- EQUIPAMENTO DISPONÍVEL? (SIM/NÃO):
-- FINALIDADE:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Periféricos (câmera/fone/caixa de som)",
-    label: "Periféricos: câmera, fone ou caixa de som",
-    prioridade: "baixa",
-    sla_horas: 72,
-    tecnologia: "Periféricos",
-    helper: "Use para solicitação, ajuste ou suporte de periféricos.",
-    template: `- PERIFÉRICO SOLICITADO:
-- SETOR:
-- FINALIDADE:
-- EQUIPAMENTO ONDE SERÁ UTILIZADO:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Outras solicitações",
-    label: "Outras solicitações",
-    prioridade: "media",
-    sla_horas: 48,
-    tecnologia: "Solicitação geral",
-    helper: "Use quando a demanda não se enquadrar nas opções anteriores.",
-    template: `- DESCREVA A SOLICITAÇÃO:
-- SETOR ENVOLVIDO:
-- URGÊNCIA:
-- JUSTIFICATIVA:
-- OBSERVAÇÕES:`,
-  },
-]
+const solicitacoesURE: SolicitacaoOption[] = servicosDaOrigem("ure").map(s => ({
+  value: s.id, label: s.label, prioridade: s.prioridade, sla_horas: s.sla,
+  tecnologia: s.categoria, helper: s.ajuda, template: "", permiteAnexo: true,
+}))
 
 function formatFileSize(size: number) {
   if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`
@@ -352,6 +121,17 @@ export default function ChamadoUREPage() {
   const submitLockRef = useRef(false)
 
   const [form, setForm] = useState<FormState>(initialForm)
+  const [respostasPorServico, setRespostasPorServico] = useState<Record<string, Record<string, string>>>({})
+  const [ambiente, setAmbiente] = useState("")
+  const servicoAtual = encontrarServico(form.solicitacao)
+  const respostasAtuais = respostasPorServico[form.solicitacao] || {}
+  function alterarResposta(campo: string, valor: string) {
+    setRespostasPorServico(atual => ({ ...atual, [form.solicitacao]: { ...(atual[form.solicitacao] || {}), [campo]: valor } }))
+  }
+  function pedidoAtual(): PedidoChamado {
+    return { origem: "ure", servicoId: form.solicitacao, titulo: form.titulo, nome: form.nome,
+      unidade: form.setor, ambiente, descricao: form.descricao, respostas: respostasAtuais }
+  }
   const [arquivos, setArquivos] = useState<File[]>([])
   const [feedback, setFeedback] = useState<Feedback>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -392,7 +172,7 @@ export default function ChamadoUREPage() {
       return {
         ...current,
         solicitacao: value,
-        descricao: option?.template || "",
+        descricao: !current.descricao.trim() || descricaoSoModelo(current.solicitacao, current.descricao, "ure") ? modeloDescricao(value, "ure") : current.descricao,
         titulo: deveAtualizarTitulo ? option?.label || "" : current.titulo,
       }
     })
@@ -470,7 +250,7 @@ export default function ChamadoUREPage() {
 
     if (submitting || submitLockRef.current) return
 
-    const validationError = validateForm(form)
+    const validationError = validateForm(form) || validarPedido(pedidoAtual())
 
     if (validationError) {
       setFeedback({
@@ -495,52 +275,22 @@ export default function ChamadoUREPage() {
     setFeedback(null)
 
     try {
-      const {
-        data: { session },
-        error: sessionError,
-      } = await supabase.auth.getSession()
-
-      if (sessionError) throw sessionError
-
-      if (!session?.user) {
-        setFeedback({
-          type: "error",
-          message:
-            "Sessão não localizada. Faça login novamente para abrir o chamado.",
-        })
+      const pedido = pedidoAtual()
+      const dados = new FormData()
+      dados.set("origem", pedido.origem)
+      dados.set("servico_id", pedido.servicoId)
+      dados.set("titulo", pedido.titulo)
+      dados.set("nome", pedido.nome)
+      dados.set("setor", pedido.unidade)
+      dados.set("ambiente", pedido.ambiente)
+      dados.set("descricao", pedido.descricao)
+      dados.set("respostas", JSON.stringify(pedido.respostas))
+      const resultado = await createChamado(dados)
+      if (!resultado.ok) {
+        setFeedback({ type: "error", message: resultado.erro })
         return
       }
-
-      const prioridade = selectedOption?.prioridade || "media"
-      const slaHoras = selectedOption?.sla_horas || 48
-
-      const { data, error } = await supabase
-        .from("chamados")
-        .insert({
-          titulo: form.titulo.trim(),
-          solicitante_nome: form.nome.trim(),
-          setor: form.setor.trim(),
-          categoria: form.solicitacao,
-          descricao: form.descricao.trim(),
-          tipo: "ure",
-          origem: "ure",
-          prioridade,
-          sla_horas: slaHoras,
-          status: "aberto",
-          usuario_id: session.user.id,
-          visualizado_gestao: false,
-          visualizado_pelo_usuario: true,
-        })
-        .select("id,codigo,titulo")
-        .single()
-
-      if (error) throw error
-
-      const chamado = data as ChamadoCriado | null
-
-      if (!chamado?.id) {
-        throw new Error("Chamado criado, mas o identificador não foi retornado.")
-      }
+      const chamado = resultado.chamado
 
       const falhasAnexo =
         arquivos.length > 0 ? await uploadArquivos(chamado.id) : []
@@ -552,6 +302,8 @@ export default function ChamadoUREPage() {
       })
 
       setForm(initialForm)
+      setRespostasPorServico({})
+      setAmbiente("")
       setArquivos([])
       setFileInputKey((value) => value + 1)
 
@@ -671,11 +423,12 @@ export default function ChamadoUREPage() {
         </section>
       )}
 
-      <form onSubmit={abrirChamado} className="mt-6">
+      <form onSubmit={abrirChamado} className="mt-6"><fieldset disabled={submitting} className="min-w-0">
         <section className="rounded-[2rem] border border-slate-800 bg-[#020617] p-5 shadow-xl md:p-7">
           <div className="grid gap-4 md:grid-cols-2">
             <Field className="md:col-span-2" label="Título do chamado" required>
               <input
+                aria-label="Título do chamado"
                 value={form.titulo}
                 onChange={(event) => updateForm("titulo", event.target.value)}
                 placeholder="Ex.: Solicitação de apoio técnico para reunião"
@@ -686,6 +439,7 @@ export default function ChamadoUREPage() {
 
             <Field label="Nome do solicitante" required>
               <input
+                aria-label="Nome do solicitante"
                 value={form.nome}
                 onChange={(event) => updateForm("nome", event.target.value)}
                 placeholder="Nome completo"
@@ -696,6 +450,7 @@ export default function ChamadoUREPage() {
 
             <Field label="Setor solicitante" required>
               <input
+                aria-label="Setor solicitante"
                 value={form.setor}
                 onChange={(event) => updateForm("setor", event.target.value)}
                 placeholder="Ex.: SEINTEC, SEAFIN, Gabinete..."
@@ -704,20 +459,13 @@ export default function ChamadoUREPage() {
               />
             </Field>
 
-            <Field className="md:col-span-2" label="Tipo de solicitação" required>
-              <select
-                value={form.solicitacao}
-                onChange={(event) => handleSolicitacaoChange(event.target.value)}
-                className={inputClass}
-              >
-                <option value="">Selecione uma solicitação</option>
-                {solicitacoesURE.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+            <div className="min-w-0 md:col-span-2">
+              <SeletorServico origem="ure" value={form.solicitacao} onChange={handleSolicitacaoChange} disabled={submitting} />
+            </div>
+            <Field className="md:col-span-2" label="Local / ambiente (opcional)">
+              <input aria-label="Local / ambiente" value={ambiente} onChange={e => setAmbiente(e.target.value)} className={inputClass} maxLength={160} placeholder="Ex.: secretaria, laboratório, sala ou setor" />
             </Field>
+            {servicoAtual && <div className="min-w-0 md:col-span-2"><CamposServico servico={servicoAtual} respostas={respostasAtuais} alterar={alterarResposta} disabled={submitting}/></div>}
 
             {selectedOption && (
               <div className="md:col-span-2">
@@ -739,11 +487,18 @@ export default function ChamadoUREPage() {
               </Field>
             )}
 
+            {servicoAtual && <div className="md:col-span-2 flex min-w-0 flex-col gap-3 rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="min-w-0 text-xs leading-relaxed text-slate-400">O roteiro abaixo ajuda a informar os detalhes da solicitação. Ao trocar de serviço, o texto que você já preencheu é mantido.</p>
+              <button type="button" disabled={contemRoteiro(form.solicitacao, form.descricao, "ure")} onClick={() => updateForm("descricao", adicionarRoteiro(form.solicitacao, form.descricao, "ure"))} className="min-h-11 shrink-0 rounded-xl border border-blue-400/30 bg-blue-500/10 px-4 py-3 text-xs font-black text-blue-200 disabled:opacity-50">{contemRoteiro(form.solicitacao, form.descricao, "ure") ? "Roteiro na descrição" : "Adicionar roteiro à descrição"}</button>
+            </div>}
+
             <Field className="md:col-span-2" label="Descrição da solicitação" required>
               <textarea
+                aria-label="Descrição da solicitação"
                 value={form.descricao}
                 onChange={(event) => updateForm("descricao", event.target.value)}
-                placeholder="Descreva a solicitação com as informações necessárias para análise."
+                placeholder="Conte o que aconteceu ou o que precisa, os testes realizados e o resultado esperado."
+                maxLength={30000}
                 rows={10}
                 className={`${inputClass} resize-y leading-relaxed`}
               />
@@ -777,7 +532,7 @@ export default function ChamadoUREPage() {
             </button>
           </div>
         </section>
-      </form>
+      </fieldset></form>
     </main>
   )
 }

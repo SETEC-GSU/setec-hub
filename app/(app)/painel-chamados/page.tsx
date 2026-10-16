@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
 import { createClient } from "@/lib/supabase"
+import { classificacaoChamado } from "@/lib/chamados/catalogo"
+import { lerTodasPaginas } from "@/lib/chamados/consulta"
+import FiltrosClassificacao from "@/components/chamados/FiltrosClassificacao"
 import {
   Bar,
   BarChart,
@@ -21,6 +24,9 @@ type ChamadoRow = {
   titulo: string | null
   descricao: string | null
   categoria: string | null
+  servico_id?: string | null
+  subcategoria?: string | null
+
   origem: string | null
   prioridade: string | null
   status: string | null
@@ -127,7 +133,8 @@ function textoSeguro(value: unknown, fallback = "Não informado") {
 }
 
 function normalizarStatus(value?: string | null) {
-  return normalizarTexto(value || "aberto").replaceAll(" ", "_")
+  const status = normalizarTexto(value || "aberto").replaceAll(" ", "_")
+  return status === "encerrado" ? "fechado" : status
 }
 
 function normalizarPrioridade(value?: string | null) {
@@ -354,6 +361,8 @@ export default function PainelChamados() {
   const [filtroMes, setFiltroMes] = useState("")
   const [filtroStatus, setFiltroStatus] = useState<FiltroStatus>("")
   const [busca, setBusca] = useState("")
+  const [categoriaCatalogo, setCategoriaCatalogo] = useState("")
+  const [assuntoCatalogo, setAssuntoCatalogo] = useState("")
 
   const [modoAdministrativo, setModoAdministrativo] = useState(false)
   const [filtroAnalistaAdmin, setFiltroAnalistaAdmin] = useState("")
@@ -415,7 +424,7 @@ export default function PainelChamados() {
         let listaChamados: ChamadoRow[] = []
 
         if (acessoAdministrativo) {
-          const { data: chamadosData, error: chamadosError } = await supabase
+          const chamadosData = await lerTodasPaginas((inicio, fim, contar) => supabase
             .from("chamados")
             .select(
               `
@@ -424,6 +433,8 @@ export default function PainelChamados() {
               titulo,
               descricao,
               categoria,
+              subcategoria,
+              servico_id,
               origem,
               prioridade,
               status,
@@ -442,17 +453,17 @@ export default function PainelChamados() {
               visualizado_pelo_usuario,
               retorno_devolutivo,
               sla_horas
-            `
+            `, { count: contar ? "exact" : undefined }
             )
             .order("created_at", { ascending: false })
-
-          if (chamadosError) throw chamadosError
+            .order("id", { ascending: false })
+            .range(inicio, fim))
 
           listaChamados = (chamadosData || []).map((chamado) => ({
             ...chamado,
           })) as ChamadoRow[]
         } else {
-          const { data: chamadosData, error: chamadosError } = await supabase
+          const chamadosData = await lerTodasPaginas((inicio, fim, contar) => supabase
             .from("chamados")
             .select(
               `
@@ -461,6 +472,8 @@ export default function PainelChamados() {
               titulo,
               descricao,
               categoria,
+              subcategoria,
+              servico_id,
               origem,
               prioridade,
               status,
@@ -477,11 +490,11 @@ export default function PainelChamados() {
               started_at,
               visualizado_gestao,
               visualizado_pelo_usuario
-            `
+            `, { count: contar ? "exact" : undefined }
             )
             .order("created_at", { ascending: false })
-
-          if (chamadosError) throw chamadosError
+            .order("id", { ascending: false })
+            .range(inicio, fim))
 
           listaChamados = (chamadosData || []).map((chamado) => ({
             ...chamado,
@@ -629,6 +642,10 @@ export default function PainelChamados() {
     const termo = normalizarTexto(busca)
 
     return chamados.filter((chamado) => {
+      const classificacao = classificacaoChamado(chamado)
+      if (categoriaCatalogo && classificacao.categoria !== categoriaCatalogo) return false
+      if (assuntoCatalogo && classificacao.assunto !== assuntoCatalogo) return false
+
       const origem = textoSeguro(chamado.origem, "Outros").toUpperCase()
       const mes = getMesKey(chamado.created_at)
       const status = normalizarStatus(chamado.status)
@@ -669,6 +686,8 @@ export default function PainelChamados() {
           chamado.descricao,
           chamado.retorno_devolutivo,
           chamado.categoria,
+        classificacao.categoria,
+        classificacao.assunto,
           chamado.origem,
           chamado.prioridade,
           chamado.status,
@@ -688,6 +707,8 @@ export default function PainelChamados() {
   }, [
     busca,
     chamados,
+    categoriaCatalogo,
+    assuntoCatalogo,
     filtroAnalistaAdmin,
     filtroMes,
     filtroOrigem,
@@ -740,10 +761,13 @@ export default function PainelChamados() {
   const rankingCategorias = useMemo(() => {
     return agruparPorCampo(
       chamadosFiltrados,
-      (chamado) => chamado.categoria || "Não definida",
+      (chamado) => classificacaoChamado(chamado).categoria,
       12
     )
   }, [chamadosFiltrados])
+
+  const rankingAssuntos = useMemo(() => agruparPorCampo(chamadosFiltrados, c => classificacaoChamado(c).assunto, 12), [chamadosFiltrados])
+  const totalOutros = chamadosFiltrados.filter(c => classificacaoChamado(c).outra).length
 
   const rankingUsuarios = useMemo(() => {
     const mapa = new Map<string, RankingItem>()
@@ -987,6 +1011,8 @@ export default function PainelChamados() {
   const totalOrigem = dadosOrigem.reduce((acc, item) => acc + item.quantidade, 0)
 
   function limparFiltros() {
+    setCategoriaCatalogo("")
+    setAssuntoCatalogo("")
     setBusca("")
     setFiltroOrigem("")
     setFiltroMes("")
@@ -996,7 +1022,7 @@ export default function PainelChamados() {
   }
 
   const filtrosAtivos =
-    Boolean(busca.trim().length > 0 || filtroOrigem || filtroMes || filtroStatus) ||
+    Boolean(busca.trim().length > 0 || filtroOrigem || filtroMes || filtroStatus || categoriaCatalogo || assuntoCatalogo) ||
     Boolean(
       modoAdministrativo &&
         podeAcessarAdministrativo &&
@@ -1193,6 +1219,8 @@ export default function PainelChamados() {
             </div>
           </div>
         )}
+
+        <FiltrosClassificacao chamados={chamados} categoria={categoriaCatalogo} assunto={assuntoCatalogo} alterar={(c, a) => { setCategoriaCatalogo(c); setAssuntoCatalogo(a) }}/>
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
           <p className="text-xs font-medium text-slate-500">
@@ -1427,6 +1455,9 @@ export default function PainelChamados() {
       )}
 
       <section className="grid grid-cols-1 gap-6 xl:grid-cols-12">
+        <DashboardCard className="xl:col-span-12" title="Assuntos mais solicitados" subtitle={`${totalOutros} chamado(s) em outras necessidades no recorte`}>
+          <CompactRanking data={rankingAssuntos} accent="#8b5cf6" emptyText="Nenhum assunto encontrado." />
+        </DashboardCard>
         <DashboardCard
           className="xl:col-span-6"
           title="Ranking de solicitações"
@@ -1873,7 +1904,7 @@ function ChamadoAdminDetails({
           />
           <DetailMini
             label="Categoria"
-            value={textoSeguro(chamado.categoria)}
+            value={classificacaoChamado(chamado).categoria + " · " + classificacaoChamado(chamado).assunto}
           />
           <DetailMini
             label="Início atendimento"

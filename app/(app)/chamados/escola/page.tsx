@@ -10,6 +10,11 @@ import {
 } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase"
+import { createChamado } from "../actions"
+import { encontrarServico, servicosDaOrigem } from "@/lib/chamados/catalogo"
+import { validarPedido, type PedidoChamado } from "@/lib/chamados/validacao"
+import { modeloDescricao, descricaoSoModelo, contemRoteiro, adicionarRoteiro } from "@/lib/chamados/modelosDescricao"
+import SeletorServico, { CamposServico } from "@/components/chamados/SeletorServico"
 
 type Prioridade = "critica" | "alta" | "media" | "baixa"
 
@@ -56,155 +61,10 @@ const initialForm: FormState = {
   descricao: "",
 }
 
-const solicitacoesEscola: SolicitacaoOption[] = [
-  {
-    value: "Solicitação para agendamento de visita - Técnico de Campo (FIELD)",
-    label: "Agendamento de visita — Técnico de Campo (FIELD)",
-    prioridade: "critica",
-    sla_horas: 8,
-    tecnologia: "Projeto FIELD / Atendimento técnico presencial",
-    helper:
-      "Use para solicitar apoio presencial do técnico de campo, com motivo, data desejada e horário de preferência.",
-    template: `- MOTIVO DA SOLICITAÇÃO:
-- DATA DESEJADA:
-- HORÁRIO DE PREFERÊNCIA:
-- EQUIPAMENTO(S) OU AMBIENTE(S) ENVOLVIDO(S):
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Solicitação para publicação no site",
-    label: "Publicação no site",
-    prioridade: "media",
-    sla_horas: 48,
-    tecnologia: "Site institucional",
-    helper:
-      "Use para solicitar publicação, atualização ou ajuste de conteúdo no site.",
-    permiteAnexo: true,
-    template: `- TÍTULO DA PUBLICAÇÃO:
-- TEXTO DA PUBLICAÇÃO:
-- DATA DE PUBLICAÇÃO DESEJADA:
-- LINK(S), SE HOUVER:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Solicitação para validação de segundo link (SDWAN)",
-    label: "Validação de segundo link (SD-WAN)",
-    prioridade: "critica",
-    sla_horas: 8,
-    tecnologia: "SD-WAN / FortiGate / Link secundário",
-    helper:
-      "Use após a contratação do segundo link para solicitar validação técnica e orientação de integração.",
-    permiteAnexo: true,
-    template: `- OPERADORA CONTRATADA:
-- VELOCIDADE CONTRATADA:
-- WI-FI DO MODEM/ROTEADOR ESTÁ DESABILITADO? (SIM/NÃO):
-- POSSUI IP PÚBLICO DEDICADO? (SIM/NÃO):
-- CONEXÃO COM O FIREWALL FORTIGATE REALIZADA NA PORTA WAN2? (SIM/NÃO):
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Solicitação para queda de link Intragov",
-    label: "Queda de link Intragov",
-    prioridade: "critica",
-    sla_horas: 8,
-    tecnologia: "Intragov / conectividade escolar",
-    helper:
-      "Use para registrar indisponibilidade ou instabilidade relevante no link Intragov.",
-    template: `- DATA/HORÁRIO DO INÍCIO DO PROBLEMA:
-- A ESCOLA ESTÁ TOTALMENTE SEM INTERNET? (SIM/NÃO):
-- HOUVE QUEDA DE ENERGIA RECENTE? (SIM/NÃO):
-- EQUIPAMENTOS DO RACK ESTÃO ENERGIZADOS? (SIM/NÃO):
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Solicitação para instalação de AP's - ACCESS POINTS MERAKI",
-    label: "Instalação de APs — Access Points Meraki",
-    prioridade: "baixa",
-    sla_horas: 72,
-    tecnologia: "Wi-Fi SEDUC / Access Points Meraki",
-    helper:
-      "Use para solicitar análise de necessidade de novo ponto de acesso ou infraestrutura Wi-Fi.",
-    permiteAnexo: true,
-    template: `- QUANTIDADE DE APs SOLICITADOS:
-- LOCAL DESEJADO PARA INSTALAÇÃO:
-- O LOCAL JÁ POSSUI INFRAESTRUTURA DE AP? (SIM/NÃO):
-- JUSTIFICATIVA:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Solicitação para instalação de pontos lógicos",
-    label: "Instalação de pontos lógicos",
-    prioridade: "baixa",
-    sla_horas: 72,
-    tecnologia: "Infraestrutura de rede lógica",
-    helper:
-      "Use para solicitar análise de instalação de ponto lógico em sala, secretaria, laboratório ou outro ambiente.",
-    permiteAnexo: true,
-    template: `- QUANTIDADE DE PONTOS NECESSÁRIOS:
-- QUANTIDADE DE PONTOS ELÉTRICOS, SE NECESSÁRIO:
-- LOCALIZAÇÃO DOS PONTOS SOLICITADOS:
-- JUSTIFICATIVA:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Solicitação para espelhamento de DVRs (câmeras)",
-    label: "Espelhamento de DVRs / câmeras",
-    prioridade: "alta",
-    sla_horas: 24,
-    tecnologia: "DVR / câmeras / rede Intragov",
-    helper:
-      "Use para solicitações relacionadas ao espelhamento de câmeras e conectividade de DVRs.",
-    template: `- QUANTIDADE DE DVRs PARA ESPELHAR:
-- DVR ESTÁ CONECTADO NA REDE INTRAGOV? (SIM/NÃO):
-- IP ATUAL DO DVR (MENU > REDES > TCP/IP):
-- LOCAL DO DVR:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Solicitação para suporte a sistemas",
-    label: "Suporte a sistemas",
-    prioridade: "media",
-    sla_horas: 48,
-    tecnologia: "Sistemas institucionais",
-    helper:
-      "Use para dúvidas ou problemas em sistemas institucionais que envolvam apoio tecnológico.",
-    template: `- SISTEMA:
-- PERFIL/USUÁRIO AFETADO:
-- DESCRIÇÃO DO PROBLEMA:
-- MENSAGEM DE ERRO, SE HOUVER:
-- TESTES JÁ REALIZADOS:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Solicitação para perfil PORTALNET",
-    label: "Perfil PortalNet",
-    prioridade: "baixa",
-    sla_horas: 72,
-    tecnologia: "PortalNet / permissões",
-    helper:
-      "Use para solicitação de perfil ou ajuste de acesso relacionado ao PortalNet.",
-    template: `- ESCOLA:
-- NOME COMPLETO:
-- RG:
-- CPF:
-- PERFIS QUE DESEJA TER ACESSO:
-- JUSTIFICATIVA:
-- OBSERVAÇÕES:`,
-  },
-  {
-    value: "Outras solicitações",
-    label: "Outras solicitações",
-    prioridade: "media",
-    sla_horas: 48,
-    tecnologia: "Solicitação geral",
-    helper: "Use quando a demanda não se enquadrar nas opções anteriores.",
-    template: `- DESCREVA A SOLICITAÇÃO:
-- AMBIENTE/EQUIPAMENTO ENVOLVIDO:
-- URGÊNCIA:
-- JUSTIFICATIVA:
-- OBSERVAÇÕES:`,
-  },
-]
+const solicitacoesEscola: SolicitacaoOption[] = servicosDaOrigem("escola").map(s => ({
+  value: s.id, label: s.label, prioridade: s.prioridade, sla_horas: s.sla,
+  tecnologia: s.categoria, helper: s.ajuda, template: "", permiteAnexo: true,
+}))
 
 function formatFileSize(size: number) {
   if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`
@@ -263,6 +123,17 @@ export default function ChamadoEscolaPage() {
   const submitLockRef = useRef(false)
 
   const [form, setForm] = useState<FormState>(initialForm)
+  const [respostasPorServico, setRespostasPorServico] = useState<Record<string, Record<string, string>>>({})
+  const [ambiente, setAmbiente] = useState("")
+  const servicoAtual = encontrarServico(form.solicitacao)
+  const respostasAtuais = respostasPorServico[form.solicitacao] || {}
+  function alterarResposta(campo: string, valor: string) {
+    setRespostasPorServico(atual => ({ ...atual, [form.solicitacao]: { ...(atual[form.solicitacao] || {}), [campo]: valor } }))
+  }
+  function pedidoAtual(): PedidoChamado {
+    return { origem: "escola", servicoId: form.solicitacao, titulo: form.titulo, nome: form.nome,
+      unidade: form.escola, ambiente, descricao: form.descricao, respostas: respostasAtuais }
+  }
   const [arquivos, setArquivos] = useState<File[]>([])
   const [feedback, setFeedback] = useState<Feedback>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -305,8 +176,7 @@ export default function ChamadoEscolaPage() {
       return {
         ...current,
         solicitacao: value,
-        subcategoria: "",
-        descricao: option?.template || "",
+        descricao: !current.descricao.trim() || descricaoSoModelo(current.solicitacao, current.descricao, "escola") ? modeloDescricao(value, "escola") : current.descricao,
         titulo: deveAtualizarTitulo ? option?.label || "" : current.titulo,
       }
     })
@@ -384,7 +254,7 @@ export default function ChamadoEscolaPage() {
 
     if (submitting || submitLockRef.current) return
 
-    const validationError = validateForm(form)
+    const validationError = validateForm(form) || validarPedido(pedidoAtual())
 
     if (validationError) {
       setFeedback({
@@ -409,53 +279,22 @@ export default function ChamadoEscolaPage() {
     setFeedback(null)
 
     try {
-      const {
-        data: { session },
-        error: sessionError,
-      } = await supabase.auth.getSession()
-
-      if (sessionError) throw sessionError
-
-      if (!session?.user) {
-        setFeedback({
-          type: "error",
-          message:
-            "Sessão não localizada. Faça login novamente para abrir o chamado.",
-        })
+      const pedido = pedidoAtual()
+      const dados = new FormData()
+      dados.set("origem", pedido.origem)
+      dados.set("servico_id", pedido.servicoId)
+      dados.set("titulo", pedido.titulo)
+      dados.set("nome", pedido.nome)
+      dados.set("escola", pedido.unidade)
+      dados.set("ambiente", pedido.ambiente)
+      dados.set("descricao", pedido.descricao)
+      dados.set("respostas", JSON.stringify(pedido.respostas))
+      const resultado = await createChamado(dados)
+      if (!resultado.ok) {
+        setFeedback({ type: "error", message: resultado.erro })
         return
       }
-
-      const prioridade = selectedOption?.prioridade || "media"
-      const slaHoras = selectedOption?.sla_horas || 48
-
-      const { data, error } = await supabase
-        .from("chamados")
-        .insert({
-          titulo: form.titulo.trim(),
-          solicitante_nome: form.nome.trim(),
-          escola: form.escola.trim(),
-          categoria: form.solicitacao,
-          subcategoria: form.subcategoria.trim() || null,
-          descricao: form.descricao.trim(),
-          tipo: "escola",
-          origem: "escola",
-          prioridade,
-          sla_horas: slaHoras,
-          status: "aberto",
-          usuario_id: session.user.id,
-          visualizado_gestao: false,
-          visualizado_pelo_usuario: true,
-        })
-        .select("id,codigo,titulo")
-        .single()
-
-      if (error) throw error
-
-      const chamado = data as ChamadoCriado | null
-
-      if (!chamado?.id) {
-        throw new Error("Chamado criado, mas o identificador não foi retornado.")
-      }
+      const chamado = resultado.chamado
 
       const falhasAnexo =
         arquivos.length > 0 ? await uploadArquivos(chamado.id) : []
@@ -467,6 +306,8 @@ export default function ChamadoEscolaPage() {
       })
 
       setForm(initialForm)
+      setRespostasPorServico({})
+      setAmbiente("")
       setArquivos([])
       setFileInputKey((value) => value + 1)
 
@@ -589,11 +430,12 @@ export default function ChamadoEscolaPage() {
         </section>
       )}
 
-      <form onSubmit={abrirChamado} className="mt-6">
+      <form onSubmit={abrirChamado} className="mt-6"><fieldset disabled={submitting} className="min-w-0">
         <section className="rounded-[2rem] border border-slate-800 bg-[#020617] p-5 shadow-xl md:p-7">
           <div className="grid gap-4 md:grid-cols-2">
             <Field className="md:col-span-2" label="Título do chamado" required>
               <input
+                aria-label="Título do chamado"
                 value={form.titulo}
                 onChange={(event) => updateForm("titulo", event.target.value)}
                 placeholder="Ex.: Queda de link Intragov na unidade"
@@ -604,6 +446,7 @@ export default function ChamadoEscolaPage() {
 
             <Field label="Nome do solicitante" required>
               <input
+                aria-label="Nome do solicitante"
                 value={form.nome}
                 onChange={(event) => updateForm("nome", event.target.value)}
                 placeholder="Nome completo"
@@ -614,6 +457,7 @@ export default function ChamadoEscolaPage() {
 
             <Field label="Unidade escolar" required>
               <input
+                aria-label="Unidade escolar"
                 value={form.escola}
                 onChange={(event) => updateForm("escola", event.target.value)}
                 placeholder="Nome da escola"
@@ -622,32 +466,13 @@ export default function ChamadoEscolaPage() {
               />
             </Field>
 
-            <Field className="md:col-span-2" label="Tipo de solicitação" required>
-              <select
-                value={form.solicitacao}
-                onChange={(event) => handleSolicitacaoChange(event.target.value)}
-                className={inputClass}
-              >
-                <option value="">Selecione uma solicitação</option>
-                {solicitacoesEscola.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+            <div className="min-w-0 md:col-span-2">
+              <SeletorServico origem="escola" value={form.solicitacao} onChange={handleSolicitacaoChange} disabled={submitting} />
+            </div>
+            <Field className="md:col-span-2" label="Local / ambiente (opcional)">
+              <input aria-label="Local / ambiente" value={ambiente} onChange={e => setAmbiente(e.target.value)} className={inputClass} maxLength={160} placeholder="Ex.: secretaria, laboratório, sala ou setor" />
             </Field>
-
-            <Field className="md:col-span-2" label="Complemento / subcategoria">
-              <input
-                value={form.subcategoria}
-                onChange={(event) =>
-                  updateForm("subcategoria", event.target.value)
-                }
-                placeholder="Ex.: laboratório, secretaria, SAI, sala dos professores..."
-                className={inputClass}
-                maxLength={120}
-              />
-            </Field>
+            {servicoAtual && <div className="min-w-0 md:col-span-2"><CamposServico servico={servicoAtual} respostas={respostasAtuais} alterar={alterarResposta} disabled={submitting}/></div>}
 
             {selectedOption && (
               <div className="md:col-span-2">
@@ -669,11 +494,18 @@ export default function ChamadoEscolaPage() {
               </Field>
             )}
 
+            {servicoAtual && <div className="md:col-span-2 flex min-w-0 flex-col gap-3 rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="min-w-0 text-xs leading-relaxed text-slate-400">O roteiro abaixo ajuda a informar os detalhes da solicitação. Ao trocar de serviço, o texto que você já preencheu é mantido.</p>
+              <button type="button" disabled={contemRoteiro(form.solicitacao, form.descricao, "escola")} onClick={() => updateForm("descricao", adicionarRoteiro(form.solicitacao, form.descricao, "escola"))} className="min-h-11 shrink-0 rounded-xl border border-blue-400/30 bg-blue-500/10 px-4 py-3 text-xs font-black text-blue-200 disabled:opacity-50">{contemRoteiro(form.solicitacao, form.descricao, "escola") ? "Roteiro na descrição" : "Adicionar roteiro à descrição"}</button>
+            </div>}
+
             <Field className="md:col-span-2" label="Descrição da solicitação" required>
               <textarea
+                aria-label="Descrição da solicitação"
                 value={form.descricao}
                 onChange={(event) => updateForm("descricao", event.target.value)}
-                placeholder="Descreva a solicitação com as informações necessárias para análise."
+                placeholder="Conte o que aconteceu ou o que precisa, os testes realizados e o resultado esperado."
+                maxLength={30000}
                 rows={10}
                 className={`${inputClass} resize-y leading-relaxed`}
               />
@@ -708,7 +540,7 @@ export default function ChamadoEscolaPage() {
             </button>
           </div>
         </section>
-      </form>
+      </fieldset></form>
     </main>
   )
 }

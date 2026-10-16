@@ -1,5 +1,6 @@
 import { getUser } from "@/lib/getUser"
 import { canAccess } from "@/lib/canAccess"
+import { podeVerCentralRelatorios, PERMISSAO_CENTRAL_RELATORIOS } from "@/lib/relatorios/acesso"
 import SidebarClient, {
   type SidebarItem,
   type SidebarSection,
@@ -140,7 +141,7 @@ export default async function Sidebar() {
           href: "/fields/central-relatorios",
           label: "Central de Relatórios",
           icon: "📊",
-          permission: "fields.relatorio",
+          permission: PERMISSAO_CENTRAL_RELATORIOS,
         },
         {
           href: "/fields/relatorio-tecnico",
@@ -304,9 +305,9 @@ export default async function Sidebar() {
       ...section,
       items: section.items.filter(
         (item) =>
-          safeCanAccess(userRole, item.permission) &&
-          (item.href !== "/fields/central-relatorios" ||
-            ["admin", "seintec", "analista"].includes(String(authenticatedUser?.role || "").trim().toLowerCase())) &&
+          (item.href === "/fields/central-relatorios"
+            ? podeVerCentralRelatorios(authenticatedUser?.role)
+            : safeCanAccess(userRole, item.permission)) &&
           (item.permission !== "logins.view" ||
             authenticatedUser?.role === "admin"),
       ),

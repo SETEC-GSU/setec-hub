@@ -12,6 +12,8 @@ import {
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { createClient } from "@/lib/supabase"
+import { classificacaoChamado } from "@/lib/chamados/catalogo"
+import ClassificacaoChamado from "@/components/chamados/ClassificacaoChamado"
 
 type Feedback = {
   tipo: "success" | "error" | "warning" | "info"
@@ -166,7 +168,7 @@ function getOrigemClasses(origem: string | null | undefined) {
 function getPrioridadeClasses(prioridade: string | null | undefined) {
   const value = normalizarTexto(prioridade)
 
-  if (value === "alta" || value === "urgente") {
+  if (["critica", "alta", "urgente"].includes(value)) {
     return "border-red-500/25 bg-red-500/10 text-red-300"
   }
 
@@ -182,7 +184,7 @@ function getPrioridadeClasses(prioridade: string | null | undefined) {
 }
 
 function isStatusEncerrado(status: unknown) {
-  return normalizarTexto(status) === "encerrado"
+  return ["encerrado", "fechado"].includes(normalizarTexto(status))
 }
 
 function getErrorMessage(error: unknown) {
@@ -533,7 +535,8 @@ export default function ChamadoDetalhePage() {
 
             <InfoBox label="Unidade / Escola" value={chamado.escola || "URE"} />
 
-            <InfoBox label="Categoria" value={chamado.categoria || "-"} />
+            <InfoBox label="Categoria" value={classificacaoChamado(chamado).categoria} />
+            <InfoBox label="Assunto" value={classificacaoChamado(chamado).assunto} />
 
             <InfoBox
               label="Prioridade"
@@ -546,6 +549,8 @@ export default function ChamadoDetalhePage() {
             <InfoBox label="Criado em" value={formatarDataHora(chamado.created_at)} />
           </div>
 
+          <ClassificacaoChamado chamado={chamado} role={"usuario"} aoSalvar={carregar} />
+
           <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/70 p-5">
             <p className="mb-3 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
               Descrição
@@ -556,7 +561,7 @@ export default function ChamadoDetalhePage() {
             </p>
           </div>
 
-          {(chamado.status === "resolvido" || chamado.status === "encerrado") &&
+          {(chamado.status === "resolvido" || ["encerrado", "fechado"].includes(chamado.status)) &&
             chamado.retorno_devolutivo && (
               <div className="mt-5 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 p-5">
                 <div className="mb-3 flex items-center gap-2">

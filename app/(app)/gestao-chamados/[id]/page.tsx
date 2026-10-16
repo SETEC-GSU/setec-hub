@@ -12,6 +12,8 @@ import {
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { createClient } from "@/lib/supabase"
+import { classificacaoChamado } from "@/lib/chamados/catalogo"
+import ClassificacaoChamado from "@/components/chamados/ClassificacaoChamado"
 
 type Feedback = {
   tipo: "success" | "error" | "warning" | "info"
@@ -152,7 +154,7 @@ function getStatusClasses(status: string | null | undefined) {
 function getPrioridadeClasses(prioridade: string | null | undefined) {
   const value = normalizarTexto(prioridade)
 
-  if (value === "alta" || value === "urgente") {
+  if (["critica", "alta", "urgente"].includes(value)) {
     return "border-red-500/25 bg-red-500/10 text-red-300"
   }
 
@@ -188,12 +190,12 @@ function isStatusConcluido(status: unknown) {
     value === "resolvido" ||
     value === "concluido" ||
     value === "concluído" ||
-    value === "encerrado"
+    (value === "encerrado" || value === "fechado")
   )
 }
 
 function isStatusEncerrado(status: unknown) {
-  return normalizarTexto(status) === "encerrado"
+  return ["encerrado", "fechado"].includes(normalizarTexto(status))
 }
 
 function getErrorMessage(error: unknown) {
@@ -215,7 +217,7 @@ export default function GestaoChamadoDetalhePage() {
   const [mensagens, setMensagens] = useState<any[]>([])
   const [novaMsg, setNovaMsg] = useState("")
   const [userId, setUserId] = useState<string | null>(null)
-  const [userRole, setUserRole] = useState<string>("analista")
+  const [userRole, setUserRole] = useState<string>("usuario")
   const [anexos, setAnexos] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [enviando, setEnviando] = useState(false)
@@ -264,7 +266,7 @@ export default function GestaoChamadoDetalhePage() {
         .eq("id", user.id)
         .maybeSingle()
 
-      const roleAtual = userData?.role ?? "analista"
+      const roleAtual = userData?.role ?? "usuario"
       setUserRole(roleAtual)
 
       const { data: chamadoData, error: chamadoError } = await supabase
@@ -392,6 +394,9 @@ export default function GestaoChamadoDetalhePage() {
         .update({
           status: "resolvido",
           retorno_devolutivo: parecer,
+          resolved_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          visualizado_pelo_usuario: false,
         })
         .eq("id", id)
 
@@ -586,7 +591,8 @@ export default function GestaoChamadoDetalhePage() {
 
             <InfoBox label="Unidade / Escola" value={chamado.escola || "URE (Sede)"} />
 
-            <InfoBox label="Categoria" value={chamado.categoria || "-"} />
+            <InfoBox label="Categoria" value={classificacaoChamado(chamado).categoria} />
+            <InfoBox label="Assunto" value={classificacaoChamado(chamado).assunto} />
 
             <InfoBox
               label="Prioridade"
@@ -599,6 +605,8 @@ export default function GestaoChamadoDetalhePage() {
             <InfoBox label="Criado em" value={formatarDataHora(chamado.created_at)} />
           </div>
 
+          <ClassificacaoChamado chamado={chamado} role={userRole} aoSalvar={carregar} />
+
           <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/70 p-5">
             <p className="mb-3 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
               Relato da ocorrência
@@ -609,7 +617,7 @@ export default function GestaoChamadoDetalhePage() {
             </p>
           </div>
 
-          {(chamado.status === "resolvido" || chamado.status === "encerrado") &&
+          {(chamado.status === "resolvido" || ["encerrado", "fechado"].includes(chamado.status)) &&
             chamado.retorno_devolutivo && (
               <div className="mt-5 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 p-5">
                 <div className="mb-3 flex items-center gap-2">

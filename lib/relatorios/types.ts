@@ -11,6 +11,7 @@ export type ChamadoFieldVinculo = {
   dispensa_estado?: string | null;
 };
 export type RegistroControle = ChamadoFieldVinculo & {
+  dispensa_automatica?: boolean; dispensa_origem?: "automatica" | "manual" | null;
   finalizados: number; rascunhos: number; situacao: string;
   justificativa: string | null; aprovado_nome: string | null;
   aprovado_em: string | null; dispensa_versao: number | null;
@@ -24,7 +25,7 @@ export type DocumentoRelatorio = {
 export type RespostaControle = {
   contexto: ContextoRelatorios; mes: string; pagina: number; tamanho: number;
   resumo: { chamados: number; entregues: number; dispensados: number; pendentes: number;
-    aguardando_aprovacao: number; relatorios: number; rascunhos: number; sem_vinculo: number; sem_data: number; internos?: number };
+    aguardando_aprovacao: number; relatorios: number; rascunhos: number; sem_vinculo: number; sem_data: number; internos?: number; dispensados_automaticos?: number };
   tecnicos: string[]; ranking: Array<{ tecnico: string; chamados: number; entregues: number;
     dispensados: number; pendentes: number; cobertura: number | null }>;
   ranking_emitidos: Array<{ tecnico: string; total: number }>;

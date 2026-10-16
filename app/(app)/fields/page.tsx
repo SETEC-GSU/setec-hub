@@ -1,8 +1,11 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createClient } from "@/lib/supabase"
 import Link from "next/link"
+import dynamic from "next/dynamic"
+import { useAcessoGestaoFields } from "@/lib/fields-relatorios/useAcessoGestaoFields"
+
 import {
   BarChart,
   Bar,
@@ -12,6 +15,11 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from "recharts"
+
+const ModalRelatorioGerencial = dynamic(
+  () => import("@/components/fields/ModalRelatorioGerencial"),
+  { ssr: false }
+)
 
 /* -------------------------------------------------------------------------- */
 /* HELPERS                                                                    */
@@ -332,6 +340,24 @@ const SafeTooltip = ({ active, payload, label }: any) => {
 
 export default function FieldsPage() {
   const supabase = useMemo(() => createClient(), [])
+  const { permitido: podeGerirFields, conferir: conferirGestaoFields, usuarioId: usuarioGestaoId } = useAcessoGestaoFields(supabase)
+  const [modalRelatorioAberto, setModalRelatorioAberto] = useState(false)
+  const restauracaoRelatorioRef = useRef<string | null>(null)
+  const chaveRelatorio = usuarioGestaoId ? `hub:fields:relatorio:${usuarioGestaoId}` : ""
+  function abrirRelatorioGerencial() {
+    if (!podeGerirFields) return
+    if (chaveRelatorio) { try { sessionStorage.setItem(`${chaveRelatorio}:aberto`, "1") } catch {} }
+    setModalRelatorioAberto(true)
+  }
+  function fecharRelatorioGerencial() {
+    if (chaveRelatorio) { try { sessionStorage.removeItem(`${chaveRelatorio}:aberto`) } catch {} }
+    setModalRelatorioAberto(false)
+  }
+  useEffect(() => {
+    if (!podeGerirFields || !chaveRelatorio || restauracaoRelatorioRef.current === chaveRelatorio) return
+    restauracaoRelatorioRef.current = chaveRelatorio
+    try { if (sessionStorage.getItem(`${chaveRelatorio}:aberto`) === "1") setModalRelatorioAberto(true) } catch {}
+  }, [podeGerirFields, chaveRelatorio])
 
   const [visitas, setVisitas] = useState<any[]>([])
   const [avaliacoes, setAvaliacoes] = useState<any[]>([])
@@ -364,6 +390,14 @@ export default function FieldsPage() {
   const [gerandoLista, setGerandoLista] = useState(false)
   const [listaGerada, setListaGerada] = useState("")
   const [listaCopiada, setListaCopiada] = useState(false)
+
+  useEffect(() => {
+    if (podeGerirFields) return
+    setModalListaAberto(false)
+    setModalRelatorioAberto(false)
+    setListaGerada("")
+    setListaCopiada(false)
+  }, [podeGerirFields])
 
   const carregarDados = useCallback(async () => {
     setLoading(true)
@@ -501,7 +535,12 @@ export default function FieldsPage() {
 
     const rankingEscolas = Object.entries(
       filtradas.reduce((acc: any, v) => {
-        if (v.escola) acc[v.escola] = (acc[v.escola] || 0) + 1
+        // Exclusão somente neste ranking e no destaque que usa seu primeiro item.
+        // Totais, tabela, histórico, filtros e relatórios preservam os internos da URE.
+        const escolaNormalizada = normalizarTexto(v.escola).replace(/\s+/g, " ")
+        if (v.escola && escolaNormalizada !== "ure guarulhos sul") {
+          acc[v.escola] = (acc[v.escola] || 0) + 1
+        }
         return acc
       }, {})
     ).sort((a: any, b: any) => b[1] - a[1] || ordenarTexto(a[0], b[0]))
@@ -1049,7 +1088,7 @@ export default function FieldsPage() {
   }
 
   async function gerarListaChamados() {
-    if (!dataLista) return
+    if (!dataLista || !podeGerirFields || !(await conferirGestaoFields())) return
 
     setGerandoLista(true)
     setListaGerada("")
@@ -1064,7 +1103,7 @@ export default function FieldsPage() {
   }
 
   async function copiarLista() {
-    if (!listaGerada) return
+    if (!listaGerada || !podeGerirFields || !(await conferirGestaoFields())) return
 
     try {
       await navigator.clipboard.writeText(listaGerada)
@@ -1087,7 +1126,8 @@ export default function FieldsPage() {
     }, 2500)
   }
 
-  function abrirModalLista() {
+  async function abrirModalLista() {
+    if (!podeGerirFields || !(await conferirGestaoFields())) return
     setModalListaAberto(true)
     setCalendarioAberto(false)
     setListaGerada("")
@@ -1153,7 +1193,8 @@ export default function FieldsPage() {
               produtividade dos técnicos, SLA útil e pendências previstas para atendimento.
             </p>
 
-            <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+              {podeGerirFields && <>
               <button
                 type="button"
                 onClick={abrirModalLista}
@@ -1162,6 +1203,15 @@ export default function FieldsPage() {
                 <span className="text-lg">📋</span>
                 Gerar lista diária
               </button>
+              <button
+                type="button"
+                onClick={abrirRelatorioGerencial}
+                className="inline-flex min-h-[52px] items-center justify-center gap-3 rounded-2xl border border-violet-400/30 bg-violet-500/15 px-5 text-sm font-black uppercase tracking-widest text-violet-200 transition hover:bg-violet-500/25"
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5 shrink-0"><path d="M5 3h10l4 4v14H5z"/><path d="M14 3v5h5M8 17v-4m4 4V9m4 8v-6"/></svg>
+                Gerar relatório
+              </button>
+              </>}
 
               <button
                 type="button"
@@ -1828,7 +1878,10 @@ export default function FieldsPage() {
       </Glass>
 
       {/* MODAL GERADOR DE LISTA DE CHAMADOS */}
-      {modalListaAberto && (
+      {podeGerirFields && modalRelatorioAberto && (
+        <ModalRelatorioGerencial registros={visitas} fechar={fecharRelatorioGerencial} chavePersistencia={chaveRelatorio} />
+      )}
+      {podeGerirFields && modalListaAberto && (
         <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-[#020617]/90 p-4 backdrop-blur-md animate-fade-in">
           <div className="relative flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-[2rem] border border-slate-700 bg-[#0f172a] shadow-2xl">
             <div className="relative overflow-hidden border-b border-slate-800 bg-[#020617] p-6 sm:p-8">

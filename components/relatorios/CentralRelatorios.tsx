@@ -6,6 +6,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createClient } from "@/lib/supabase";
 import { erroFormatoChamado } from "@/lib/relatorios/chamado";
 import { leituraComPrazo } from "@/lib/relatorios/consulta";
+import { podeVerCentralRelatorios } from "@/lib/relatorios/acesso";
+import { buscarPendenciasCobranca, montarTextoCobranca, OPCOES_COBRANCA,
+  type PendenciaCobranca, type OpcoesCobranca } from "@/lib/relatorios/cobranca";
 import type { ContextoRelatorios, DetalheRelatorio, DocumentoRelatorio, HistoricoDispensa,
   ReferenciaExportacao, RegistroControle, RespostaControle } from "@/lib/relatorios/types";
 
@@ -13,6 +16,7 @@ type Aba = "painel" | "relatorios" | "pendencias" | "dispensas" | "backup";
 type Filtros = { mes: string; tecnico: string; tipo: string; busca: string; situacao: string };
 type ResultadoConsulta = { chave: string; dados: RespostaControle };
 type ModalAcao = { registro: RegistroControle; acao: "aprovar" | "solicitar" | "revogar" };
+type CobrancaModal = { registros: PendenciaCobranca[]; mes: string; geradoEm: Date; texto: string; opcoes: OpcoesCobranca };
 type ArquivoBackup = { nome: string; url: string; falhas: number; quantidade: number };
 type IconeNome = "painel" | "arquivo" | "pendencia" | "escudo" | "download" | "filtro" | "atualizar" | "seta" | "fechar";
 const campo = "min-h-[46px] w-full min-w-0 rounded-xl border border-slate-700/80 bg-slate-950 px-3 py-2.5 text-base text-slate-100 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/10 disabled:opacity-50";
@@ -25,7 +29,7 @@ const abas: Array<{ id: Aba; label: string; icon: IconeNome }> = [
   { id: "dispensas", label: "Dispensas SETEC", icon: "escudo" },
   { id: "backup", label: "Backup mensal", icon: "download" },
 ];
-const rotulos: Record<string, string> = { entregue: "Com relatório", dispensado: "Dispensa aprovada",
+const rotulos: Record<string, string> = { dispensa_automatica: "Dispensa automática", entregue: "Com relatório", dispensado: "Dispensa aprovada",
   pendente: "Sem relatório", rascunho: "Rascunho", aguardando_aprovacao: "Aguardando SETEC", finalizado: "Finalizado" };
 function mesAtual() {
   const p = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit" }).formatToParts(new Date());
@@ -67,7 +71,7 @@ function Icone({ nome, className = "h-4 w-4" }: { nome: IconeNome; className?: s
 }
 function Tag({ estado }: { estado: string }) {
   const cor = estado === "entregue" || estado === "finalizado" ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300" :
-    estado === "dispensado" ? "border-blue-500/25 bg-blue-500/10 text-blue-300" :
+    estado === "dispensado" || estado === "dispensa_automatica" ? "border-blue-500/25 bg-blue-500/10 text-blue-300" :
     estado === "pendente" ? "border-red-500/25 bg-red-500/10 text-red-300" : "border-amber-500/25 bg-amber-500/10 text-amber-300";
   return <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold ${cor}`}><span className="h-1.5 w-1.5 rounded-full bg-current" />{rotulos[estado] || estado}</span>;
 }
@@ -100,6 +104,12 @@ export default function CentralRelatorios({ contextoInicial }: { contextoInicial
   const [detalhe, setDetalhe] = useState<DetalheRelatorio | null>(null);
   const [historico, setHistorico] = useState<HistoricoDispensa[] | null>(null);
   const [historicoChamado, setHistoricoChamado] = useState("");
+  const [cobranca, setCobranca] = useState<CobrancaModal | null>(null);
+  const [opcoesCobranca, setOpcoesCobranca] = useState<OpcoesCobranca>({ ...OPCOES_COBRANCA });
+  const [gerandoCobranca, setGerandoCobranca] = useState(false);
+  const [mensagemCobranca, setMensagemCobranca] = useState("");
+  const cobrancaRef = useRef<AbortController | null>(null);
+  const textoCobrancaRef = useRef<HTMLTextAreaElement>(null);
   const [ocupadoId, setOcupadoId] = useState<string | null>(null);
   const [exportando, setExportando] = useState(false);
   const [progresso, setProgresso] = useState({ preparados: 0, total: 0, texto: "" });
@@ -113,18 +123,19 @@ export default function CentralRelatorios({ contextoInicial }: { contextoInicial
   const modalRef = useRef<HTMLDivElement>(null);
   const atualizadoMs = useRef(0);
   const ocupadoRef = useRef(false);
-  ocupadoRef.current = exportando || salvandoAcao || Boolean(acao || detalhe || historico);
+  ocupadoRef.current = exportando || salvandoAcao || gerandoCobranca || Boolean(acao || detalhe || historico || cobranca);
   const { mes, tecnico, tipo } = filtros;
   const filtrosAlterados = JSON.stringify(edicao) !== JSON.stringify(filtros);
-  const modalAberto = Boolean(acao || detalhe || historico);
+  const modalAberto = Boolean(acao || detalhe || historico || cobranca);
+  const opcoesCobrancaAlteradas = Boolean(cobranca && JSON.stringify(opcoesCobranca) !== JSON.stringify(cobranca.opcoes));
 
   const limparArquivos = useCallback(() => {
     urls.current.forEach(URL.revokeObjectURL); urls.current = []; setArquivos([]);
   }, []);
   const limparAcesso = useCallback(() => {
     versaoAcesso.current++; sequencia.current++;
-    consultaRef.current?.abort(); exportacaoRef.current?.abort();
-    setResultado(null); setDetalhe(null); setHistorico(null); setAcao(null);
+    consultaRef.current?.abort(); exportacaoRef.current?.abort(); cobrancaRef.current?.abort();
+    setResultado(null); setDetalhe(null); setHistorico(null); setAcao(null); setCobranca(null); setGerandoCobranca(false);
     setExportando(false); setCarregando(false); setSemAcesso(true); limparArquivos();
   }, [limparArquivos]);
 
@@ -135,11 +146,12 @@ export default function CentralRelatorios({ contextoInicial }: { contextoInicial
       if (event === "SIGNED_OUT" || (session?.user.id && session.user.id !== contextoInicial.usuario_id)) limparAcesso();
     });
     return () => { montado.current = false; listener.subscription.unsubscribe(); consultaRef.current?.abort();
-      exportacaoRef.current?.abort(); urls.current.forEach(URL.revokeObjectURL); };
+      exportacaoRef.current?.abort(); cobrancaRef.current?.abort(); urls.current.forEach(URL.revokeObjectURL); };
   }, [contextoInicial.usuario_id, limparAcesso, supabase]);
   useEffect(() => { if (semAcesso) router.replace("/"); }, [semAcesso, router]);
 
   const carregar = useCallback(async () => {
+    if (!podeVerCentralRelatorios(contextoInicial.role)) { limparAcesso(); return; }
     consultaRef.current?.abort();
     const controller = new AbortController(); consultaRef.current = controller;
     const seq = ++sequencia.current;
@@ -154,7 +166,7 @@ export default function CentralRelatorios({ contextoInicial }: { contextoInicial
       if (controller.signal.aborted || seq !== sequencia.current || !montado.current) return;
       if (error) { if (error.code === "42501") limparAcesso(); throw error; }
       const resposta = data as RespostaControle;
-      if (!resposta?.contexto?.permitido) { limparAcesso(); return; }
+      if (!resposta?.contexto?.permitido || !podeVerCentralRelatorios(resposta.contexto.role)) { limparAcesso(); return; }
       setResultado({ chave: chaveConsulta, dados: resposta }); setContexto({ ...contextoInicial, ...resposta.contexto });
       setTecnicos(resposta.tecnicos || []); atualizadoMs.current = Date.now(); setAtualizadoEm(new Date().toISOString());
     } catch (error) {
@@ -182,6 +194,50 @@ export default function CentralRelatorios({ contextoInicial }: { contextoInicial
     return () => { window.removeEventListener("focus", voltar); document.removeEventListener("visibilitychange", voltar); window.removeEventListener("hub-relatorios-atualizados", atualizado); };
   }, [carregar]);
 
+  useEffect(() => {
+    cobrancaRef.current?.abort(); setGerandoCobranca(false);
+  }, [aba, filtros]);
+
+  async function prepararCobranca(chamado = "") {
+    if (gerandoCobranca || exportando || filtrosAlterados) return;
+    cobrancaRef.current?.abort();
+    const controller = new AbortController(); cobrancaRef.current = controller;
+    const acesso = versaoAcesso.current;
+    setGerandoCobranca(true); setMensagem(null); setMensagemCobranca("");
+    try {
+      const registros = await buscarPendenciasCobranca(supabase, filtros, controller.signal, chamado);
+      if (!montado.current || controller.signal.aborted || acesso !== versaoAcesso.current) return;
+      if (!registros.length) { setMensagem("Não há pendências para cobrar nesta seleção. O chamado pode ter sido regularizado ou dispensado."); return; }
+      const geradoEm = new Date();
+      setCobranca({ registros, mes: filtros.mes, geradoEm, opcoes: { ...opcoesCobranca },
+        texto: montarTextoCobranca(registros, filtros.mes, opcoesCobranca, geradoEm) });
+    } catch (error) {
+      if (!controller.signal.aborted && montado.current && acesso === versaoAcesso.current) {
+        if (typeof error === "object" && error && "code" in error && error.code === "42501") limparAcesso();
+        else setMensagem(erroTexto(error));
+      }
+    } finally {
+      if (montado.current && cobrancaRef.current === controller) setGerandoCobranca(false);
+      controller.abort();
+    }
+  }
+  function atualizarTextoCobranca() {
+    if (!cobranca) return;
+    setCobranca({ ...cobranca, opcoes: { ...opcoesCobranca },
+      texto: montarTextoCobranca(cobranca.registros, cobranca.mes, opcoesCobranca, cobranca.geradoEm) });
+    setMensagemCobranca("Texto atualizado com as opções selecionadas.");
+  }
+  async function copiarCobranca() {
+    if (!cobranca?.texto.trim() || opcoesCobrancaAlteradas) return;
+    try {
+      await navigator.clipboard.writeText(cobranca.texto);
+      if (montado.current) setMensagemCobranca("Lista copiada. Cole no canal escolhido para enviar a cobrança.");
+    } catch {
+      textoCobrancaRef.current?.focus(); textoCobrancaRef.current?.select();
+      setMensagemCobranca("O navegador não liberou a cópia automática. O texto está selecionado: use Ctrl+C ou a opção Copiar do dispositivo.");
+    }
+  }
+
   function mudarAba(nova: Aba) {
     if (exportando || nova === aba) return;
     const novos = { ...filtros, busca: "", situacao: "todos" };
@@ -194,7 +250,7 @@ export default function CentralRelatorios({ contextoInicial }: { contextoInicial
     if (JSON.stringify(novos) === JSON.stringify(filtros) && pagina === 1) void carregar();
     else setFiltros(novos);
   }
-  function fecharModal() { if (!salvandoAcao) { setAcao(null); setDetalhe(null); setHistorico(null); } }
+  function fecharModal() { if (!salvandoAcao) { setAcao(null); setDetalhe(null); setHistorico(null); setCobranca(null); } }
 
   useEffect(() => {
     if (!modalAberto) return;
@@ -202,9 +258,9 @@ export default function CentralRelatorios({ contextoInicial }: { contextoInicial
     const overflow = document.body.style.overflow; document.body.style.overflow = "hidden";
     modalRef.current?.focus();
     const teclado = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !salvandoAcao) { setAcao(null); setDetalhe(null); setHistorico(null); }
+      if (event.key === "Escape" && !salvandoAcao) { setAcao(null); setDetalhe(null); setHistorico(null); setCobranca(null); }
       if (event.key === "Tab") {
-        const el = Array.from(modalRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled),textarea,a[href]") || []);
+        const el = Array.from(modalRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled),textarea,a[href],input:not(:disabled),select:not(:disabled)") || []);
         const primeiro = el[0], ultimo = el[el.length - 1];
         if (!primeiro) { event.preventDefault(); return; }
         if (event.shiftKey && (document.activeElement === primeiro || document.activeElement === modalRef.current)) { event.preventDefault(); ultimo?.focus(); }
@@ -321,7 +377,7 @@ export default function CentralRelatorios({ contextoInicial }: { contextoInicial
   }
 
 
-  if (semAcesso) return <p role="status" className="p-6 text-sm text-slate-400">Conferindo seu acesso…</p>;
+  if (semAcesso || !podeVerCentralRelatorios(contextoInicial.role)) return <p role="status" className="p-6 text-sm text-slate-400">Conferindo seu acesso…</p>;
   const paginas = dados ? Math.max(1, Math.ceil(dados.total / dados.tamanho)) : 1;
   const listaTecnicos = Array.from(new Set([...tecnicos, ...(edicao.tecnico ? [edicao.tecnico] : [])])).sort((a, b) => a.localeCompare(b, "pt-BR"));
   const resumo = dados?.resumo;
@@ -333,14 +389,14 @@ export default function CentralRelatorios({ contextoInicial }: { contextoInicial
       <div className="relative flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
         <div className="min-w-0"><p className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-cyan-300"><span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />SETEC Hub · Fields</p>
           <h1 className="mt-3 text-2xl font-black tracking-tight text-white sm:text-3xl lg:text-4xl">Central de Relatórios</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-slate-400">Equipamentos e redes em um só lugar. Acompanhe entregas, confira pendências e prepare seu backup mensal.</p>
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-slate-400">Equipamentos e redes em um só lugar. Acompanhe entregas após a realização do atendimento, confira pendências e prepare seu backup mensal.</p>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2 xl:max-w-md">
+        {contexto.role !== "dirigente" && <div className="grid gap-2 sm:grid-cols-2 xl:max-w-md">
           <Link prefetch={false} href="/fields/relatorio-tecnico" className={`${botao} justify-between bg-slate-950/60`}><span>Novo relatório de equipamentos</span><Icone nome="seta" /></Link>
           <Link prefetch={false} href="/fields/relatorio-redes" className={`${botao} justify-between bg-slate-950/60`}><span>Novo relatório de redes</span><Icone nome="seta" /></Link>
-        </div>
+        </div>}
       </div>
-      <div className="relative mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-800/80 pt-4 text-xs text-slate-400"><span className="font-semibold text-slate-200">URE Guarulhos Sul</span><span>Acompanhamento desde 09/09/2026</span><span className="rounded-full border border-slate-700/80 px-2.5 py-1 text-slate-300">{contexto.gestao ? "Visão de gestão SETEC" : "Meus relatórios e chamados"}</span></div>
+      <div className="relative mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-800/80 pt-4 text-xs text-slate-400"><span className="font-semibold text-slate-200">URE Guarulhos Sul</span><span>Acompanhamento desde 09/09/2026</span><span className="rounded-full border border-slate-700/80 px-2.5 py-1 text-slate-300">{contexto.role === "dirigente" ? "Visão dirigente · consulta" : "Visão de gestão SETEC"}</span></div>
     </header>
 
     <nav aria-label="Seções da central" className="min-w-0 rounded-2xl border border-slate-800 bg-[#020617] p-2">
@@ -359,7 +415,7 @@ export default function CentralRelatorios({ contextoInicial }: { contextoInicial
       </div>
       {(aba === "relatorios" || aba === "pendencias" || aba === "dispensas") && <div className="mt-3 grid gap-3 sm:grid-cols-[1.5fr_1fr]">
         <label className="min-w-0 space-y-1.5 text-xs font-semibold text-slate-400">Chamado, escola ou técnico<input aria-label="Buscar chamado, escola ou técnico" className={campo} value={edicao.busca} maxLength={200} disabled={exportando} onChange={e => setEdicao(atual => ({ ...atual, busca: e.target.value }))} placeholder="Ex.: STI-26/0000 ou nome da escola" /></label>
-        <label className="min-w-0 space-y-1.5 text-xs font-semibold text-slate-400">Situação<select aria-label="Situação" className={campo} value={edicao.situacao} disabled={exportando} onChange={e => setEdicao(atual => ({ ...atual, situacao: e.target.value }))}><option value="todos">Todas as situações</option>{aba === "relatorios" ? <><option value="finalizado">Finalizados</option><option value="rascunho">Rascunhos</option><option value="ure">Atendimentos na URE</option><option value="sem_vinculo">Conferir vínculo com o chamado</option></> : <><option value="pendente">Sem relatório</option><option value="rascunho">Em rascunho</option><option value="aguardando_aprovacao">Aguardando SETEC</option>{aba === "dispensas" && <><option value="dispensado">Dispensa aprovada</option><option value="entregue">Com relatório</option></>}</>}</select></label>
+        <label className="min-w-0 space-y-1.5 text-xs font-semibold text-slate-400">Situação<select aria-label="Situação" className={campo} value={edicao.situacao} disabled={exportando} onChange={e => setEdicao(atual => ({ ...atual, situacao: e.target.value }))}><option value="todos">Todas as situações</option>{aba === "relatorios" ? <><option value="finalizado">Finalizados</option><option value="rascunho">Rascunhos</option><option value="ure">Atendimentos na URE</option><option value="sem_vinculo">Conferir vínculo com o chamado</option></> : <><option value="pendente">Sem relatório</option><option value="rascunho">Em rascunho</option><option value="aguardando_aprovacao">Aguardando SETEC</option>{aba === "dispensas" && <><option value="dispensado">Todos os dispensados</option><option value="automatica">Dispensa automática · Inventário</option><option value="entregue">Com relatório</option></>}</>}</select></label>
       </div>}
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/80 pt-3">
         <p className="text-xs text-slate-400">{atualizadoEm ? `Última consulta: ${dataBR(atualizadoEm)}` : "Preparando a primeira consulta"}{carregando && <span className="ml-2 text-cyan-300">Atualizando…</span>}</p>
@@ -374,14 +430,14 @@ export default function CentralRelatorios({ contextoInicial }: { contextoInicial
 
       {dados && aba === "painel" && <>
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-          <Indicador titulo="Chamados do período" valor={dados.resumo.chamados} detalhe="Uma exigência por chamado" tom="slate" icone="arquivo" />
+          <Indicador titulo="Chamados realizados" valor={dados.resumo.chamados} detalhe="Somente atendimentos marcados como realizados" tom="slate" icone="arquivo" />
           <Indicador titulo="Com relatório" valor={dados.resumo.entregues} detalhe="Equipamentos ou redes finalizado" tom="emerald" icone="escudo" />
           <Indicador titulo="Pendências" valor={dados.resumo.pendentes} detalhe={`${numero(dados.resumo.aguardando_aprovacao)} aguardando SETEC`} tom="amber" icone="pendencia" />
-          <Indicador titulo="Dispensas SETEC" valor={dados.resumo.dispensados} detalhe="Exceções aprovadas com motivo" tom="blue" icone="escudo" />
+          <Indicador titulo="Dispensas SETEC" valor={dados.resumo.dispensados} detalhe={`${numero(dados.resumo.dispensados_automaticos ?? 0)} automáticas · demais por análise SETEC`} tom="blue" icone="escudo" />
         </div>
         <div className="grid gap-5 xl:grid-cols-[1.35fr_1fr]">
           <section className="min-w-0 rounded-2xl border border-slate-800 bg-[#020617] p-5 sm:p-6">
-            <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-black text-white">Cobertura por técnico</h2><p className="mt-1 text-xs leading-relaxed text-slate-400">Chamados com relatório entre os que exigem relatório. Dispensas aprovadas ficam fora da exigência.</p></div><span className="rounded-xl border border-cyan-400/20 bg-cyan-400/5 px-3 py-2 text-sm font-black text-cyan-300">{cobertura === null ? "Sem exigências" : `${cobertura}% no período`}</span></div>
+            <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-black text-white">Cobertura por técnico</h2><p className="mt-1 text-xs leading-relaxed text-slate-400">Chamados com relatório entre os que exigem relatório. Dispensas manuais e automáticas ficam fora da exigência.</p></div><span className="rounded-xl border border-cyan-400/20 bg-cyan-400/5 px-3 py-2 text-sm font-black text-cyan-300">{cobertura === null ? "Sem exigências" : `${cobertura}% no período`}</span></div>
             <div className="mt-6 space-y-5">{dados.ranking.length ? dados.ranking.map((r, i) => <div key={r.tecnico} className="min-w-0"><div className="flex items-start justify-between gap-3"><div className="flex min-w-0 items-start gap-3"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-800 text-xs font-black text-slate-300">{i + 1}</span><p className="break-words text-sm font-bold text-slate-100">{r.tecnico}</p></div><p className="shrink-0 text-sm font-black tabular-nums text-cyan-300">{r.cobertura === null ? "—" : `${r.cobertura}%`}</p></div><div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-cyan-400" style={{ width: `${Math.max(0, Math.min(100, r.cobertura || 0))}%` }} /></div><p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400"><span>{numero(r.entregues)} com relatório</span><span className={r.pendentes ? "text-amber-300" : ""}>{numero(r.pendentes)} pendentes</span><span>{numero(r.dispensados)} dispensados</span></p></div>) : <Vazio titulo="Sem chamados neste período" texto="Escolha outro mês ou técnico para conferir o acompanhamento." />}</div>
           </section>
           <div className="space-y-5">
@@ -393,7 +449,7 @@ export default function CentralRelatorios({ contextoInicial }: { contextoInicial
       </>}
 
       {dados && (aba === "relatorios" || aba === "pendencias" || aba === "dispensas") && <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-800 bg-[#020617]">
-        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 p-4 sm:p-5"><div><h2 className="text-lg font-black text-white">{aba === "relatorios" ? "Documentos registrados" : aba === "pendencias" ? "Chamados que exigem relatório" : "Análises e dispensas SETEC"}</h2><p className="mt-1 text-xs leading-relaxed text-slate-400">{aba === "pendencias" ? "Rascunhos e solicitações de dispensa permanecem pendentes até a conclusão ou aprovação." : aba === "dispensas" ? "Aprovações, solicitações e revogações com justificativa e histórico." : "Abra os detalhes ou baixe os documentos finalizados."}</p></div><span className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-bold text-slate-300">{numero(dados.total)} registro(s)</span></div>
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 p-4 sm:p-5"><div><h2 className="text-lg font-black text-white">{aba === "relatorios" ? "Documentos registrados" : aba === "pendencias" ? "Chamados que exigem relatório" : "Análises e dispensas SETEC"}</h2><p className="mt-1 text-xs leading-relaxed text-slate-400">{aba === "pendencias" ? "A cobrança começa após o atendimento ser marcado como Realizado. Rascunhos e solicitações de dispensa continuam pendentes até a conclusão ou aprovação." : aba === "dispensas" ? "Dispensas automáticas de inventário e decisões SETEC com justificativa e histórico." : "Abra os detalhes ou baixe os documentos finalizados."}</p></div><div className="flex flex-wrap items-center gap-2">{aba === "pendencias" && <button type="button" className={`${botao} border-cyan-400/25 text-cyan-300`} disabled={carregando || gerandoCobranca || exportando || filtrosAlterados || !dados.total} onClick={() => void prepararCobranca()}><Icone nome="arquivo" />{gerandoCobranca ? "Preparando lista…" : "Gerar cobrança"}</button>}<span className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-bold text-slate-300">{numero(dados.total)} registro(s)</span></div></div>
         <div className="space-y-3 p-3 sm:p-5">
           {!dados.registros.length && <Vazio titulo="Nenhum registro encontrado" texto="Confira o mês, o técnico e os demais filtros selecionados." />}
           {dados.registros.map(registro => {
@@ -402,11 +458,12 @@ export default function CentralRelatorios({ contextoInicial }: { contextoInicial
               return <article key={`${doc.tipo}:${doc.id}`} className="grid min-w-0 gap-4 rounded-2xl border border-slate-800 bg-slate-950/50 p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className={`rounded-lg px-2.5 py-1 text-xs font-bold ${doc.tipo === "redes" ? "bg-blue-500/10 text-blue-300" : "bg-cyan-400/10 text-cyan-300"}`}>{doc.tipo === "redes" ? "Redes" : "Equipamentos"}</span><Tag estado={doc.status} />{doc.local_atendimento === "ure" && <span className="rounded-lg bg-blue-500/10 px-2.5 py-1 text-xs font-bold text-blue-300">URE · Interno</span>}{doc.local_atendimento !== "ure" && !doc.vinculado && <span className="text-xs text-amber-300">Conferir vínculo</span>}</div><h3 className="mt-3 break-words text-sm font-black text-white">{doc.chamado_referencia || (doc.local_atendimento === "ure" ? "Atendimento na URE — sem chamado" : "Referência não preenchida")}</h3><p className="mt-1 break-words text-sm text-slate-300">{doc.escola}</p><div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400"><span>{doc.tecnico}</span><span>{dataBR(doc.data_atendimento)}</span><span>{numero(doc.itens)} {doc.tipo === "redes" ? "componente(s)" : "equipamento(s)"}</span></div></div><div className="flex flex-wrap gap-2"><button type="button" className={botao} disabled={ocupadoId === doc.id} onClick={() => void abrirDetalhe(doc)}>Ver detalhes</button>{doc.status === "finalizado" && <button type="button" className={`${botao} border-cyan-400/20 text-cyan-300`} disabled={ocupadoId === doc.id} onClick={() => void baixarPDF(doc)}><Icone nome="download" />PDF</button>}</div></article>;
             }
             const r = registro as RegistroControle;
-            return <article key={r.chamado} className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/50 p-4"><div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="break-all text-sm font-black text-white">{r.chamado}</h3><Tag estado={r.situacao} /></div><p className="mt-2 break-words text-sm text-slate-200">{r.escola}</p><div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400"><span>{r.tecnico}</span><span>{dataBR(r.data_referencia)}</span><span>Atendimento: {r.status_field || "sem status"}</span></div>{(r.categoria || r.subcategoria) && <p className="mt-2 text-xs text-slate-500">{[r.categoria, r.subcategoria].filter(Boolean).join(" · ")}</p>}<p className="mt-2 text-xs text-slate-400">{r.finalizados} relatório(s) finalizado(s) · {r.rascunhos} rascunho(s)</p>{erroFormatoChamado(r.chamado) && <p className="mt-3 text-xs text-amber-300">Confira o número do chamado: novos relatórios exigem o padrão STI-26/.</p>}</div><div className="flex shrink-0 flex-wrap gap-2">
-              {r.situacao !== "entregue" && r.situacao !== "dispensado" && <button type="button" className={`${botao} border-blue-500/25 text-blue-300`} onClick={() => { setMensagem(null); setJustificativa(r.justificativa || ""); setAcao({ registro: r, acao: contexto.aprovar ? "aprovar" : "solicitar" }); }}><Icone nome="escudo" />{contexto.aprovar ? "Dispensar relatório" : "Solicitar dispensa"}</button>}
-              {contexto.aprovar && r.dispensa_estado === "aprovada" && <button type="button" className={`${botao} text-amber-300`} onClick={() => { setMensagem(null); setJustificativa(""); setAcao({ registro: r, acao: "revogar" }); }}>Revogar dispensa</button>}
-              {contexto.gestao && r.dispensa_estado && <button type="button" className={botao} disabled={ocupadoId === r.chamado} onClick={() => void abrirHistorico(r.chamado)}>Histórico</button>}
-            </div></div>{r.justificativa && <div className="mt-4 rounded-xl border border-blue-500/15 bg-blue-500/5 p-3"><p className="text-xs font-bold text-blue-300">{r.dispensa_estado === "revogada" ? "Motivo da revogação" : "Justificativa"}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-300">{r.justificativa}</p>{r.aprovado_nome && r.dispensa_estado === "aprovada" && <p className="mt-2 text-xs text-slate-400">Aprovado por {r.aprovado_nome} · {dataBR(r.aprovado_em)}</p>}</div>}</article>;
+            return <article key={r.chamado} className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/50 p-4"><div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="break-all text-sm font-black text-white">{r.chamado}</h3><Tag estado={r.dispensa_automatica ? "dispensa_automatica" : r.situacao} /></div><p className="mt-2 break-words text-sm text-slate-200">{r.escola}</p><div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400"><span>{r.tecnico}</span><span>{dataBR(r.data_referencia)}</span><span>Atendimento: {r.status_field || "sem status"}</span></div>{(r.categoria || r.subcategoria) && <p className="mt-2 text-xs text-slate-500">{[r.categoria, r.subcategoria].filter(Boolean).join(" · ")}</p>}<p className="mt-2 text-xs text-slate-400">{r.finalizados} relatório(s) finalizado(s) · {r.rascunhos} rascunho(s)</p>{erroFormatoChamado(r.chamado) && <p className="mt-3 text-xs text-amber-300">Confira o número do chamado: novos relatórios exigem o padrão STI-26/.</p>}</div><div className="flex shrink-0 flex-wrap gap-2">
+              {r.situacao !== "entregue" && r.situacao !== "dispensado" && !r.dispensa_automatica && <button type="button" className={botao} disabled={gerandoCobranca || filtrosAlterados} onClick={() => void prepararCobranca(r.chamado)}>Cobrança do chamado</button>}
+              {contexto.aprovar && !r.dispensa_automatica && r.situacao !== "entregue" && r.situacao !== "dispensado" && <button type="button" className={`${botao} border-blue-500/25 text-blue-300`} onClick={() => { setMensagem(null); setJustificativa(r.justificativa || ""); setAcao({ registro: r, acao: contexto.aprovar ? "aprovar" : "solicitar" }); }}><Icone nome="escudo" />{contexto.aprovar ? "Dispensar relatório" : "Solicitar dispensa"}</button>}
+              {contexto.aprovar && !r.dispensa_automatica && r.dispensa_estado === "aprovada" && <button type="button" className={`${botao} text-amber-300`} onClick={() => { setMensagem(null); setJustificativa(""); setAcao({ registro: r, acao: "revogar" }); }}>Revogar dispensa</button>}
+              {contexto.gestao && !r.dispensa_automatica && r.dispensa_estado && <button type="button" className={botao} disabled={ocupadoId === r.chamado} onClick={() => void abrirHistorico(r.chamado)}>Histórico</button>}
+            </div></div>{r.justificativa && <div className="mt-4 rounded-xl border border-blue-500/15 bg-blue-500/5 p-3"><p className="text-xs font-bold text-blue-300">{r.dispensa_automatica ? "Regra automática · Outros / Inventário" : r.dispensa_estado === "revogada" ? "Motivo da revogação" : "Justificativa"}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-300">{r.justificativa}</p>{r.aprovado_nome && r.dispensa_estado === "aprovada" && <p className="mt-2 text-xs text-slate-400">Aprovado por {r.aprovado_nome} · {dataBR(r.aprovado_em)}</p>}</div>}</article>;
           })}
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 p-4 sm:p-5"><p className="text-xs text-slate-400">Página {dados.pagina} de {paginas} · até 25 registros por página</p><div className="flex gap-2"><button type="button" className={botao} disabled={carregando || pagina <= 1} onClick={() => setPagina(pagina - 1)}>Anterior</button><button type="button" className={botao} disabled={carregando || pagina >= paginas} onClick={() => setPagina(pagina + 1)}>Próxima</button></div></div>
@@ -419,12 +476,42 @@ export default function CentralRelatorios({ contextoInicial }: { contextoInicial
       </section>}
     </section>
 
-    <p className="px-1 text-xs leading-relaxed text-slate-500">Um relatório finalizado de equipamentos ou redes atende à exigência do chamado. A dispensa depende de aprovação SETEC com justificativa.</p>
+    <p className="px-1 text-xs leading-relaxed text-slate-500">Um relatório finalizado de equipamentos ou redes atende à exigência do chamado. Outros / Inventário tem dispensa automática. Demais dispensas dependem de aprovação SETEC com justificativa.</p>
 
     {modalAberto && <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-3 backdrop-blur-sm sm:p-6" onClick={fecharModal}>
       <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="central-modal-titulo" className="flex max-h-[90dvh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-700 bg-[#020617] shadow-2xl outline-none" onClick={event => event.stopPropagation()}>
-        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-800 p-4 sm:p-6"><div className="min-w-0"><p className="text-xs font-bold text-cyan-300">Central de Relatórios</p><h2 id="central-modal-titulo" className="mt-1 text-lg font-black text-white">{acao ? acao.acao === "revogar" ? "Revogar dispensa" : acao.acao === "aprovar" ? "Aprovação SETEC" : "Solicitar dispensa" : detalhe ? "Detalhes do relatório" : "Histórico da dispensa"}</h2></div><button type="button" aria-label="Fechar detalhes" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-700 text-slate-300 hover:text-white disabled:opacity-50" disabled={salvandoAcao} onClick={fecharModal}><Icone nome="fechar" className="h-5 w-5" /></button></div>
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-800 p-4 sm:p-6"><div className="min-w-0"><p className="text-xs font-bold text-cyan-300">Central de Relatórios</p><h2 id="central-modal-titulo" className="mt-1 text-lg font-black text-white">{cobranca ? "Cobrança de relatórios pendentes" : acao ? acao.acao === "revogar" ? "Revogar dispensa" : acao.acao === "aprovar" ? "Aprovação SETEC" : "Solicitar dispensa" : detalhe ? "Detalhes do relatório" : "Histórico da dispensa"}</h2></div><button type="button" aria-label="Fechar detalhes" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-700 text-slate-300 hover:text-white disabled:opacity-50" disabled={salvandoAcao} onClick={fecharModal}><Icone nome="fechar" className="h-5 w-5" /></button></div>
         <div className="min-h-0 overflow-y-auto p-4 sm:p-6">
+          {cobranca && <div className="space-y-5">
+            <div className="rounded-xl border border-cyan-400/20 bg-cyan-400/5 p-4">
+              <p className="text-sm font-black text-cyan-200">{numero(cobranca.registros.length)} chamado(s) pendente(s) · {mesBR(cobranca.mes)}</p>
+              <p className="mt-2 text-xs leading-relaxed text-slate-400">Lista conferida na base com os filtros aplicados. Inclui todas as páginas de atendimentos realizados e exclui relatórios finalizados e chamados dispensados.</p>
+            </div>
+            <fieldset className="space-y-4 rounded-xl border border-slate-800 p-4">
+              <legend className="px-1 text-sm font-bold text-slate-200">Personalizar a cobrança</legend>
+              <label className="block space-y-2 text-xs font-bold text-slate-400">Organizar por
+                <select aria-label="Organizar cobrança" className={campo} value={opcoesCobranca.agruparPor} onChange={e => setOpcoesCobranca(atual => ({ ...atual, agruparPor: e.target.value as OpcoesCobranca["agruparPor"] }))}>
+                  <option value="tecnico">Técnico, com os respectivos chamados</option><option value="chamado">Chamado, identificando o técnico</option>
+                </select>
+              </label>
+              <div className="grid gap-2 sm:grid-cols-2">{([
+                ["escola", "Incluir escola"], ["data", "Incluir data de referência"],
+                ["categoria", "Incluir categoria / subcategoria"], ["situacao", "Incluir situação"],
+              ] as const).map(([chave, label]) => <label key={chave} className="flex min-h-[44px] cursor-pointer items-center gap-3 rounded-xl border border-slate-800 px-3 py-2 text-xs text-slate-300">
+                <input type="checkbox" checked={opcoesCobranca[chave]} onChange={e => setOpcoesCobranca(atual => ({ ...atual, [chave]: e.target.checked }))} className="h-4 w-4 shrink-0 accent-cyan-400" />{label}
+              </label>)}</div>
+              <label className="block space-y-2 text-xs font-bold text-slate-400">Mensagem inicial
+                <textarea aria-label="Mensagem inicial da cobrança" className={`${campo} min-h-24 resize-y`} value={opcoesCobranca.introducao} maxLength={2000} onChange={e => setOpcoesCobranca(atual => ({ ...atual, introducao: e.target.value }))} />
+              </label>
+              <button type="button" className={botao} onClick={atualizarTextoCobranca}><Icone nome="atualizar" />Atualizar texto</button>
+              {opcoesCobrancaAlteradas && <p role="status" className="text-xs text-amber-300">Atualize o texto para aplicar as opções selecionadas antes de copiar.</p>}
+            </fieldset>
+            <label className="block space-y-2 text-sm font-bold text-slate-200">Prévia editável
+              <textarea ref={textoCobrancaRef} aria-label="Texto de cobrança" className={`${campo} min-h-[320px] resize-y font-mono text-sm leading-relaxed`} value={cobranca.texto} onChange={e => { setCobranca({ ...cobranca, texto: e.target.value }); setMensagemCobranca(""); }} />
+            </label>
+            <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-slate-400">Edite o texto livremente antes de copiar.</p><button type="button" className={primario} disabled={!cobranca.texto.trim() || opcoesCobrancaAlteradas} onClick={() => void copiarCobranca()}><Icone nome="arquivo" />Copiar lista</button></div>
+            {mensagemCobranca && <p role="status" className="rounded-xl border border-cyan-400/20 bg-cyan-400/5 p-3 text-sm text-cyan-200">{mensagemCobranca}</p>}
+          </div>}
           {acao && <div className="space-y-4"><div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><p className="break-words text-sm font-black text-cyan-200">{acao.registro.chamado}</p><p className="mt-1 break-words text-sm text-slate-300">{acao.registro.escola}</p></div><p className="text-sm leading-relaxed text-slate-400">{acao.acao === "revogar" ? "O chamado voltará a exigir relatório. Registre o motivo da revisão." : acao.acao === "aprovar" ? "Ao aprovar, a SETEC confirma que este chamado não necessita de relatório. A aprovação retira a pendência e registra o motivo, o responsável e a data." : "O chamado continuará pendente até a aprovação SETEC. Explique o motivo da solicitação."}</p><label className="block text-sm font-bold text-slate-300">Justificativa obrigatória<textarea className={`${campo} mt-2 min-h-36 resize-y`} value={justificativa} disabled={salvandoAcao} maxLength={2000} onChange={event => setJustificativa(event.target.value)} placeholder="Descreva o motivo da decisão." /></label><p className="text-xs text-slate-500">Entre 10 e 2.000 caracteres.</p>{mensagem && <p role="status" className="text-sm text-amber-200">{mensagem}</p>}<button type="button" className={`${primario} w-full`} disabled={salvandoAcao || justificativa.trim().length < 10} onClick={() => void decidirDispensa()}>{salvandoAcao ? "Registrando…" : acao.acao === "aprovar" ? "Aprovar dispensa e retirar pendência" : acao.acao === "revogar" ? "Revogar e restabelecer exigência" : "Enviar solicitação à SETEC"}</button></div>}
           {detalhe && <DetalhesConteudo detalhe={detalhe} />}
           {historico && <div className="space-y-3"><p className="break-words text-sm font-black text-cyan-200">{historicoChamado}</p>{historico.length ? historico.map(h => <article key={h.id} className="rounded-xl border border-slate-800 p-4"><p className="text-sm font-bold text-slate-200">{h.acao === "aprovar" ? "Dispensa aprovada" : h.acao === "revogar" ? "Dispensa revogada" : "Dispensa solicitada"}</p><p className="mt-2 text-xs text-slate-400">{h.usuario_nome} · {dataBR(h.registrado_em)}</p><p className="mt-3 whitespace-pre-wrap break-words text-sm text-slate-300">{h.justificativa}</p></article>) : <Vazio titulo="Sem movimentações" texto="As decisões SETEC aparecerão neste histórico." />}</div>}

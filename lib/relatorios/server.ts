@@ -3,6 +3,7 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import type { ContextoRelatorios } from "./types";
 import { leituraComPrazo } from "./consulta";
+import { podeVerCentralRelatorios } from "./acesso";
 
 export class ErroApiRelatorios extends Error {
   constructor(message: string, public status = 400) { super(message); }
@@ -31,7 +32,7 @@ export async function acessoRelatoriosServidor(somenteLeitura = false) {
   if (resposta.error?.code === "42501") throw new ErroApiRelatorios("Seu perfil não possui acesso aos relatórios.", 403);
   if (resposta.error) throw new ErroApiRelatorios("Não foi possível conferir o acesso à central. Tente novamente.", 503);
   const contexto = resposta.data as ContextoRelatorios | null;
-  if (!contexto?.permitido) throw new ErroApiRelatorios("Seu perfil não possui acesso aos relatórios.", 403);
+  if (!contexto?.permitido || !podeVerCentralRelatorios(contexto.role)) throw new ErroApiRelatorios("Seu perfil não possui acesso à Central de Relatórios.", 403);
   return { supabase, contexto };
 }
 export async function clienteRelatoriosServidor() {

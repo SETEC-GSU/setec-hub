@@ -42,6 +42,7 @@ export type Permission =
   | "gestao.apoiousuario"
   | "calendario.seintec.view"
   | "logins.view"
+  | "fields.central.view"
 
 export const rolePermissions: Record<Role, Permission[]> = {
   admin: [
@@ -86,6 +87,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "gestao.apoiousuario",
     "calendario.seintec.view",
     "logins.view",
+    "fields.central.view",
   ],
   analista: [
     "dashboard.view",
@@ -93,7 +95,6 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "chamados.ure.create",
     "gestaoChamados.view",
     "relatorios.view",
-    "escolas.manage",
     "escolas.view",
     "calendar.view",
     "fields.view",
@@ -105,7 +106,6 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "apoio.usuario",
     "tutoriais.populares",
     "painel.chamados",
-    "avisos.view",
     "toners.view",
     "toners.entrada",
     "toners.saida",
@@ -175,6 +175,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "fields.painel",
     "fields.mapa",
     "calendario.seintec.view",
+    "fields.central.view",
   ],
   seintec: [
     "dashboard.view",
@@ -213,6 +214,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "gestao.saresp",
     "gestao.apoiousuario",
     "calendario.seintec.view",
+    "fields.central.view",
   ],
 }
 

@@ -10,6 +10,9 @@ import {
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase"
+import { classificacaoChamado } from "@/lib/chamados/catalogo"
+import { lerTodasPaginas } from "@/lib/chamados/consulta"
+import FiltrosClassificacao from "@/components/chamados/FiltrosClassificacao"
 
 type Chamado = {
   id: string | number
@@ -17,6 +20,10 @@ type Chamado = {
   titulo?: string | null
   solicitante_nome?: string | null
   categoria?: string | null
+  servico_id?: string | null
+  subcategoria?: string | null
+  origem?: string | null
+  tipo?: string | null
   status?: string | null
   created_at?: string | null
 }
@@ -117,6 +124,8 @@ export default function ChamadosPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [role, setRole] = useState<string | null>(null)
   const [busca, setBusca] = useState("")
+  const [categoriaCatalogo, setCategoriaCatalogo] = useState("")
+  const [assuntoCatalogo, setAssuntoCatalogo] = useState("")
   const [statusFiltro, setStatusFiltro] = useState<StatusFiltro>("todos")
   const [mensagem, setMensagem] = useState<MensagemTela>(null)
 
@@ -147,21 +156,22 @@ export default function ChamadosPage() {
             .select("role")
             .eq("id", session.user.id)
             .maybeSingle(),
-          supabase
+          lerTodasPaginas((inicio, fim, contar) => supabase
             .from("chamados")
-            .select("*")
+            .select("*", { count: contar ? "exact" : undefined })
             .eq("usuario_id", session.user.id)
-            .order("created_at", { ascending: false }),
+            .order("created_at", { ascending: false })
+            .order("id", { ascending: false })
+            .range(inicio, fim)),
         ])
 
         if (usuarioResult.error) {
           console.warn("[Meus Chamados] Não foi possível carregar a role:", usuarioResult.error)
         }
 
-        if (chamadosResult.error) throw chamadosResult.error
 
         setRole(usuarioResult.data?.role ?? null)
-        setChamados((chamadosResult.data || []) as Chamado[])
+        setChamados(chamadosResult as Chamado[])
 
         if (modo === "manual") {
           setMensagem({
@@ -210,7 +220,7 @@ export default function ChamadosPage() {
       ["assumido", "em_atendimento"].includes(normalizarTexto(chamado.status)),
     ).length
     const resolvidos = chamados.filter(
-      (chamado) => normalizarTexto(chamado.status) === "resolvido",
+      (chamado) => ["resolvido", "fechado", "encerrado"].includes(normalizarTexto(chamado.status)),
     ).length
 
     return { total, abertos, emAndamento, resolvidos }
@@ -220,6 +230,10 @@ export default function ChamadosPage() {
     const termo = normalizarTexto(busca)
 
     return chamados.filter((chamado) => {
+      const classificacao = classificacaoChamado(chamado)
+      if (categoriaCatalogo && classificacao.categoria !== categoriaCatalogo) return false
+      if (assuntoCatalogo && classificacao.assunto !== assuntoCatalogo) return false
+
       const matchStatus =
         statusFiltro === "todos" ||
         normalizarTexto(chamado.status) === statusFiltro
@@ -232,6 +246,8 @@ export default function ChamadosPage() {
         chamado.titulo,
         chamado.solicitante_nome,
         chamado.categoria,
+        classificacao.categoria,
+        classificacao.assunto,
         chamado.status,
       ]
         .map(normalizarTexto)
@@ -239,9 +255,9 @@ export default function ChamadosPage() {
 
       return conteudo.includes(termo)
     })
-  }, [busca, chamados, statusFiltro])
+  }, [busca, chamados, statusFiltro, categoriaCatalogo, assuntoCatalogo])
 
-  const filtrosAtivos = Boolean(busca.trim()) || statusFiltro !== "todos"
+  const filtrosAtivos = Boolean(busca.trim()) || statusFiltro !== "todos" || Boolean(categoriaCatalogo || assuntoCatalogo)
 
   const podeAbrirEscola = role === "gestao_escolas" || role === "admin"
 
@@ -258,6 +274,8 @@ export default function ChamadosPage() {
   }
 
   function limparFiltros() {
+    setCategoriaCatalogo("")
+    setAssuntoCatalogo("")
     setBusca("")
     setStatusFiltro("todos")
   }
@@ -382,6 +400,7 @@ export default function ChamadosPage() {
       )}
 
       <section className="rounded-[2rem] border border-slate-800 bg-[#020617] p-4 shadow-xl shadow-slate-950/20 sm:p-5">
+        <FiltrosClassificacao chamados={chamados} categoria={categoriaCatalogo} assunto={assuntoCatalogo} alterar={(c, a) => { setCategoriaCatalogo(c); setAssuntoCatalogo(a) }}/><div className="mt-4" />
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_240px_auto]">
           <div className="relative">
             <span className="pointer-events-none absolute inset-y-0 left-4 flex items-center text-slate-500">
@@ -532,7 +551,7 @@ export default function ChamadosPage() {
 
                       <td className="px-6 py-5">
                         <span className="inline-flex rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-bold text-slate-400">
-                          {textoSeguro(chamado.categoria, "Sem categoria")}
+                          {classificacaoChamado(chamado).categoria + " · " + classificacaoChamado(chamado).assunto}
                         </span>
                       </td>
 
@@ -598,7 +617,7 @@ function MobileChamadoCard({
         />
         <MobileInfo
           label="Categoria"
-          value={textoSeguro(chamado.categoria, "Sem categoria")}
+          value={classificacaoChamado(chamado).categoria + " · " + classificacaoChamado(chamado).assunto}
         />
       </div>
 
