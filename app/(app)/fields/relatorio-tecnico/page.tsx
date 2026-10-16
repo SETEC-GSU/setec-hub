@@ -10,12 +10,18 @@ import {
 } from "react";
 import { createClient } from "@/lib/supabase";
 import SerialBarcodeScanner from "@/components/SerialBarcodeScanner";
+import JanelaRelatorios from "@/components/relatorios/JanelaRelatorios";
 import CampoChamadoField from "@/components/relatorios/CampoChamadoField";
 import CampoLocalAtendimento from "@/components/relatorios/CampoLocalAtendimento";
 import type { LocalAtendimento } from "@/lib/relatorios/types";
 import { leituraComPrazo } from "@/lib/relatorios/consulta";
 import { erroFormatoChamado, validarChamadoNaBase, nomeNormalizado } from "@/lib/relatorios/chamado";
 import { carregarHistoricoCompleto } from "@/lib/relatorios/historico";
+import {
+  copiarTextoComAlternativa,
+  selecionarTextoParaCopia,
+  ORIENTACAO_COPIA_MANUAL,
+} from "@/lib/copiarTexto";
 
 import {
   LIMITE_RETORNO_CHAMADO,
@@ -1419,8 +1425,7 @@ export default function ParecerTecnicoPage() {
     useState<RetornoChamadoModal>(null);
   const [retornoCopiando, setRetornoCopiando] = useState(false);
   const retornoCopiandoRef = useRef(false);
-  const retornoDialogRef = useRef<HTMLDivElement>(null);
-  const retornoAberto = Boolean(retornoChamadoModal);
+  const retornoTextoRef = useRef<HTMLTextAreaElement>(null);
   const versaoRetornoAtual = retornoChamadoModal
     ? retornoChamadoModal.versoes[retornoChamadoModal.modo]
     : null;
@@ -1451,6 +1456,7 @@ export default function ParecerTecnicoPage() {
   const [modelos, setModelos] = useState<EquipamentoModelo[]>([]);
   const [historico, setHistorico] = useState<ParecerHistorico[]>([]);
   const [historicoAberto, setHistoricoAberto] = useState(false);
+  const [equipamentosAberto, setEquipamentosAberto] = useState(false);
   const [carregandoHistorico, setCarregandoHistorico] = useState(false);
   const [historicoCarregado, setHistoricoCarregado] = useState(false);
   const [erroHistorico, setErroHistorico] = useState<string | null>(null);
@@ -1769,7 +1775,7 @@ export default function ParecerTecnicoPage() {
 
   const atualizarHistoricoSilencioso = useCallback(async () => {
     if (!usuario?.auth_user_id || !usuario.email) return;
-    if ((!historicoAberto && !editandoParecerId) || realtimeRefreshInFlightRef.current) return;
+    if ((!historicoAberto && !equipamentosAberto && !editandoParecerId) || realtimeRefreshInFlightRef.current) return;
 
     realtimeRefreshInFlightRef.current = true;
     setCarregandoHistorico(true);
@@ -1792,7 +1798,7 @@ export default function ParecerTecnicoPage() {
       realtimeRefreshInFlightRef.current = false;
       setCarregandoHistorico(false);
     }
-  }, [aplicarHistorico, buscarHistorico, editandoParecerId, historicoAberto, isGestao, usuario]);
+  }, [aplicarHistorico, buscarHistorico, editandoParecerId, historicoAberto, equipamentosAberto, isGestao, usuario]);
 
   const carregar = useCallback(async () => {
     try {
@@ -1873,8 +1879,8 @@ export default function ParecerTecnicoPage() {
   }, [carregar]);
 
   useEffect(() => {
-    if (historicoAberto) void atualizarHistoricoSilencioso();
-  }, [historicoAberto, atualizarHistoricoSilencioso]);
+    if (historicoAberto || (isGestao && equipamentosAberto)) void atualizarHistoricoSilencioso();
+  }, [historicoAberto, equipamentosAberto, isGestao, atualizarHistoricoSilencioso]);
 
   useEffect(() => {
     if (!usuario?.auth_user_id || !usuario.email) return;
@@ -2139,67 +2145,6 @@ export default function ParecerTecnicoPage() {
 
     return () => window.clearTimeout(timer);
   }, [mensagem]);
-
-  useEffect(() => {
-    if (!historicoAberto) return;
-
-    const overflowAnterior = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    const fecharComEsc = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !retornoChamadoModal) {
-        setHistoricoAberto(false);
-      }
-    };
-
-    window.addEventListener("keydown", fecharComEsc);
-
-    return () => {
-      document.body.style.overflow = overflowAnterior;
-      window.removeEventListener("keydown", fecharComEsc);
-    };
-  }, [historicoAberto, retornoChamadoModal]);
-
-  useEffect(() => {
-    if (!retornoAberto) return;
-    const dialog = retornoDialogRef.current;
-    if (!dialog) return;
-    const focoAnterior = document.activeElement as HTMLElement | null;
-    const bloquearRolagem = !historicoAberto;
-    const overflowAnterior = document.body.style.overflow;
-    if (bloquearRolagem) document.body.style.overflow = "hidden";
-    dialog.focus();
-
-    const controlarTeclado = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setRetornoChamadoModal(null);
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const focaveis = Array.from(dialog.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex="0"]',
-      )).filter(elemento => elemento.getClientRects().length > 0);
-      const primeiro = focaveis[0];
-      const ultimo = focaveis[focaveis.length - 1];
-      if (!primeiro || !ultimo) {
-        event.preventDefault();
-        dialog.focus();
-      } else if (event.shiftKey && (document.activeElement === primeiro || document.activeElement === dialog)) {
-        event.preventDefault();
-        ultimo.focus();
-      } else if (!event.shiftKey && (document.activeElement === ultimo || document.activeElement === dialog)) {
-        event.preventDefault();
-        primeiro.focus();
-      }
-    };
-    window.addEventListener("keydown", controlarTeclado);
-    return () => {
-      window.removeEventListener("keydown", controlarTeclado);
-      if (bloquearRolagem) document.body.style.overflow = overflowAnterior;
-      if (focoAnterior?.isConnected) focoAnterior.focus({ preventScroll: true });
-    };
-  }, [retornoAberto, historicoAberto]);
 
   function limparBackupLocal() {
     if (!usuario?.auth_user_id) return;
@@ -3189,23 +3134,8 @@ export default function ParecerTecnicoPage() {
     setRetornoCopiando(true);
 
     try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(texto);
-      } else {
-        const focoAnterior = document.activeElement as HTMLElement | null;
-        const textarea = document.createElement("textarea");
-        textarea.value = texto;
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        (retornoDialogRef.current || document.body).appendChild(textarea);
-        try {
-          textarea.focus();
-          textarea.select();
-          if (!document.execCommand("copy")) throw new Error("Cópia não autorizada pelo navegador.");
-        } finally {
-          textarea.remove();
-          if (focoAnterior?.isConnected) focoAnterior.focus({ preventScroll: true });
-        }
+      if (!(await copiarTextoComAlternativa(texto, retornoTextoRef.current))) {
+        throw new Error("Cópia automática não autorizada pelo navegador.");
       }
 
       setRetornoChamadoModal((atual) => {
@@ -3236,13 +3166,17 @@ export default function ParecerTecnicoPage() {
           ...atual,
           versoes: {
             ...atual.versoes,
-            [modo]: { ...versao, erro: "Não foi possível copiar automaticamente. Selecione o texto e copie manualmente." },
+            [modo]: {
+              ...versao,
+              erro: `Não foi possível copiar automaticamente. ${ORIENTACAO_COPIA_MANUAL}`,
+              copiadas: versao.copiadas.map((valor, index) => index === indice ? false : valor),
+            },
           },
         };
       });
       setMensagem({
         tipo: "error",
-        texto: "Não foi possível copiar automaticamente. Selecione o texto e copie manualmente.",
+        texto: `Não foi possível copiar automaticamente. ${ORIENTACAO_COPIA_MANUAL}`,
       });
     } finally {
       retornoCopiandoRef.current = false;
@@ -3427,7 +3361,7 @@ export default function ParecerTecnicoPage() {
             </p>
           </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
             <button
               type="button"
               onClick={() => setHistoricoAberto(true)}
@@ -3439,6 +3373,12 @@ export default function ParecerTecnicoPage() {
                 {historicoCarregado ? historico.length : "Consultar"}
               </span>
             </button>
+
+            {isGestao && (
+              <button type="button" aria-label="Consultar equipamentos registrados" aria-haspopup="dialog" onClick={() => setEquipamentosAberto(true)} className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-5 text-xs font-black uppercase tracking-widest text-emerald-200 transition hover:border-emerald-400/50 hover:bg-emerald-500/20">
+                <span aria-hidden="true">🖥️</span> Equipamentos registrados
+              </button>
+            )}
 
             <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-cyan-500/25 bg-cyan-500/10 text-xs font-black text-cyan-300">
@@ -4491,74 +4431,23 @@ export default function ParecerTecnicoPage() {
       )}
 
       {historicoAberto && (
-        <div
-          className="fixed inset-0 z-[9998] flex justify-end bg-[#020617]/[0.82] backdrop-blur-sm"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setHistoricoAberto(false);
-            }
-          }}
-        >
-          <aside
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="titulo-historico-relatorios"
-            onMouseDown={(event) => event.stopPropagation()}
-            className="flex h-full w-full max-w-[980px] flex-col border-l border-slate-800 bg-[#020617] shadow-2xl shadow-black/60"
-          >
-            <div className="relative shrink-0 overflow-hidden border-b border-slate-800 p-5 sm:p-6">
-              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.18),transparent_40%)]" />
-
-              <div className="relative z-10 flex items-start justify-between gap-4">
-                <div className="flex min-w-0 items-start gap-4">
-                  <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-blue-500/25 bg-blue-500/10 text-xl sm:flex">
-                    📚
-                  </div>
-
-                  <div className="min-w-0">
-                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-300">
-                      {isGestao ? "Consulta geral" : "Acesso pessoal"}
-                    </p>
-                    <h2
-                      id="titulo-historico-relatorios"
-                      className="mt-1 text-2xl font-black tracking-tight text-white sm:text-3xl"
-                    >
-                      {isGestao ? "Relatórios registrados" : "Meus relatórios"}
-                    </h2>
-                    <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-slate-500">
-                      {isGestao
-                        ? "Consulte relatórios de todos os técnicos, abra o PDF, gere o retorno ou localize rascunhos próprios."
-                        : "Consulte seus relatórios, abra documentos finalizados e retome seus rascunhos sem perder o preenchimento atual."}
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setHistoricoAberto(false)}
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-800 bg-slate-950 text-lg font-black text-slate-400 transition hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-300"
-                  aria-label="Fechar relatórios"
-                >
-                  ×
-                </button>
+        <JanelaRelatorios tituloId="titulo-historico-relatorios" onFechar={() => setHistoricoAberto(false)}>
+          <header className="relative shrink-0 border-b border-slate-800 bg-slate-950/80 p-4 sm:px-6 sm:py-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-300">{isGestao ? "Consulta geral" : "Acesso pessoal"}</p>
+                <h2 id="titulo-historico-relatorios" className="mt-1 text-xl font-black tracking-tight text-white sm:text-2xl">{isGestao ? "Relatórios registrados" : "Meus relatórios"}</h2>
+                <p className="mt-1 text-xs font-medium leading-relaxed text-slate-400">PDF, retorno e rascunhos em uma consulta rápida.</p>
               </div>
-
-              <div className="relative z-10 mt-5 grid grid-cols-3 gap-2 sm:max-w-md">
-                <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
-                  <p className="text-lg font-black text-white">{historicoCarregado ? resumoHistorico.total : "—"}</p>
-                  <p className="text-[8px] font-black uppercase tracking-widest text-slate-600">Total</p>
-                </div>
-                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] px-3 py-2">
-                  <p className="text-lg font-black text-emerald-300">{historicoCarregado ? resumoHistorico.finalizados : "—"}</p>
-                  <p className="text-[8px] font-black uppercase tracking-widest text-emerald-500/70">Finalizados</p>
-                </div>
-                <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/[0.06] px-3 py-2">
-                  <p className="text-lg font-black text-yellow-300">{historicoCarregado ? resumoHistorico.rascunhos : "—"}</p>
-                  <p className="text-[8px] font-black uppercase tracking-widest text-yellow-500/70">Rascunhos</p>
-                </div>
-              </div>
+              <button type="button" onClick={() => setHistoricoAberto(false)} aria-label="Fechar relatórios" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-xl font-black text-slate-300 transition hover:border-blue-500/40 hover:bg-blue-500/10 hover:text-white">×</button>
             </div>
-
+          </header>
+          <div data-modal-scroll className="custom-scrollbar min-h-0 flex-1 overflow-y-auto">
+            <div className="grid grid-cols-3 gap-2 px-4 pt-4 sm:px-5">
+              <GestaoStat label="Relatórios" value={historicoCarregado ? resumoHistorico.total : "—"} />
+              <GestaoStat label="Finalizados" value={historicoCarregado ? resumoHistorico.finalizados : "—"} tone="emerald" />
+              <GestaoStat label="Rascunhos" value={historicoCarregado ? resumoHistorico.rascunhos : "—"} tone="yellow" />
+            </div>
             <div className="shrink-0 border-b border-slate-800 bg-slate-950/[0.55] p-4 sm:p-5">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
                 <label className="relative block">
@@ -4567,6 +4456,7 @@ export default function ParecerTecnicoPage() {
                   </span>
                   <input
                     type="text"
+                    aria-label="Buscar relatórios de equipamentos"
                     value={buscaHistorico}
                     onChange={(event) => setBuscaHistorico(event.target.value)}
                     placeholder="Buscar escola, técnico, chamado ou resumo..."
@@ -4575,6 +4465,7 @@ export default function ParecerTecnicoPage() {
                 </label>
 
                 <select
+                  aria-label="Filtrar status dos relatórios de equipamentos"
                   value={statusHistorico}
                   onChange={(event) =>
                     setStatusHistorico(
@@ -4609,32 +4500,13 @@ export default function ParecerTecnicoPage() {
               </div>
             </div>
 
-            <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-4 sm:p-5 lg:p-6">
+            <div className="p-4 sm:p-5">
               <div className="mb-4 space-y-3">
                 {carregandoHistorico && <p role="status" className="rounded-xl border border-blue-500/25 bg-blue-500/10 p-3 text-sm text-blue-200">Consultando relatórios… Você pode fechar esta janela e continuar o preenchimento.</p>}
                 {erroHistorico && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{erroHistorico}</p>}
                 <button type="button" disabled={carregandoHistorico} onClick={() => void atualizarHistoricoSilencioso()} className="min-h-[44px] rounded-xl border border-slate-700 px-4 py-2 text-xs font-bold text-slate-200 disabled:opacity-50">Atualizar histórico</button>
               </div>
-      {isGestao && historicoCarregado && (
-        <DashboardGestao
-          dados={dashboardGestao}
-          onDeleteItem={excluirEquipamentoGestao}
-          deletingItemId={deletandoItemId}
-          periodoPreset={periodoPreset}
-          periodoInicio={periodoInicio}
-          periodoFim={periodoFim}
-          periodoDescricao={periodoDescricao}
-          onPeriodoPresetChange={alterarPeriodoPreset}
-          onPeriodoInicioChange={(value) => {
-            setPeriodoPreset("personalizado");
-            setPeriodoInicio(value);
-          }}
-          onPeriodoFimChange={(value) => {
-            setPeriodoPreset("personalizado");
-            setPeriodoFim(value);
-          }}
-        />
-      )}
+
 
               {!historicoCarregado ? null : historico.length === 0 ? (
                 <div className="flex min-h-[360px] flex-col items-center justify-center rounded-[1.75rem] border border-dashed border-slate-800 bg-slate-950/40 p-8 text-center">
@@ -4660,7 +4532,7 @@ export default function ParecerTecnicoPage() {
                   </button>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div data-historico-lista className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   {historicoFiltrado.map((parecer) => {
                     const podeEditar =
                       parecer.status === "rascunho" &&
@@ -4755,7 +4627,7 @@ export default function ParecerTecnicoPage() {
                 </div>
               )}
             </div>
-
+          </div>
             <div className="shrink-0 border-t border-slate-800 bg-slate-950/80 p-4 sm:p-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-xs font-medium text-slate-600">
@@ -4770,8 +4642,54 @@ export default function ParecerTecnicoPage() {
                 </button>
               </div>
             </div>
-          </aside>
-        </div>
+        </JanelaRelatorios>
+      )}
+
+      {isGestao && equipamentosAberto && (
+        <JanelaRelatorios tamanho="gestao" tituloId="titulo-equipamentos-registrados" onFechar={() => { if (!deletandoItemId) setEquipamentosAberto(false); }}>
+          <header className="relative shrink-0 border-b border-slate-800 bg-slate-950/80 p-4 sm:px-6 sm:py-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-300">{"Gestão de equipamentos"}</p>
+                <h2 id="titulo-equipamentos-registrados" className="mt-1 text-xl font-black tracking-tight text-white sm:text-2xl">Equipamentos registrados</h2>
+                <p className="mt-1 text-xs font-medium leading-relaxed text-slate-400">Consulte itens, filtre por escola e técnico ou acompanhe os indicadores.</p>
+              </div>
+              <button type="button" onClick={() => { if (!deletandoItemId) setEquipamentosAberto(false); }} aria-label="Fechar equipamentos registrados" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-xl font-black text-slate-300 transition hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-white">×</button>
+            </div>
+          </header>
+          <div data-modal-scroll className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs font-bold text-emerald-300">Acesso SEINTEC / Admin</p>
+              <button type="button" disabled={carregandoHistorico || Boolean(deletandoItemId)} onClick={() => void atualizarHistoricoSilencioso()} className="min-h-[44px] rounded-xl border border-slate-700 px-4 py-2 text-xs font-bold text-slate-200 disabled:opacity-50">Atualizar equipamentos</button>
+            </div>
+            {carregandoHistorico && <p role="status" className="mb-4 rounded-xl border border-blue-500/25 bg-blue-500/10 p-3 text-sm text-blue-200">Consultando equipamentos…</p>}
+            {erroHistorico && <p role="alert" className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{erroHistorico}</p>}
+            {mensagem && <p role={mensagem.tipo === "error" ? "alert" : "status"} className={`mb-4 rounded-xl border p-3 text-sm ${mensagem.tipo === "error" ? "border-red-500/30 bg-red-500/10 text-red-200" : "border-emerald-500/25 bg-emerald-500/10 text-emerald-200"}`}>{mensagem.texto}</p>}
+      {isGestao && historicoCarregado && (
+        <DashboardGestao
+          dados={dashboardGestao}
+          onDeleteItem={excluirEquipamentoGestao}
+          deletingItemId={deletandoItemId}
+          periodoPreset={periodoPreset}
+          periodoInicio={periodoInicio}
+          periodoFim={periodoFim}
+          periodoDescricao={periodoDescricao}
+          onPeriodoPresetChange={alterarPeriodoPreset}
+          onPeriodoInicioChange={(value) => {
+            setPeriodoPreset("personalizado");
+            setPeriodoInicio(value);
+          }}
+          onPeriodoFimChange={(value) => {
+            setPeriodoPreset("personalizado");
+            setPeriodoFim(value);
+          }}
+        />
+      )}
+          </div>
+          <footer className="shrink-0 border-t border-slate-800 bg-slate-950/80 p-4 sm:px-6">
+            <button type="button" disabled={Boolean(deletandoItemId)} onClick={() => setEquipamentosAberto(false)} className="min-h-[44px] w-full rounded-xl border border-slate-700 bg-slate-900 px-5 text-xs font-black text-slate-200 transition hover:bg-slate-800 disabled:opacity-50 sm:w-auto">Voltar ao relatório</button>
+          </footer>
+        </JanelaRelatorios>
       )}
 
       {splashValidacao && (
@@ -4863,23 +4781,7 @@ export default function ParecerTecnicoPage() {
       )}
 
       {retornoChamadoModal && versaoRetornoAtual && (
-        <div
-          className="fixed inset-0 z-[10001] flex items-center justify-center bg-[#020617]/95 p-4 backdrop-blur-md"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setRetornoChamadoModal(null);
-            }
-          }}
-        >
-          <div
-            ref={retornoDialogRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="retorno-chamado-titulo"
-            aria-describedby="retorno-chamado-descricao"
-            tabIndex={-1}
-            className="flex max-h-[92dvh] w-full max-w-4xl flex-col overflow-hidden rounded-[2rem] border border-blue-500/30 bg-[#020617] shadow-2xl shadow-blue-950/30 outline-none"
-          >
+        <JanelaRelatorios tamanho="retorno" tituloId="retorno-chamado-titulo" descricaoId="retorno-chamado-descricao" onFechar={() => setRetornoChamadoModal(null)}>
             <div className="relative shrink-0 overflow-hidden border-b border-slate-800 p-5 sm:p-7">
               <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(59,130,246,0.18),transparent_38%)]" />
 
@@ -4907,7 +4809,7 @@ export default function ParecerTecnicoPage() {
               </div>
             </div>
 
-            <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-5 sm:p-7">
+            <div data-modal-scroll className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-5 sm:p-7">
               <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
                 <div className="col-span-2 sm:col-span-1">
                   <InfoBox
@@ -5022,16 +4924,20 @@ export default function ParecerTecnicoPage() {
                   Texto do retorno{versaoRetornoAtual.textos.length > 1 ? ` — parte ${versaoRetornoAtual.indice + 1}/${versaoRetornoAtual.textos.length}` : ""}
                 </span>
                 <textarea
+                  ref={retornoTextoRef}
                   aria-label="Texto do retorno"
-                  aria-describedby="retorno-contagem"
+                  aria-describedby="retorno-contagem retorno-copia-ajuda"
                   spellCheck={false}
                   value={textoRetornoAtual}
-                  disabled={retornoCopiando}
+                  readOnly={retornoCopiando}
                   onChange={(event) => editarTextoRetornoChamado(event.target.value)}
                   rows={14}
                   className="custom-scrollbar w-full resize-y rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-4 text-sm font-medium leading-relaxed text-slate-200 outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500/40"
                 />
               </label>
+              <p id="retorno-copia-ajuda" className="mt-3 text-xs leading-relaxed text-slate-400">
+                {ORIENTACAO_COPIA_MANUAL}
+              </p>
               {versaoRetornoAtual.copiadas[versaoRetornoAtual.indice] && (
                 <p role="status" className="mt-3 text-sm font-bold text-emerald-300">
                   {versaoRetornoAtual.textos.length > 1 ? `Parte ${versaoRetornoAtual.indice + 1}/${versaoRetornoAtual.textos.length} copiada.` : "Texto copiado."} Cole no chamado antes de continuar.
@@ -5040,7 +4946,7 @@ export default function ParecerTecnicoPage() {
             </div>
 
             <div className="shrink-0 border-t border-slate-800 bg-slate-950 p-4 sm:p-5">
-              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:flex-wrap sm:justify-end">
                 <button
                   type="button"
                   onClick={() => setRetornoChamadoModal(null)}
@@ -5059,6 +4965,15 @@ export default function ParecerTecnicoPage() {
 
                 <button
                   type="button"
+                  onClick={() => selecionarTextoParaCopia(retornoTextoRef.current)}
+                  disabled={retornoCopiando || !textoRetornoAtual.trim()}
+                  className="rounded-2xl border border-slate-700 bg-slate-900 px-6 py-3 text-xs font-black uppercase tracking-widest text-slate-300 transition hover:bg-slate-800 disabled:opacity-40"
+                >
+                  Selecionar texto
+                </button>
+
+                <button
+                  type="button"
                   onClick={copiarRetornoChamado}
                   disabled={retornoCopiando || retornoAcimaDoLimite || !textoRetornoAtual.trim()}
                   className="rounded-2xl bg-blue-600 px-6 py-3 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
@@ -5067,8 +4982,7 @@ export default function ParecerTecnicoPage() {
                 </button>
               </div>
             </div>
-          </div>
-        </div>
+        </JanelaRelatorios>
       )}
 
       {pdfPronto && (
@@ -5152,7 +5066,6 @@ function DashboardGestao({
   onPeriodoInicioChange: (value: string) => void;
   onPeriodoFimChange: (value: string) => void;
 }) {
-  const [aberto, setAberto] = useState(false);
   const [visualizacao, setVisualizacao] = useState<"lista" | "dashboard">(
     "lista",
   );
@@ -5237,38 +5150,7 @@ function DashboardGestao({
   return (
     <section className="overflow-hidden rounded-[1.75rem] border border-emerald-500/20 bg-[#020617] shadow-xl shadow-emerald-950/10">
       <div className="p-5 md:p-6">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
-          <div className="min-w-0">
-            <div className="mb-2 inline-flex rounded-full border border-emerald-500/25 bg-emerald-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-emerald-300">
-              SEINTEC / Admin
-            </div>
-
-            <h2 className="text-xl font-black tracking-tight text-white md:text-2xl">
-              Central de equipamentos registrados
-            </h2>
-
-            <p className="mt-1 max-w-3xl text-sm font-medium leading-relaxed text-slate-500">
-              A relação completa fica recolhida para manter a página limpa. Abra
-              quando precisar consultar, filtrar, excluir ou analisar os
-              indicadores.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setAberto((current) => !current)}
-            className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 px-5 text-xs font-black uppercase tracking-widest text-emerald-300 transition hover:bg-emerald-500 hover:text-emerald-950"
-          >
-            {aberto ? "Ocultar central" : "Abrir relação e indicadores"}
-            <span
-              className={`text-base transition ${aberto ? "rotate-180" : ""}`}
-            >
-              ↓
-            </span>
-          </button>
-        </div>
-
-        <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+        <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-300">
@@ -5352,7 +5234,6 @@ function DashboardGestao({
         </div>
       </div>
 
-      {aberto && (
         <div className="border-t border-slate-800 bg-slate-950/35 p-4 md:p-6">
           <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex rounded-2xl border border-slate-800 bg-[#020617] p-1">
@@ -5393,6 +5274,7 @@ function DashboardGestao({
               <div className="rounded-2xl border border-slate-800 bg-[#020617] p-4">
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <select
+                    aria-label="Filtrar equipamentos por técnico"
                     value={filtroTecnico}
                     onChange={(event) => setFiltroTecnico(event.target.value)}
                     className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm font-semibold text-slate-200 outline-none transition focus:border-emerald-500"
@@ -5406,6 +5288,7 @@ function DashboardGestao({
                   </select>
 
                   <select
+                    aria-label="Filtrar por tipo de equipamento"
                     value={filtroEquipamento}
                     onChange={(event) =>
                       setFiltroEquipamento(event.target.value)
@@ -5421,6 +5304,7 @@ function DashboardGestao({
                   </select>
 
                   <select
+                    aria-label="Filtrar equipamentos por escola"
                     value={filtroEscola}
                     onChange={(event) => setFiltroEscola(event.target.value)}
                     className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm font-semibold text-slate-200 outline-none transition focus:border-emerald-500"
@@ -5435,6 +5319,7 @@ function DashboardGestao({
 
                   <div className="relative">
                     <input
+                      aria-label="Buscar número de série"
                       value={buscaSerial}
                       onChange={(event) => setBuscaSerial(event.target.value)}
                       placeholder="Pesquisar por serial..."
@@ -5459,7 +5344,7 @@ function DashboardGestao({
                 )}
               </div>
 
-              <div className="max-h-[680px] overflow-y-auto rounded-2xl border border-slate-800 bg-[#020617] p-2 custom-scrollbar">
+              <div className="rounded-2xl border border-slate-800 bg-[#020617] p-2 custom-scrollbar">
                 {itensFiltrados.length === 0 ? (
                   <EmptyMini message="Nenhum equipamento corresponde aos filtros aplicados." />
                 ) : (
@@ -5695,7 +5580,6 @@ function DashboardGestao({
             </div>
           )}
         </div>
-      )}
     </section>
   );
 }

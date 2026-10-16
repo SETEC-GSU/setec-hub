@@ -10,12 +10,18 @@ import {
   type ReactNode,
 } from "react"
 import { createClient } from "@/lib/supabase"
+import JanelaRelatorios from "@/components/relatorios/JanelaRelatorios"
 import CampoChamadoField from "@/components/relatorios/CampoChamadoField";
 import CampoLocalAtendimento from "@/components/relatorios/CampoLocalAtendimento";
 import type { LocalAtendimento } from "@/lib/relatorios/types";
 import { leituraComPrazo } from "@/lib/relatorios/consulta";
 import { erroFormatoChamado, validarChamadoNaBase, nomeNormalizado } from "@/lib/relatorios/chamado";
 import { carregarHistoricoCompleto } from "@/lib/relatorios/historico";
+import {
+  copiarTextoComAlternativa,
+  selecionarTextoParaCopia,
+  ORIENTACAO_COPIA_MANUAL,
+} from "@/lib/copiarTexto";
 
 
 type UsuarioPerfil = {
@@ -900,9 +906,41 @@ export default function RelatorioTecnicoRedesPage() {
   const [retornoModal, setRetornoModal] = useState<{
     relatorio: RelatorioRedeHistorico
     texto: string
+    avisoCopia?: { tipo: "success" | "info"; texto: string }
   } | null>(null)
+  const [retornoCopiando, setRetornoCopiando] = useState(false)
+  const retornoCopiandoRef = useRef(false)
+  const retornoTextoRef = useRef<HTMLTextAreaElement>(null)
   const [relatorioFinalizadoModal, setRelatorioFinalizadoModal] =
     useState<RelatorioRedeHistorico | null>(null)
+
+  async function copiarRetorno() {
+    if (!retornoModal?.texto.trim() || retornoCopiandoRef.current) return
+    const relatorioId = retornoModal.relatorio.id
+    const texto = retornoModal.texto
+    retornoCopiandoRef.current = true
+    setRetornoCopiando(true)
+
+    try {
+      if (!(await copiarTextoComAlternativa(texto, retornoTextoRef.current))) {
+        throw new Error("Cópia automática não autorizada pelo navegador.")
+      }
+      setRetornoModal((atual) => atual?.relatorio.id === relatorioId && atual.texto === texto
+        ? { ...atual, avisoCopia: { tipo: "success", texto: "Retorno copiado. Cole no chamado antes de continuar." } }
+        : atual)
+      setMensagem({ tipo: "success", texto: "Retorno copiado." })
+    } catch (error) {
+      console.warn("Não foi possível copiar o retorno de redes:", error)
+      const aviso = `Não foi possível copiar automaticamente. ${ORIENTACAO_COPIA_MANUAL}`
+      setRetornoModal((atual) => atual?.relatorio.id === relatorioId && atual.texto === texto
+        ? { ...atual, avisoCopia: { tipo: "info", texto: aviso } }
+        : atual)
+      setMensagem({ tipo: "info", texto: aviso })
+    } finally {
+      retornoCopiandoRef.current = false
+      setRetornoCopiando(false)
+    }
+  }
 
   const [editandoId, setEditandoId] = useState<string | null>(null)
   const [localAtendimento, setLocalAtendimento] = useState<LocalAtendimento>("escola")
@@ -2507,39 +2545,19 @@ export default function RelatorioTecnicoRedesPage() {
       )}
 
       {historicoAberto && (
-        <div className="fixed inset-0 z-[9998] flex justify-end bg-[#020617]/80 backdrop-blur-sm">
-          <button
-            type="button"
-            className="absolute inset-0 cursor-default"
-            onClick={() => setHistoricoAberto(false)}
-            aria-label="Fechar histórico"
-          />
-          <aside className="relative z-10 flex h-full w-full max-w-5xl flex-col border-l border-slate-800 bg-[#020617] shadow-2xl shadow-black/60">
-            <div className="border-b border-slate-800 p-5 sm:p-6">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-400">
-                    Consulta geral
-                  </p>
-                  <h2 className="mt-1 text-2xl font-black text-white">
-                    Relatórios de redes registrados
-                  </h2>
-                  <p className="mt-1 text-sm font-medium text-slate-500">
-                    {isGestao
-                      ? "Visão de todos os técnicos."
-                      : "Seus rascunhos e relatórios finalizados."}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setHistoricoAberto(false)}
-                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-800 bg-slate-900 text-lg font-black text-slate-500 hover:text-white"
-                >
-                  ×
-                </button>
+        <JanelaRelatorios tituloId="titulo-historico-redes" onFechar={() => setHistoricoAberto(false)}>
+          <header className="relative shrink-0 border-b border-slate-800 bg-slate-950/80 p-4 sm:px-6 sm:py-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-300">{isGestao ? "Consulta geral" : "Acesso pessoal"}</p>
+                <h2 id="titulo-historico-redes" className="mt-1 text-xl font-black tracking-tight text-white sm:text-2xl">Relatórios de redes</h2>
+                <p className="mt-1 text-xs font-medium leading-relaxed text-slate-400">Localize relatórios, abra o PDF, gere o retorno ou continue seus rascunhos.</p>
               </div>
-
-              <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-5">
+              <button type="button" onClick={() => setHistoricoAberto(false)} aria-label="Fechar relatórios de redes" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-xl font-black text-slate-300 transition hover:border-blue-500/40 hover:bg-blue-500/10 hover:text-white">×</button>
+            </div>
+          </header>
+          <div data-modal-scroll className="custom-scrollbar min-h-0 flex-1 overflow-y-auto">
+              <div className="grid grid-cols-2 gap-2 px-4 pt-4 sm:grid-cols-5 sm:px-5">
                 <DrawerMetric label="Total" value={totais.total} />
                 <DrawerMetric label="Finalizados" value={totais.finalizados} />
                 <DrawerMetric label="Rascunhos" value={totais.rascunhos} />
@@ -2547,10 +2565,11 @@ export default function RelatorioTecnicoRedesPage() {
                 <DrawerMetric label="Infraestrutura" value={totais.infra} />
               </div>
 
-              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_220px]">
+              <div className="grid grid-cols-1 gap-3 border-b border-slate-800 p-4 sm:grid-cols-[minmax(0,1fr)_220px] sm:p-5">
                 <div className="relative">
                   <SearchIcon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-600" />
                   <input
+                    aria-label="Buscar relatórios de redes"
                     value={buscaHistorico}
                     onChange={(event) => setBuscaHistorico(event.target.value)}
                     placeholder="Buscar escola, chamado, técnico ou categoria..."
@@ -2558,6 +2577,7 @@ export default function RelatorioTecnicoRedesPage() {
                   />
                 </div>
                 <select
+                  aria-label="Filtrar status dos relatórios de redes"
                   value={statusHistorico}
                   onChange={(event) =>
                     setStatusHistorico(
@@ -2571,15 +2591,13 @@ export default function RelatorioTecnicoRedesPage() {
                   <option value="rascunho">Rascunhos</option>
                 </select>
               </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+            <div className="p-4 sm:p-5">
               <div className="mb-4 space-y-3">
                 {carregandoHistorico && <p role="status" className="rounded-xl border border-blue-500/25 bg-blue-500/10 p-3 text-sm text-blue-200">Consultando relatórios… Você pode fechar esta janela e continuar o preenchimento.</p>}
                 {erroHistorico && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{erroHistorico}</p>}
                 <button type="button" disabled={carregandoHistorico} onClick={() => void carregarHistorico()} className="min-h-[44px] rounded-xl border border-slate-700 px-4 py-2 text-xs font-bold text-slate-200 disabled:opacity-50">Atualizar histórico</button>
               </div>
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div data-historico-lista className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 {historicoFiltrado.map((relatorio) => (
                   <article
                     key={relatorio.id}
@@ -2667,34 +2685,50 @@ export default function RelatorioTecnicoRedesPage() {
                 </div>
               )}
             </div>
-          </aside>
-        </div>
+          </div>
+          <footer className="flex shrink-0 flex-col gap-3 border-t border-slate-800 bg-slate-950/80 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+            <p className="text-xs font-medium text-slate-500">O preenchimento permanece preservado enquanto você consulta seus relatórios.</p>
+            <button type="button" onClick={() => setHistoricoAberto(false)} className="min-h-[44px] shrink-0 rounded-xl border border-slate-700 bg-slate-900 px-5 text-xs font-black text-slate-200 transition hover:bg-slate-800">Voltar ao relatório</button>
+          </footer>
+        </JanelaRelatorios>
       )}
 
       {retornoModal && (
-        <ModalOverlay onClose={() => setRetornoModal(null)}>
-          <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-[2rem] border border-blue-500/25 bg-[#020617] shadow-2xl">
+        <JanelaRelatorios tamanho="compacto" tituloId="retorno-redes-titulo" onFechar={() => setRetornoModal(null)}>
             <div className="border-b border-slate-800 p-5 sm:p-6">
               <p className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-400">
                 Retorno padronizado
               </p>
-              <h2 className="mt-1 text-2xl font-black text-white">
+              <h2 id="retorno-redes-titulo" className="mt-1 text-2xl font-black text-white">
                 {retornoModal.relatorio.escola_nome}
               </h2>
             </div>
-            <div className="flex-1 overflow-y-auto p-5 sm:p-6">
+            <div data-modal-scroll className="min-h-0 flex-1 overflow-y-auto p-5 sm:p-6">
               <textarea
+                ref={retornoTextoRef}
+                aria-label="Texto do retorno de redes"
+                aria-describedby="retorno-redes-copia-ajuda"
                 value={retornoModal.texto}
+                readOnly={retornoCopiando}
                 onChange={(event) =>
                   setRetornoModal({
                     ...retornoModal,
                     texto: event.target.value,
+                    avisoCopia: undefined,
                   })
                 }
                 className="min-h-[420px] w-full resize-y rounded-2xl border border-slate-700 bg-slate-950 p-4 text-sm font-medium leading-relaxed text-slate-200 outline-none"
               />
+              <p id="retorno-redes-copia-ajuda" className="mt-3 text-xs leading-relaxed text-slate-400">
+                {ORIENTACAO_COPIA_MANUAL}
+              </p>
+              {retornoModal.avisoCopia && (
+                <p role="status" className={`mt-3 rounded-xl border p-3 text-sm leading-relaxed ${retornoModal.avisoCopia.tipo === "success" ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-200" : "border-amber-500/25 bg-amber-500/10 text-amber-200"}`}>
+                  {retornoModal.avisoCopia.texto}
+                </p>
+              )}
             </div>
-            <div className="flex gap-3 border-t border-slate-800 p-5 sm:p-6">
+            <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-800 p-5 sm:flex-row sm:flex-wrap sm:p-6">
               <button
                 type="button"
                 onClick={() => setRetornoModal(null)}
@@ -2704,18 +2738,23 @@ export default function RelatorioTecnicoRedesPage() {
               </button>
               <button
                 type="button"
-                onClick={async () => {
-                  await navigator.clipboard.writeText(retornoModal.texto)
-                  setMensagem({ tipo: "success", texto: "Retorno copiado." })
-                }}
-                className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-xs font-black uppercase tracking-widest text-white hover:bg-blue-500"
+                onClick={() => selecionarTextoParaCopia(retornoTextoRef.current)}
+                disabled={retornoCopiando || !retornoModal.texto.trim()}
+                className="h-11 rounded-xl border border-slate-700 bg-slate-900 px-5 text-xs font-black text-slate-300 transition hover:bg-slate-800 disabled:opacity-40"
+              >
+                Selecionar texto
+              </button>
+              <button
+                type="button"
+                onClick={copiarRetorno}
+                disabled={retornoCopiando || !retornoModal.texto.trim()}
+                className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-xs font-black uppercase tracking-widest text-white hover:bg-blue-500 disabled:opacity-40"
               >
                 <CopyIcon className="h-4 w-4" />
-                Copiar retorno
+                {retornoCopiando ? "Copiando..." : "Copiar retorno"}
               </button>
             </div>
-          </div>
-        </ModalOverlay>
+        </JanelaRelatorios>
       )}
     </div>
   )
