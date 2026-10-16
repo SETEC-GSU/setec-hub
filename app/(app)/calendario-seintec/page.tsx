@@ -2,6 +2,7 @@
 
 import {
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -9,6 +10,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react"
+import { createPortal } from "react-dom"
 import { createClient } from "@/lib/supabase"
 
 const SETORES = [
@@ -31,14 +33,17 @@ const SETORES = [
 ] as const
 
 type Setor = (typeof SETORES)[number]
-type Tipo = "evento" | "compromisso" | "demanda"
+type TipoBase = "evento" | "compromisso" | "demanda"
+type CategoriaEvento = "reuniao" | "aniversario"
+type Tipo = TipoBase | CategoriaEvento
 type Status =
   "planejado" | "confirmado" | "em_andamento" | "concluido" | "cancelado"
 type Aba = "calendario" | "demandas" | "equipamentos" | "reservas"
 type Atividade = {
   id: string
   titulo: string
-  tipo: Tipo
+  tipo: TipoBase
+  categoria?: CategoriaEvento | null
   setor: Setor
   descricao: string
   local: string
@@ -103,23 +108,44 @@ type Icone =
   | "filter"
   | "warning"
 
-const TIPOS: Record<Tipo, { nome: string; cor: string; ponto: string }> = {
+const TIPOS: Record<Tipo, { nome: string; plural: string; cor: string; ponto: string }> = {
   evento: {
     nome: "Evento",
+    plural: "Eventos",
     cor: "border-cyan-500/30 bg-cyan-500/10 text-cyan-300",
     ponto: "bg-cyan-400",
   },
   compromisso: {
     nome: "Compromisso",
+    plural: "Compromissos",
     cor: "border-blue-500/30 bg-blue-500/10 text-blue-300",
     ponto: "bg-blue-400",
   },
+  reuniao: {
+    nome: "Reunião",
+    plural: "Reuniões",
+    cor: "border-violet-500/30 bg-violet-500/10 text-violet-300",
+    ponto: "bg-violet-400",
+  },
+  aniversario: {
+    nome: "Aniversário",
+    plural: "Aniversários",
+    cor: "border-pink-500/30 bg-pink-500/10 text-pink-300",
+    ponto: "bg-pink-400",
+  },
   demanda: {
     nome: "Demanda",
+    plural: "Demandas",
     cor: "border-amber-500/30 bg-amber-500/10 text-amber-300",
     ponto: "bg-amber-400",
   },
 }
+function tipoDaAtividade(a: Atividade): Tipo {
+  return a.tipo === "evento" && (a.categoria === "reuniao" || a.categoria === "aniversario")
+    ? a.categoria
+    : a.tipo
+}
+
 const STATUS: Record<Status, { nome: string; cor: string }> = {
   planejado: {
     nome: "Planejado",
@@ -181,16 +207,12 @@ function erroTexto(erro: unknown) {
           "Não foi possível concluir. Tente novamente.",
       )
 }
-function hojeSP() {
-  return new Date().toLocaleDateString("en-CA", {
-    timeZone: "America/Sao_Paulo",
-  })
-}
-function diaSP(iso: string) {
-  return new Date(iso).toLocaleDateString("en-CA", {
-    timeZone: "America/Sao_Paulo",
-  })
-}
+const FORMATADOR_DIA_SP = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" })
+const FORMATADOR_HORA_SP = new Intl.DateTimeFormat("pt-BR", {
+  timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit",
+})
+function hojeSP() { return FORMATADOR_DIA_SP.format(new Date()) }
+function diaSP(iso: string) { return FORMATADOR_DIA_SP.format(new Date(iso)) }
 function dataUTC(dia: string) {
   return new Date(`${dia}T12:00:00Z`)
 }
@@ -225,11 +247,7 @@ function formatarMes(mes: string) {
   })
 }
 function horaSP(iso: string) {
-  return new Date(iso).toLocaleTimeString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
+  return FORMATADOR_HORA_SP.format(new Date(iso))
 }
 function inputSP(iso: string) {
   const partes = new Intl.DateTimeFormat("sv-SE", {
@@ -268,7 +286,7 @@ function atrasada(a: Atividade) {
   )
 }
 
-async function colecao<T>(cliente: Cliente, tabela: string): Promise<T[]> {
+async function colecao<T>(cliente: Cliente, tabela: string, signal: AbortSignal): Promise<T[]> {
   const registros: T[] = []
   let inicio = 0
   let total: number | null = null
@@ -279,6 +297,7 @@ async function colecao<T>(cliente: Cliente, tabela: string): Promise<T[]> {
       .order("created_at", { ascending: false })
       .order("id", { ascending: true })
       .range(inicio, inicio + 499)
+      .abortSignal(signal)
     if (error) throw error
     if (inicio === 0) total = count
     const pagina = (data || []) as T[]
@@ -307,6 +326,7 @@ function useDisponibilidade(
   const [loading, setLoading] = useState(true)
   useEffect(() => {
     let vigente = true
+    const controller = new AbortController()
     setLoading(true)
     setErro("")
     setDados([])
@@ -320,7 +340,7 @@ function useDisponibilidade(
           p_inicio: inicio,
           p_fim: fim,
           p_ignorar: ignorar,
-        })
+        }).abortSignal(controller.signal)
         if (error) throw error
         if (vigente) setDados((data || []) as Disponivel[])
       } catch (e) {
@@ -332,6 +352,7 @@ function useDisponibilidade(
     return () => {
       vigente = false
       window.clearTimeout(timer)
+      controller.abort()
     }
   }, [cliente, inicio, fim, ignorar, atualizar])
   return { dados, erro, loading }
@@ -526,7 +547,7 @@ function Modal({
     ref.current?.querySelector<HTMLElement>("button")?.focus()
     return () => {
       document.body.style.overflow = overflow
-      anterior?.focus()
+      anterior?.focus({ preventScroll: true })
     }
   }, [])
   useEffect(() => {
@@ -552,19 +573,15 @@ function Modal({
     document.addEventListener("keydown", tecla)
     return () => document.removeEventListener("keydown", tecla)
   }, [ocupado])
-  return (
-    <div
-      className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/80 p-0 backdrop-blur-sm sm:items-center sm:p-5"
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !ocupado) fechar()
-      }}
-    >
+  if (typeof document === "undefined") return null
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex max-h-[100dvh] items-end justify-center bg-slate-950/90 p-0 sm:items-center sm:p-5 sm:backdrop-blur-sm">
       <div
         ref={ref}
         role="dialog"
         aria-modal="true"
         aria-labelledby="seintec-modal-titulo"
-        className={`flex max-h-[94dvh] w-full min-w-0 flex-col rounded-t-3xl border border-slate-700 bg-[#080f20] shadow-2xl sm:max-h-[90dvh] sm:rounded-3xl ${largo ? "sm:max-w-3xl" : "sm:max-w-xl"}`}
+        className={`flex max-h-[96dvh] w-full min-w-0 flex-col rounded-t-3xl border border-slate-700 bg-[#080f20] shadow-2xl sm:max-h-[90dvh] sm:rounded-3xl ${largo ? "sm:max-w-3xl" : "sm:max-w-xl"}`}
       >
         <header className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-800 px-5 py-4 sm:px-6">
           <div className="min-w-0">
@@ -585,16 +602,17 @@ function Modal({
             aria-label="Fechar janela"
             onClick={fechar}
             disabled={ocupado}
-            className={`${SECUNDARIO} !h-11 !w-11 !px-0`}
+            className={`${SECUNDARIO} !h-11 !w-11 !shrink-0 !px-0`}
           >
             <Icon nome="close" />
           </button>
         </header>
-        <div className="min-h-0 overflow-y-auto overscroll-contain p-5 sm:p-6">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-6">
           {children}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -603,11 +621,13 @@ function CartaoAtividade({
   reservas,
   abrir,
   compacto = false,
+  aguardandoDevolucao = false,
 }: {
   atividade: Atividade
   reservas: number
   abrir: () => void
   compacto?: boolean
+  aguardandoDevolucao?: boolean
 }) {
   return (
     <button
@@ -616,7 +636,7 @@ function CartaoAtividade({
       className="group w-full min-w-0 rounded-2xl border border-slate-800 bg-slate-900/40 p-4 text-left transition hover:border-slate-600 hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Tag cor={TIPOS[a.tipo].cor}>{TIPOS[a.tipo].nome}</Tag>
+        <Tag cor={TIPOS[tipoDaAtividade(a)].cor}>{TIPOS[tipoDaAtividade(a)].nome}</Tag>
         <span className="text-[11px] font-semibold tracking-wide text-slate-500">
           {a.setor}
         </span>
@@ -647,8 +667,8 @@ function CartaoAtividade({
           <Tag cor="border-red-500/30 bg-red-500/10 text-red-300">Crítica</Tag>
         )}
         {atrasada(a) && (
-          <Tag cor="border-red-500/30 bg-red-500/10 text-red-300">
-            Prazo vencido
+          <Tag cor={aguardandoDevolucao ? STATUS.planejado.cor : STATUS.cancelado.cor}>
+            {aguardandoDevolucao ? "Aguardando devolução" : "Prazo vencido"}
           </Tag>
         )}
         {reservas > 0 && (
@@ -669,15 +689,24 @@ export default function CalendarioSeintecPage() {
   const [equipamentos, setEquipamentos] = useState<Equipamento[]>([])
   const [reservas, setReservas] = useState<Reserva[]>([])
   const [loading, setLoading] = useState(true)
+  const [pronto, setPronto] = useState(false)
   const [erro, setErro] = useState("")
   const [aviso, setAviso] = useState("")
+  const [erroAutomacao, setErroAutomacao] = useState("")
   const [revisao, setRevisao] = useState(0)
   const carregamento = useRef(0)
+  const consultaAtiva = useRef<AbortController | null>(null)
+  const ultimaCarga = useRef(0)
+  const carregando = useRef(false)
+  const focoDia = useRef<HTMLDivElement>(null)
+  const [limiteAgenda, setLimiteAgenda] = useState(60)
+  const [limiteDia, setLimiteDia] = useState(12)
   const [aba, setAba] = useState<Aba>("calendario")
   const [vista, setVista] = useState<"mes" | "agenda">("mes")
   const [mes, setMes] = useState(() => hojeSP().slice(0, 7))
   const [dia, setDia] = useState(hojeSP)
   const [busca, setBusca] = useState("")
+  const buscaAdiada = useDeferredValue(busca)
   const [setor, setSetor] = useState("Todos")
   const [tipo, setTipo] = useState("Todos")
   const [status, setStatus] = useState("Todos")
@@ -706,13 +735,17 @@ export default function CalendarioSeintecPage() {
 
   const carregar = useCallback(async () => {
     const pedido = ++carregamento.current
+    consultaAtiva.current?.abort()
+    const controller = new AbortController()
+    consultaAtiva.current = controller
+    carregando.current = true
     setLoading(true)
     setErro("")
     try {
       const { data: auth, error: authError } = await cliente.auth.getUser()
       if (authError || !auth.user)
         throw new Error("Sua sessão expirou. Entre novamente no Hub.")
-      const { data, error } = await cliente.rpc("seintec_contexto")
+      const { data, error } = await cliente.rpc("seintec_contexto").abortSignal(controller.signal)
       if (error)
         throw new Error(
           "Não foi possível abrir o calendário. Peça à administração para conferir a configuração.",
@@ -726,26 +759,36 @@ export default function CalendarioSeintecPage() {
         setReservas([])
         return
       }
+      const { error: erroSync } = await cliente.rpc("seintec_sincronizar_calendario").abortSignal(controller.signal)
+      if (pedido !== carregamento.current) return
+      if (erroSync?.code === "42501") throw erroSync
+      setErroAutomacao(erroSync ? "Não foi possível sincronizar a conclusão automática. Atualize para tentar novamente; se persistir, confira o SQL 008 do calendário." : "")
       const [a, e, r] = await Promise.all([
-        colecao<Atividade>(cliente, "seintec_atividades"),
-        colecao<Equipamento>(cliente, "seintec_equipamentos"),
-        colecao<Reserva>(cliente, "seintec_reservas"),
+        colecao<Atividade>(cliente, "seintec_atividades", controller.signal),
+        colecao<Equipamento>(cliente, "seintec_equipamentos", controller.signal),
+        colecao<Reserva>(cliente, "seintec_reservas", controller.signal),
       ])
       if (pedido !== carregamento.current) return
       setAtividades(a)
       setEquipamentos(e)
       setReservas(r)
       setRevisao((x) => x + 1)
+      setPronto(true)
+      ultimaCarga.current = Date.now()
     } catch (e) {
       if (pedido === carregamento.current) setErro(erroTexto(e))
     } finally {
-      if (pedido === carregamento.current) setLoading(false)
+      if (pedido === carregamento.current) {
+        setLoading(false)
+        carregando.current = false
+      }
     }
   }, [cliente])
   useEffect(() => {
     void carregar()
     return () => {
       carregamento.current++
+      consultaAtiva.current?.abort()
     }
   }, [carregar])
   useEffect(() => {
@@ -776,40 +819,86 @@ export default function CalendarioSeintecPage() {
     () => new Map(atividades.map((a) => [a.id, a])),
     [atividades],
   )
-  const quantidadeReserva = useCallback(
-    (id: string) =>
-      reservas
-        .filter((r) => r.atividade_id === id && r.estado !== "devolvido")
-        .reduce((s, r) => s + r.quantidade, 0),
-    [reservas],
-  )
+  const resumoReservas = useMemo(() => {
+    const quantidades = new Map<string, number>()
+    const retiradas = new Set<string>()
+    for (const r of reservas) {
+      if (r.estado !== "devolvido") quantidades.set(r.atividade_id, (quantidades.get(r.atividade_id) || 0) + r.quantidade)
+      if (r.estado === "retirado") retiradas.add(r.atividade_id)
+    }
+    return { quantidades, retiradas }
+  }, [reservas])
+  const quantidadeReserva = useCallback((id: string) => resumoReservas.quantidades.get(id) || 0, [resumoReservas])
+  const indiceAtividades = useMemo(() => new Map(atividades.map((a) => [a.id, {
+    inicio: diaSP(a.inicio), fim: fimDiaAtividade(a),
+    termo: normalizar(`${a.titulo} ${a.responsavel} ${a.local} ${a.descricao}`),
+  }])), [atividades])
+  const diasVisiveis = useMemo(() => diasDoMes(mes), [mes])
+
+  useEffect(() => {
+    if (!contexto?.ler) return
+    const conferir = (retorno = false) => {
+      if (document.visibilityState !== "visible" || carregando.current || formulario || formEquipamento || movimento) return
+      const decorrido = Date.now() - ultimaCarga.current
+      if (decorrido < 15000) return
+      const vencida = atividades.some((a) => a.tipo !== "demanda" && !ENCERRADOS.includes(a.status)
+        && new Date(a.fim).getTime() <= Date.now() && !resumoReservas.retiradas.has(a.id))
+      if (vencida || decorrido >= (retorno ? 30000 : 300000)) void carregar()
+    }
+    const voltar = () => conferir(true)
+    const timer = window.setInterval(() => conferir(), 60000)
+    window.addEventListener("focus", voltar)
+    document.addEventListener("visibilitychange", voltar)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener("focus", voltar)
+      document.removeEventListener("visibilitychange", voltar)
+    }
+  }, [contexto?.ler, atividades, resumoReservas, formulario, formEquipamento, movimento, carregar])
+  useEffect(() => setLimiteAgenda(60), [mes, buscaAdiada, setor, status, tipo])
+  useEffect(() => setLimiteDia(12), [dia, buscaAdiada, setor, status, tipo])
   const filtradas = useMemo(() => {
-    const termo = normalizar(busca)
+    const termo = normalizar(buscaAdiada)
     return atividades
       .filter(
         (a) =>
           (!termo ||
-            normalizar(
-              `${a.titulo} ${a.responsavel} ${a.local} ${a.descricao}`,
-            ).includes(termo)) &&
+            indiceAtividades.get(a.id)!.termo.includes(termo)) &&
           (setor === "Todos" || a.setor === setor) &&
           (status === "Todos" || a.status === status) &&
-          (aba === "demandas" || tipo === "Todos" || a.tipo === tipo),
+          (aba === "demandas" || tipo === "Todos" || tipoDaAtividade(a) === tipo),
       )
       .sort(
         (a, b) =>
           a.inicio.localeCompare(b.inicio) ||
           a.titulo.localeCompare(b.titulo, "pt-BR"),
       )
-  }, [atividades, busca, setor, status, tipo, aba])
+  }, [atividades, buscaAdiada, setor, status, tipo, aba, indiceAtividades])
   const itensMes = useMemo(
-    () => filtradas.filter((a) => ocorreNoMes(a, mes)),
-    [filtradas, mes],
+    () => filtradas.filter((a) => {
+      const d = indiceAtividades.get(a.id)!
+      return d.inicio < `${mudarMes(mes, 1)}-01` && d.fim >= `${mes}-01`
+    }),
+    [filtradas, mes, indiceAtividades],
   )
   const itensDia = useMemo(
-    () => filtradas.filter((a) => ocorreNoDia(a, dia)),
-    [filtradas, dia],
+    () => filtradas.filter((a) => {
+      const d = indiceAtividades.get(a.id)!
+      return d.inicio <= dia && d.fim >= dia
+    }),
+    [filtradas, dia, indiceAtividades],
   )
+  const atividadesPorDia = useMemo(() => {
+    const mapa = new Map<string, Atividade[]>(diasVisiveis.map((d) => [d, []]))
+    const primeiro = diasVisiveis[0], ultimo = diasVisiveis[diasVisiveis.length - 1]
+    for (const a of filtradas) {
+      const datas = indiceAtividades.get(a.id)!
+      const inicio = datas.inicio < primeiro ? primeiro : datas.inicio
+      const fim = datas.fim > ultimo ? ultimo : datas.fim
+      for (let d = inicio; d <= fim; d = somarDias(d, 1)) mapa.get(d)?.push(a)
+    }
+    return mapa
+  }, [filtradas, diasVisiveis, indiceAtividades])
   const demandas = useMemo(
     () => filtradas.filter((a) => a.tipo === "demanda"),
     [filtradas],
@@ -851,16 +940,21 @@ export default function CalendarioSeintecPage() {
   const selecionada = detalhe ? mapaAtividades.get(detalhe) : undefined
   const gruposAgenda = useMemo(() => {
     const grupos = new Map<string, Atividade[]>()
-    itensMes.forEach((a) => {
+    itensMes.slice(0, limiteAgenda).forEach((a) => {
       const data = diaSP(a.inicio) < `${mes}-01` ? `${mes}-01` : diaSP(a.inicio)
       grupos.set(data, [...(grupos.get(data) || []), a])
     })
     return [...grupos].sort(([a], [b]) => a.localeCompare(b))
-  }, [itensMes, mes])
-  function escolherDia(valor: string) {
+  }, [itensMes, mes, limiteAgenda])
+  function escolherDia(valor: string, rolar = false) {
     setDia(valor)
     setConsultaInicio(`${valor}T00:00`)
     setConsultaFim(`${somarDias(valor, 1)}T00:00`)
+    if (rolar && window.matchMedia("(max-width: 767px)").matches) {
+      window.requestAnimationFrame(() => focoDia.current?.scrollIntoView({
+        block: "start", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      }))
+    }
   }
   function navegarMes(delta: number) {
     const novo = mudarMes(mes, delta)
@@ -909,7 +1003,7 @@ export default function CalendarioSeintecPage() {
     setMovimento({ reserva, acao })
   }
 
-  if (loading && !contexto)
+  if (loading && (!contexto || !pronto))
     return (
       <div className="flex min-h-[55vh] flex-col items-center justify-center gap-4 text-slate-400">
         <span className="h-10 w-10 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
@@ -942,7 +1036,7 @@ export default function CalendarioSeintecPage() {
       <header className="relative overflow-hidden rounded-3xl border border-slate-700/70 bg-[#0a1223] p-5 sm:p-7">
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute -right-10 -top-24 h-72 w-72 rounded-full bg-cyan-500/10 blur-3xl"
+          className="pointer-events-none absolute -right-10 -top-24 hidden h-72 w-72 rounded-full bg-cyan-500/10 blur-3xl sm:block"
         />
         <div className="relative flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
           <div className="min-w-0">
@@ -955,11 +1049,11 @@ export default function CalendarioSeintecPage() {
               Calendário SEINTEC / SETEC
             </h1>
             <p className="mt-2 max-w-xl text-sm leading-relaxed text-slate-400">
-              Eventos, compromissos e demandas, com os equipamentos certos no
+              Eventos, reuniões, aniversários e demandas, com os equipamentos certos no
               momento certo.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap">
             <button
               type="button"
               onClick={() => void carregar()}
@@ -977,6 +1071,7 @@ export default function CalendarioSeintecPage() {
               <button
                 type="button"
                 className={PRIMARIO}
+                disabled={loading || !pronto}
                 onClick={() =>
                   setFormulario({
                     tipo: aba === "demandas" ? "demanda" : "evento",
@@ -1001,6 +1096,7 @@ export default function CalendarioSeintecPage() {
             "Os dados anteriores continuam visíveis; atualize antes de editar."}
         </div>
       )}
+      {erroAutomacao && <div role="alert" className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">{erroAutomacao}</div>}
       {aviso && (
         <div
           role="status"
@@ -1067,7 +1163,7 @@ export default function CalendarioSeintecPage() {
 
       <nav
         aria-label="Áreas do calendário"
-        className="grid grid-cols-4 gap-1 rounded-2xl border border-slate-800 bg-[#080e1d] p-1.5 sm:flex sm:gap-2"
+        className="grid grid-cols-2 gap-1.5 rounded-2xl border border-slate-800 bg-[#080e1d] p-1.5 sm:flex sm:flex-wrap sm:gap-2"
       >
         {(
           [
@@ -1085,7 +1181,7 @@ export default function CalendarioSeintecPage() {
               setAba(t.id)
               limpar()
             }}
-            className={`flex min-h-[52px] min-w-0 flex-col items-center justify-center gap-1.5 rounded-xl px-1 py-2 text-[10px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 sm:min-h-[44px] sm:flex-row sm:gap-2 sm:px-5 sm:text-sm ${aba === t.id ? "bg-slate-800 text-cyan-300 shadow-sm" : "text-slate-400 hover:bg-slate-900 hover:text-white"}`}
+            className={`flex min-h-[48px] min-w-0 flex-row items-center justify-center gap-2 rounded-xl px-1 py-2 text-[10px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 sm:min-h-[44px] sm:flex-row sm:gap-2 sm:px-5 sm:text-sm ${aba === t.id ? "bg-slate-800 text-cyan-300 shadow-sm" : "text-slate-400 hover:bg-slate-900 hover:text-white"}`}
           >
             <Icon nome={t.icon} className="h-4 w-4" />
             <span>{t.nome}</span>
@@ -1196,28 +1292,28 @@ export default function CalendarioSeintecPage() {
         <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
           <Painel className="overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 p-4 sm:p-5">
-              <div className="flex min-w-0 items-center gap-2">
+              <div className="grid w-full min-w-0 grid-cols-[44px_minmax(0,1fr)_44px] items-center gap-2 sm:flex sm:w-auto">
                 <button
                   type="button"
                   aria-label="Mês anterior"
-                  className={`${SECUNDARIO} !h-11 !w-11 !px-0`}
+                  className={`${SECUNDARIO} !h-11 !w-11 !shrink-0 !px-0`}
                   onClick={() => navegarMes(-1)}
                 >
                   <Icon nome="chevron" className="h-4 w-4 rotate-180" />
                 </button>
-                <h2 className="min-w-0 text-base font-semibold text-white first-letter:uppercase sm:text-lg">
+                <h2 className="min-w-0 text-center text-base font-semibold text-white first-letter:uppercase sm:text-lg">
                   {formatarMes(mes)}
                 </h2>
                 <button
                   type="button"
                   aria-label="Próximo mês"
-                  className={`${SECUNDARIO} !h-11 !w-11 !px-0`}
+                  className={`${SECUNDARIO} !h-11 !w-11 !shrink-0 !px-0`}
                   onClick={() => navegarMes(1)}
                 >
                   <Icon nome="chevron" className="h-4 w-4" />
                 </button>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex w-full flex-wrap items-center justify-between gap-2 sm:w-auto sm:justify-start">
                 <button
                   type="button"
                   className={SECUNDARIO}
@@ -1243,14 +1339,14 @@ export default function CalendarioSeintecPage() {
                 </div>
               </div>
             </div>
-            <div className="flex flex-wrap gap-4 px-4 py-3 text-[11px] text-slate-400">
+            <div className="grid grid-cols-2 gap-x-3 gap-y-2 px-4 py-3 text-[11px] text-slate-400 sm:flex sm:flex-wrap sm:gap-4">
               {Object.entries(TIPOS).map(([key, t]) => (
                 <span key={key} className="inline-flex items-center gap-1.5">
                   <span className={`h-1.5 w-1.5 rounded-full ${t.ponto}`} />
-                  {t.nome}s
+                  {t.plural}
                 </span>
               ))}
-              <span className="ml-auto text-slate-500">
+              <span className="col-span-2 text-slate-500 sm:ml-auto">
                 Horário de Brasília
               </span>
             </div>
@@ -1269,8 +1365,8 @@ export default function CalendarioSeintecPage() {
                   )}
                 </div>
                 <div className="grid grid-cols-7">
-                  {diasDoMes(mes).map((d) => {
-                    const lista = filtradas.filter((a) => ocorreNoDia(a, d))
+                  {diasVisiveis.map((d) => {
+                    const lista = atividadesPorDia.get(d) || []
                     const selecionado = d === dia
                     const hoje = d === hojeSP()
                     const outroMes = !d.startsWith(mes)
@@ -1281,10 +1377,10 @@ export default function CalendarioSeintecPage() {
                       >
                         <button
                           type="button"
-                          onClick={() => escolherDia(d)}
+                          onClick={() => escolherDia(d, true)}
                           aria-label={`${formatarDia(d, true)} de ${d.slice(0, 4)}, ${lista.length} registro(s)`}
                           aria-pressed={selecionado}
-                          className="flex min-h-[38px] w-full items-center justify-center rounded-lg text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 sm:justify-start"
+                          className="flex min-h-[44px] w-full items-center justify-center rounded-lg text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 sm:justify-start"
                         >
                           <span
                             className={`flex h-7 w-7 items-center justify-center rounded-full font-semibold ${hoje ? "bg-cyan-400 text-slate-950" : selecionado ? "text-cyan-300" : "text-slate-400"}`}
@@ -1296,7 +1392,7 @@ export default function CalendarioSeintecPage() {
                           {lista.slice(0, 3).map((a) => (
                             <span
                               key={a.id}
-                              className={`h-1 w-1 rounded-full ${TIPOS[a.tipo].ponto}`}
+                              className={`h-1 w-1 rounded-full ${TIPOS[tipoDaAtividade(a)].ponto}`}
                             />
                           ))}
                           {lista.length > 3 && (
@@ -1312,10 +1408,10 @@ export default function CalendarioSeintecPage() {
                               type="button"
                               title={a.titulo}
                               onClick={() => setDetalhe(a.id)}
-                              className={`flex w-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md border px-1.5 py-1.5 text-left text-[10px] font-medium ${TIPOS[a.tipo].cor} ${ENCERRADOS.includes(a.status) ? "opacity-50" : ""}`}
+                              className={`flex w-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md border px-1.5 py-1.5 text-left text-[10px] font-medium ${TIPOS[tipoDaAtividade(a)].cor} ${ENCERRADOS.includes(a.status) ? "opacity-50" : ""}`}
                             >
                               <span
-                                className={`h-1 w-1 shrink-0 rounded-full ${TIPOS[a.tipo].ponto}`}
+                                className={`h-1 w-1 shrink-0 rounded-full ${TIPOS[tipoDaAtividade(a)].ponto}`}
                               />
                               <span className="truncate">{a.titulo}</span>
                             </button>
@@ -1323,7 +1419,7 @@ export default function CalendarioSeintecPage() {
                           {lista.length > 2 && (
                             <button
                               type="button"
-                              onClick={() => escolherDia(d)}
+                              onClick={() => escolherDia(d, true)}
                               className="min-h-6 text-[10px] text-slate-500"
                             >
                               +{lista.length - 2} registros
@@ -1346,7 +1442,7 @@ export default function CalendarioSeintecPage() {
                         >
                           {Number(data.slice(-2))}
                         </span>
-                        <h3 className="text-sm font-semibold capitalize text-slate-300">
+                        <h3 className="text-sm font-semibold first-letter:uppercase text-slate-300">
                           {formatarDia(data, true)}
                         </h3>
                         <span className="ml-auto text-xs text-slate-500">
@@ -1359,6 +1455,7 @@ export default function CalendarioSeintecPage() {
                             key={a.id}
                             atividade={a}
                             reservas={quantidadeReserva(a.id)}
+                            aguardandoDevolucao={resumoReservas.retiradas.has(a.id)}
                             abrir={() => setDetalhe(a.id)}
                           />
                         ))}
@@ -1383,16 +1480,21 @@ export default function CalendarioSeintecPage() {
                     }
                   />
                 )}
+                {itensMes.length > limiteAgenda && (
+                  <button type="button" className={`${SECUNDARIO} w-full`} onClick={() => setLimiteAgenda((n) => n + 60)}>
+                    Carregar mais registros · {Math.min(limiteAgenda, itensMes.length)} de {itensMes.length}
+                  </button>
+                )}
               </div>
             )}
           </Painel>
-          <div className="space-y-5">
+          <div ref={focoDia} className="scroll-mt-24 space-y-5">
             <Painel>
               <div className="border-b border-slate-800 p-5">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-cyan-300">
                   Em foco
                 </p>
-                <h2 className="mt-2 text-lg font-semibold capitalize text-white">
+                <h2 className="mt-2 text-lg font-semibold first-letter:uppercase text-white">
                   {formatarDia(dia, true)}
                 </h2>
                 <p className="mt-1 text-xs text-slate-500">
@@ -1401,11 +1503,12 @@ export default function CalendarioSeintecPage() {
               </div>
               <div className="space-y-3 p-4">
                 {itensDia.length ? (
-                  itensDia.map((a) => (
+                  itensDia.slice(0, limiteDia).map((a) => (
                     <CartaoAtividade
                       key={a.id}
                       atividade={a}
                       reservas={quantidadeReserva(a.id)}
+                            aguardandoDevolucao={resumoReservas.retiradas.has(a.id)}
                       abrir={() => setDetalhe(a.id)}
                     />
                   ))
@@ -1414,6 +1517,11 @@ export default function CalendarioSeintecPage() {
                     titulo="Dia sem compromissos"
                     texto="Escolha outro dia ou cadastre um novo registro."
                   />
+                )}
+                {itensDia.length > limiteDia && (
+                  <button type="button" className={`${SECUNDARIO} w-full`} onClick={() => setLimiteDia((n) => n + 12)}>
+                    Ver mais neste dia · {Math.min(limiteDia, itensDia.length)} de {itensDia.length}
+                  </button>
                 )}
                 {contexto.editar && (
                   <button
@@ -1544,6 +1652,7 @@ export default function CalendarioSeintecPage() {
                           key={a.id}
                           atividade={a}
                           reservas={quantidadeReserva(a.id)}
+                            aguardandoDevolucao={resumoReservas.retiradas.has(a.id)}
                           abrir={() => setDetalhe(a.id)}
                           compacto
                         />
@@ -1641,7 +1750,7 @@ export default function CalendarioSeintecPage() {
                       {contexto.editar && (
                         <button
                           type="button"
-                          className={`${SECUNDARIO} !h-11 !w-11 !px-0`}
+                          className={`${SECUNDARIO} !h-11 !w-11 !shrink-0 !px-0`}
                           aria-label={`Editar ${e.nome}`}
                           onClick={() => setFormEquipamento(e)}
                         >
@@ -1877,7 +1986,7 @@ export default function CalendarioSeintecPage() {
           fechar={() => setDetalhe(null)}
           abrirEdicao={() => {
             setDetalhe(null)
-            setFormulario({ atividade: selecionada, tipo: selecionada.tipo })
+            setFormulario({ atividade: selecionada, tipo: tipoDaAtividade(selecionada) })
           }}
           movimentar={abrirMovimento}
         />
@@ -1978,7 +2087,7 @@ function FormularioAtividade({
     return { inicio: inicioPadrao, fim: fimPadrao }
   })
   const [titulo, setTitulo] = useState(registro?.titulo || "")
-  const [tipo, setTipo] = useState<Tipo>(registro?.tipo || tipoInicial)
+  const [tipo, setTipo] = useState<Tipo>(registro ? tipoDaAtividade(registro) : tipoInicial)
   const [setor, setSetor] = useState<Setor>(registro?.setor || "SETEC")
   const [responsavel, setResponsavel] = useState(registro?.responsavel || nome)
   const [local, setLocal] = useState(registro?.local || "")
@@ -2028,7 +2137,8 @@ function FormularioAtividade({
     fimEfetivo,
     registro?.id || null,
   )
-  const ativos = equipamentos.filter((e) => e.ativo)
+  const ativos = useMemo(() => equipamentos.filter((e) => e.ativo), [equipamentos])
+  const saldos = useMemo(() => new Map(disp.dados.map((e) => [e.id, e])), [disp.dados])
   const encerrado = ENCERRADOS.includes(status)
   function selecionar(equipamento_id: string, ligado: boolean) {
     setSelecoes((prev) =>
@@ -2085,7 +2195,8 @@ function FormularioAtividade({
           id,
           versao: registro?.versao ?? null,
           titulo: titulo.trim(),
-          tipo,
+          tipo: tipo === "reuniao" || tipo === "aniversario" ? "evento" : tipo,
+          categoria: tipo === "reuniao" || tipo === "aniversario" ? tipo : null,
           setor,
           responsavel: responsavel.trim(),
           local: local.trim(),
@@ -2140,7 +2251,11 @@ function FormularioAtividade({
             <select
               id="atividade-tipo"
               value={tipo}
-              onChange={(e) => setTipo(e.target.value as Tipo)}
+              onChange={(e) => {
+                const novo = e.target.value as Tipo
+                setTipo(novo)
+                if (novo === "aniversario" && !registro) setInteiro(true)
+              }}
               className={INPUT}
             >
               {Object.entries(TIPOS).map(([v, t]) => (
@@ -2267,6 +2382,9 @@ function FormularioAtividade({
             Horário de Brasília. No modo dia inteiro, a data final também faz
             parte do período.
           </p>
+          {tipo !== "demanda" && <p className="mt-2 text-xs leading-relaxed text-cyan-200/80">
+            Conclusão automática após o término. Equipamentos retirados precisam ter a devolução registrada antes.
+          </p>}
         </div>
         <Campo nome="Descrição" id="atividade-descricao">
           <textarea
@@ -2306,7 +2424,7 @@ function FormularioAtividade({
               )}
               {ativos.map((eq) => {
                 const selecao = selecoes.find((x) => x.equipamento_id === eq.id)
-                const saldo = disp.dados.find((x) => x.id === eq.id)
+                const saldo = saldos.get(eq.id)
                 const retirada = reservas.some(
                   (r) =>
                     r.atividade_id === registro?.id &&
@@ -2405,7 +2523,7 @@ function FormularioAtividade({
             {erro}
           </p>
         )}
-        <div className="flex flex-wrap justify-end gap-3 border-t border-slate-700 pt-5">
+        <div className="sticky -bottom-4 grid grid-cols-[auto_minmax(0,1fr)] gap-3 border-t border-slate-700 bg-[#080f20] py-4 [&>button]:whitespace-nowrap sm:-bottom-6 sm:flex sm:flex-wrap sm:justify-end sm:pt-5">
           <button
             type="button"
             onClick={fechar}
@@ -2614,7 +2732,7 @@ function FormularioEquipamento({
             {erro}
           </p>
         )}
-        <div className="flex flex-wrap justify-end gap-3 border-t border-slate-700 pt-5">
+        <div className="sticky -bottom-4 grid grid-cols-[auto_minmax(0,1fr)] gap-3 border-t border-slate-700 bg-[#080f20] py-4 [&>button]:whitespace-nowrap sm:-bottom-6 sm:flex sm:flex-wrap sm:justify-end sm:pt-5">
           <button
             type="button"
             disabled={ocupado}
@@ -2676,20 +2794,26 @@ function Detalhes({
     retirada: "Retirada registrada",
     devolucao: "Devolução registrada",
     reserva_liberada: "Reserva liberada",
+    conclusao_automatica: "Concluído automaticamente após o término",
   }
   return (
     <Modal
       titulo={a.titulo}
-      descricao={`${TIPOS[a.tipo].nome} · ${a.setor}`}
+      descricao={`${TIPOS[tipoDaAtividade(a)].nome} · ${a.setor}`}
       fechar={fechar}
     >
       <div className="space-y-5">
+        {a.tipo !== "demanda" && atrasada(a) && reservas.some((r) => r.estado === "retirado") && (
+          <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+            O período terminou. Registre a devolução dos equipamentos para permitir a conclusão automática.
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
           <Tag cor={STATUS[a.status].cor}>{STATUS[a.status].nome}</Tag>
           <Tag cor="border-slate-700 bg-slate-800 text-slate-300">
             Prioridade {a.prioridade === "critica" ? "crítica" : a.prioridade}
           </Tag>
-          {atrasada(a) && <Tag cor={STATUS.cancelado.cor}>Prazo vencido</Tag>}
+          {atrasada(a) && <Tag cor={STATUS.cancelado.cor}>{reservas.some((r) => r.estado === "retirado") ? "Aguardando devolução" : "Prazo vencido"}</Tag>}
         </div>
         <div className="space-y-3 rounded-2xl border border-slate-700 bg-slate-900/50 p-4">
           <p className="flex items-start gap-2 text-sm leading-relaxed text-slate-300">

@@ -5,3 +5,4 @@ export type Role =
   | "gestao_escolas"
   | "dirigente"
   | "seintec"
+  | "field"

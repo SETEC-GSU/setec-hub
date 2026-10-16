@@ -23,7 +23,7 @@ export async function createChamado(formData: FormData) {
     const supabase = await createServerSupabase()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     if (authError || !user) return { ok: false as const, erro: "Sua sessão expirou. Entre novamente; o preenchimento foi mantido." }
-    const { data: perfil, error: perfilError } = await supabase.from("usuarios").select("role,ativo").eq("id", user.id).maybeSingle()
+    const { data: perfil, error: perfilError } = await supabase.from("usuarios").select("*").eq("id", user.id).maybeSingle()
     const permissao = origem === "escola" ? "chamados.escola.create" : "chamados.ure.create"
     if (perfilError || !perfil?.role || perfil.ativo === false || !canAccess(perfil.role as Parameters<typeof canAccess>[0], permissao)) {
       return { ok: false as const, erro: "Seu perfil não possui permissão para abrir este tipo de chamado." }

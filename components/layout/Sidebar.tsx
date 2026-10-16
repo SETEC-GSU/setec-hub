@@ -29,11 +29,18 @@ export default async function Sidebar() {
   if (!user?.role) return null
   const userRole = String(user.role || "")
   const primaryItems: SidebarItem[] = [
+
     {
       href: "/calendario-seintec",
       label: "Calendário SEINTEC–SETEC",
       icon: "📅",
       permission: "calendario.seintec.view",
+    },
+    {
+      href: "/fields/inventario",
+      label: "Inventário Field",
+      icon: "🧰",
+      permission: "inventario.field.view",
     },
   ]
   const sections: SidebarSection[] = [

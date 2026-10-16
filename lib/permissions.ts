@@ -43,9 +43,45 @@ export type Permission =
   | "calendario.seintec.view"
   | "logins.view"
   | "fields.central.view"
+  | "inventario.field.view"
+  | "inventario.field.manage"
+
+const PERMISSOES_ANALISTA: Permission[] = [
+    "dashboard.view",
+    "chamados.view",
+    "chamados.ure.create",
+    "gestaoChamados.view",
+    "relatorios.view",
+    "escolas.view",
+    "calendar.view",
+    "fields.view",
+    "dashboard.escolar",
+    "agenda.field",
+    "intoperacional.field",
+    "inventario.view",
+    "inventario.vgeral",
+    "apoio.usuario",
+    "tutoriais.populares",
+    "painel.chamados",
+    "toners.view",
+    "toners.entrada",
+    "toners.saida",
+    "toners.historico",
+    "edu.monitor",
+    "segundo.link",
+    "fields.demandas",
+    "fields.mapa",
+    "fields.painel",
+    "fields.relatorio",
+    "credenciais.escolas.view",
+    "saresp.view",
+    "calendario.seintec.view",
+  ]
 
 export const rolePermissions: Record<Role, Permission[]> = {
   admin: [
+    "inventario.field.view",
+    "inventario.field.manage",
     "dashboard.view",
     "usuarios.view",
     "usuarios.create",
@@ -89,37 +125,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "logins.view",
     "fields.central.view",
   ],
-  analista: [
-    "dashboard.view",
-    "chamados.view",
-    "chamados.ure.create",
-    "gestaoChamados.view",
-    "relatorios.view",
-    "escolas.view",
-    "calendar.view",
-    "fields.view",
-    "dashboard.escolar",
-    "agenda.field",
-    "intoperacional.field",
-    "inventario.view",
-    "inventario.vgeral",
-    "apoio.usuario",
-    "tutoriais.populares",
-    "painel.chamados",
-    "toners.view",
-    "toners.entrada",
-    "toners.saida",
-    "toners.historico",
-    "edu.monitor",
-    "segundo.link",
-    "fields.demandas",
-    "fields.mapa",
-    "fields.painel",
-    "fields.relatorio",
-    "credenciais.escolas.view",
-    "saresp.view",
-    "calendario.seintec.view",
-  ],
+  analista: PERMISSOES_ANALISTA,
   chefia_ure: [
     "dashboard.view",
     "chamados.view",
@@ -152,6 +158,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "fields.mapa",
   ],
   dirigente: [
+    "inventario.field.view",
     "dashboard.view",
     "chamados.view",
     "chamados.ure.create",
@@ -178,6 +185,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "fields.central.view",
   ],
   seintec: [
+    "inventario.field.view",
     "dashboard.view",
     "chamados.view",
     "chamados.ure.create",
@@ -216,6 +224,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "calendario.seintec.view",
     "fields.central.view",
   ],
+  field: [...PERMISSOES_ANALISTA, "inventario.field.view"],
 }
 
 export function can(role: Role, permission: Permission) {

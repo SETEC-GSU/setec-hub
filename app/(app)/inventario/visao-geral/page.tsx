@@ -148,54 +148,21 @@ export default async function DiretoriaPage({
   const modeloSelecionadoEfetivo = nomeFiltroModeloInventario(modeloSelecionado)
   const statusSelecionado = filters?.status || ""
 
-  const { data: equipamentosRaw, error: equipamentosError } = await supabase
-    .from("equipamentos_recebidos")
-    .select(`
-      id,
-      escola_nome,
-      quantidade_recebida,
-      equipamentos_modelos(
-        id,
-        equipamento,
-        finalidade,
-        imagem_url,
-        ano_recebimento,
-        uso,
-        tipo
-      )
-    `)
-    .gt("quantidade_recebida", 0)
-
-  if (equipamentosError) {
-    console.error("[Diretoria] Erro ao buscar equipamentos:", equipamentosError)
+  const { data: baseInventario, error: baseError } = await supabase.rpc("hub_inventario_visao_geral")
+  if (baseError || !baseInventario) {
+    console.error("[Inventário Visão Geral] Falha ao carregar a base:", baseError)
+    return (
+      <div className="space-y-5">
+        <h1 className="text-3xl font-bold text-white">Inventário · Visão Geral</h1>
+        <div role="alert" className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5 text-sm leading-6 text-amber-100">
+          Não foi possível consultar o inventário. Verifique sua sessão e tente novamente.
+        </div>
+        <a href="/inventario/visao-geral" className="inline-flex min-h-11 items-center rounded-xl border border-slate-700 px-4 text-sm text-slate-200">Tentar novamente</a>
+      </div>
+    )
   }
-
-  const equipamentos = (equipamentosRaw || []) as EquipamentoRecebido[]
-
-  const { data: inventariosBrutosRaw, error: inventariosError } = await supabase
-    .from("inventario_respostas")
-    .select(`
-      id,
-      escola_nome,
-      created_at,
-      responsavel_nome,
-      responsavel_cargo,
-      observacao,
-      inventario_itens (
-        modelo_id,
-        funcionando,
-        aguardando_garantia,
-        danificados_mau_uso,
-        nao_localizado
-      )
-    `)
-    .order("created_at", { ascending: false })
-
-  if (inventariosError) {
-    console.error("[Diretoria] Erro ao buscar inventários:", inventariosError)
-  }
-
-  const inventariosBrutos = (inventariosBrutosRaw || []) as InventarioResposta[]
+  const equipamentos = (baseInventario.equipamentos || []) as EquipamentoRecebido[]
+  const inventariosBrutos = (baseInventario.inventarios || []) as InventarioResposta[]
 
   const ultimasRespostasMap = new Map<string, InventarioResposta>()
 

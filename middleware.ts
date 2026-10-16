@@ -116,6 +116,10 @@ export async function middleware(req: NextRequest) {
     return supabaseResponse
   }
 
+  if (profile.role === "field" && ["/inventario", "/inventario/atualizar"].includes(pathname)) {
+    return redirectWithCookies(req, supabaseResponse, "/fields/inventario")
+  }
+
   const permission = getRoutePermission(pathname)
   if (permission && !canAccess(profile.role as CanAccessRole, permission as CanAccessPermission)) {
     return redirectWithCookies(req, supabaseResponse, "/")

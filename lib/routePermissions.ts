@@ -12,6 +12,7 @@ export const routePermissions: Record<string, Permission> = {
   "/gestao-escolas":"escolas.manage",
   "/dashboard-escolar":"dashboard.escolar",
   "/fields":"fields.view",
+  "/fields/inventario":"inventario.field.view",
   "/fields/agenda-field":"agenda.field",
   "/fields/inteligencia-operacional":"intoperacional.field",
   "/inventario":"inventario.view",
@@ -38,5 +39,8 @@ export const routePermissions: Record<string, Permission> = {
   "/saresp": "saresp.view",
   "/saresp/gestao": "gestao.saresp",
   "/apoio-usuario/gestao": "gestao.apoiousuario",
-  "/fields/relatorio-redes":"fields.relatorio"
+  "/fields/relatorio-redes":"fields.relatorio",
+  "/fields/central-relatorios": "fields.central.view",
+  "/calendario-seintec": "calendario.seintec.view",
+  "/logins": "logins.view"
 }

@@ -175,9 +175,10 @@ export default async function InventarioPage() {
   // ADICIONADO "observacao" NO SELECT AQUI 👇
   const { data: ultimaResposta } = await supabase
     .from("inventario_respostas")
-    .select("id, created_at, responsavel_nome, responsavel_cargo, observacao") 
+    .select("id, created_at, responsavel_nome, responsavel_cargo, observacao, inventario_itens!inner(id)") 
     .eq("escola_nome", escola)
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(1)
     .maybeSingle()
 

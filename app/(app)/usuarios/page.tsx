@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ReactNode } from "react"
 import {
   createUser,
@@ -9,15 +9,11 @@ import {
   deleteUser,
   updateEmail,
 } from "./actions"
-import { createClient } from "@supabase/supabase-js"
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
+import { createClient } from "@/lib/supabase"
 
 const roles = [
   { value: "analista", label: "Analista" },
+  { value: "field", label: "Field" },
   { value: "chefia_ure", label: "Chefia URE" },
   { value: "dirigente", label: "Dirigente" },
   { value: "seintec", label: "SEINTEC" },
@@ -166,6 +162,7 @@ function formatDate(value?: string | null) {
 }
 
 function getRoleTone(role?: string | null) {
+  if (role === "field") return "blue"
   if (role === "admin") return "purple"
   if (role === "dirigente") return "blue"
   if (role === "seintec") return "cyan"
@@ -176,6 +173,11 @@ function getRoleTone(role?: string | null) {
 
 
 export default function UsuariosClient() {
+  const supabase = useMemo(() => createClient(), [])
+  const acaoEmCurso = useRef(false)
+  const [autorizado, setAutorizado] = useState(false)
+  const [carregou, setCarregou] = useState(false)
+  const [precisaLogin, setPrecisaLogin] = useState(false)
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -194,36 +196,54 @@ export default function UsuariosClient() {
   const fetchUsers = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true)
     else setLoading(true)
-
     try {
-      const { data, error } = await supabase
-        .from("usuarios")
-        .select("id, nome, email, role, setor, created_at")
-        .order("created_at", { ascending: false })
-
-      if (error) {
-        console.error("[USUÁRIOS] Erro ao carregar:", error.message)
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      if (authError && (authError.status === 0 || (authError.status ?? 0) >= 500 || authError.name === "AuthRetryableFetchError")) throw authError
+      if (authError || !user) {
+        setAutorizado(false)
+        setCarregou(false)
+        setPrecisaLogin(true)
         setUsuarios([])
-        setFeedback({
-          type: "error",
-          message: "Não foi possível carregar os usuários cadastrados.",
-        })
-        return
+        setFeedback({ type: "error", message: "Sua sessão não está ativa. Entre novamente para carregar os usuários." })
+        return false
       }
-
-      setUsuarios((data || []) as Usuario[])
+      const { data: perfil, error: perfilError } = await supabase.from("usuarios")
+        .select("role").eq("id", user.id).maybeSingle()
+      if (perfilError) throw perfilError
+      if (perfil?.role !== "admin") {
+        setAutorizado(false)
+        setCarregou(false)
+        setPrecisaLogin(false)
+        setUsuarios([])
+        setFeedback({ type: "error", message: "Apenas administradores podem visualizar e administrar os usuários." })
+        return false
+      }
+      setAutorizado(true)
+      setPrecisaLogin(false)
+      const todos: Usuario[] = []
+      const pagina = 500
+      for (let inicio = 0; ; inicio += pagina) {
+        const { data, error } = await supabase.from("usuarios")
+          .select("id, nome, email, role, setor, created_at")
+          .order("created_at", { ascending: false }).order("id", { ascending: false })
+          .range(inicio, inicio + pagina - 1)
+        if (error) throw error
+        todos.push(...((data || []) as Usuario[]))
+        if (!data || data.length < pagina) break
+      }
+      setUsuarios(todos)
+      setCarregou(true)
+      setFeedback((atual) => atual?.type === "error" ? null : atual)
+      return true
     } catch (error) {
-      console.error("[USUÁRIOS] Erro inesperado:", error)
-      setUsuarios([])
-      setFeedback({
-        type: "error",
-        message: "Erro inesperado ao carregar usuários.",
-      })
+      console.error("[USUÁRIOS] Erro ao carregar:", error)
+      setFeedback({ type: "error", message: "Não foi possível atualizar a lista. Verifique a conexão e tente novamente; os últimos dados carregados foram mantidos." })
+      return false
     } finally {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [])
+  }, [supabase])
 
   useEffect(() => {
     fetchUsers()
@@ -257,6 +277,7 @@ export default function UsuariosClient() {
     const total = usuarios.length
     const admins = usuarios.filter((usuario) => usuario.role === "admin").length
     const seintec = usuarios.filter((usuario) => usuario.role === "seintec").length
+    const fields = usuarios.filter((usuario) => usuario.role === "field").length
     const escolas = usuarios.filter(
       (usuario) =>
         usuario.setor &&
@@ -269,6 +290,7 @@ export default function UsuariosClient() {
       total,
       admins,
       seintec,
+      fields,
       escolas,
       resultado: usuariosFiltrados.length,
     }
@@ -286,9 +308,12 @@ export default function UsuariosClient() {
     setFeedback(null)
   }
 
-  function closeModal() {
+  function limparModal() {
     setModalMode(null)
     setSelectedUser(null)
+  }
+  function closeModal() {
+    if (!acaoEmCurso.current) limparModal()
   }
 
   async function executarAcao(
@@ -297,8 +322,8 @@ export default function UsuariosClient() {
     mensagemProcessando: string,
     fecharModalAoConcluir = true
   ) {
-    if (processandoAcao) return false
-
+    if (acaoEmCurso.current) return false
+    acaoEmCurso.current = true
     setProcessandoAcao(true)
     setFeedback({
       type: "info",
@@ -324,7 +349,7 @@ export default function UsuariosClient() {
       await fetchUsers(true)
 
       if (fecharModalAoConcluir) {
-        closeModal()
+        limparModal()
       }
 
       return true
@@ -341,11 +366,13 @@ export default function UsuariosClient() {
 
       return false
     } finally {
+      acaoEmCurso.current = false
       setProcessandoAcao(false)
     }
   }
 
   async function handleDelete(usuario: Usuario) {
+    if (acaoEmCurso.current) return false
     if (usuario.role === "admin") {
       setFeedback({
         type: "error",
@@ -382,6 +409,17 @@ export default function UsuariosClient() {
     }
 
     return excluido
+  }
+
+  if (!loading && !autorizado) {
+    return <main className="mx-auto max-w-4xl space-y-5 py-6">
+      <h1 className="text-3xl font-bold text-white">Gestão de Usuários</h1>
+      <FeedbackBox type="error" message={feedback?.message || "Não foi possível validar o acesso administrativo. Tente novamente."} onClose={() => setFeedback(null)} />
+      <div className="flex flex-wrap gap-3">
+        <button type="button" onClick={() => void fetchUsers()} className="min-h-11 rounded-xl bg-blue-600 px-5 py-3 font-bold text-white">Tentar novamente</button>
+        <a href={precisaLogin ? "/login?redirectTo=%2Fusuarios" : "/"} className="inline-flex min-h-11 items-center rounded-xl border border-slate-700 px-5 text-slate-200">{precisaLogin ? "Entrar novamente" : "Menu principal"}</a>
+      </div>
+    </main>
   }
 
   return (
@@ -425,6 +463,7 @@ export default function UsuariosClient() {
             <button
               type="button"
               onClick={openCreateModal}
+              disabled={!autorizado || loading || processandoAcao}
               className="inline-flex w-full items-center justify-center gap-3 rounded-2xl bg-blue-600 px-7 py-4 text-sm font-bold text-white shadow-lg shadow-blue-950/20 transition-all hover:bg-blue-500 active:scale-95 sm:w-auto"
             >
               <UserPlusIcon className="h-5 w-5" />
@@ -441,11 +480,11 @@ export default function UsuariosClient() {
           />
         )}
 
-        <section className="grid grid-cols-2 gap-4 xl:grid-cols-5">
+        <section className="grid grid-cols-2 gap-4 xl:grid-cols-3 2xl:grid-cols-6">
           <StatCard
             icon={<UsersIcon className="h-6 w-6 text-blue-300" />}
             label="Usuários"
-            value={resumo.total}
+            value={carregou ? resumo.total : "—"}
             description="Acessos cadastrados"
             badge="Sistema"
             tone="blue"
@@ -454,7 +493,7 @@ export default function UsuariosClient() {
           <StatCard
             icon={<CrownIcon className="h-6 w-6 text-purple-300" />}
             label="Admins"
-            value={resumo.admins}
+            value={carregou ? resumo.admins : "—"}
             description="Acesso elevado"
             badge="Admin"
             tone="purple"
@@ -463,16 +502,25 @@ export default function UsuariosClient() {
           <StatCard
             icon={<ShieldCheckIcon className="h-6 w-6 text-cyan-300" />}
             label="SEINTEC"
-            value={resumo.seintec}
+            value={carregou ? resumo.seintec : "—"}
             description="Gestão tecnológica"
             badge="SETEC"
             tone="cyan"
           />
 
           <StatCard
+            icon={<UsersIcon className="h-6 w-6 text-blue-300" />}
+            label="Fields"
+            value={carregou ? resumo.fields : "—"}
+            description="Perfis de atendimento"
+            badge="Field"
+            tone="blue"
+          />
+
+          <StatCard
             icon={<BuildingIcon className="h-6 w-6 text-emerald-300" />}
             label="Escolas/Setores"
-            value={resumo.escolas}
+            value={carregou ? resumo.escolas : "—"}
             description="Vínculos operacionais"
             badge="Rede"
             tone="green"
@@ -481,7 +529,7 @@ export default function UsuariosClient() {
           <StatCard
             icon={<SearchIcon className="h-6 w-6 text-orange-300" />}
             label="Resultado"
-            value={resumo.resultado}
+            value={carregou ? resumo.resultado : "—"}
             description="No filtro atual"
             badge="Busca"
             tone="orange"
@@ -489,14 +537,15 @@ export default function UsuariosClient() {
         </section>
 
         <section className="rounded-[2rem] border border-slate-800 bg-[#020617] p-4 shadow-xl md:p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
-            <div className="flex flex-1 items-center gap-3 rounded-2xl border border-slate-700 bg-slate-900/60 px-4 py-3.5 transition-all focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_12rem_16rem_auto] xl:items-center">
+            <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-slate-700 bg-slate-900/60 px-4 py-3.5 transition-all focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500">
               <SearchIcon className="h-5 w-5 shrink-0 text-slate-500" />
 
               <input
                 type="text"
+                aria-label="Pesquisar usuários"
                 placeholder="Pesquisar usuário, e-mail, setor, escola ou perfil..."
-                className="w-full border-none bg-transparent text-sm font-medium text-white outline-none placeholder:text-slate-600 md:text-base"
+                className="w-full min-w-0 border-none bg-transparent text-sm font-medium text-white outline-none placeholder:text-slate-600 md:text-base"
                 value={busca}
                 onChange={(event) => setBusca(event.target.value)}
               />
@@ -514,9 +563,10 @@ export default function UsuariosClient() {
             </div>
 
             <select
+              aria-label="Filtrar por perfil"
               value={roleFiltro}
               onChange={(event) => setRoleFiltro(event.target.value)}
-              className="w-full rounded-2xl border border-slate-700 bg-slate-900/60 px-4 py-3.5 text-sm font-medium text-slate-300 outline-none transition-all focus:border-blue-500 lg:w-56"
+              className="w-full min-w-0 rounded-2xl border border-slate-700 bg-slate-900/60 px-4 py-3.5 text-sm font-medium text-slate-300 outline-none transition-all focus:border-blue-500"
             >
               <option value="todos">Todos os perfis</option>
               {roles.map((role) => (
@@ -527,9 +577,10 @@ export default function UsuariosClient() {
             </select>
 
             <select
+              aria-label="Filtrar por setor"
               value={setorFiltro}
               onChange={(event) => setSetorFiltro(event.target.value)}
-              className="w-full rounded-2xl border border-slate-700 bg-slate-900/60 px-4 py-3.5 text-sm font-medium text-slate-300 outline-none transition-all focus:border-blue-500 lg:w-72"
+              className="w-full min-w-0 rounded-2xl border border-slate-700 bg-slate-900/60 px-4 py-3.5 text-sm font-medium text-slate-300 outline-none transition-all focus:border-blue-500"
             >
               <option value="todos">Todos os setores</option>
               {setoresCadastrados.map((setor) => (
@@ -694,6 +745,7 @@ export default function UsuariosClient() {
 
       {modalMode === "create" && (
         <CreateUserModal
+          feedback={feedback}
           onClose={closeModal}
           processing={processandoAcao}
           onSubmitAction={(formData) =>
@@ -709,6 +761,7 @@ export default function UsuariosClient() {
 
       {modalMode === "edit" && selectedUser && (
         <EditUserModal
+          feedback={feedback}
           user={selectedUser}
           onClose={closeModal}
           processing={processandoAcao}
@@ -744,10 +797,12 @@ export default function UsuariosClient() {
 }
 
 function CreateUserModal({
+  feedback,
   onClose,
   onSubmitAction,
   processing,
 }: {
+  feedback: { type: "success" | "error" | "info"; message: string } | null
   onClose: () => void
   onSubmitAction: (formData: FormData) => Promise<boolean>
   processing: boolean
@@ -761,7 +816,7 @@ function CreateUserModal({
         className="absolute inset-0 cursor-default bg-slate-950/70 backdrop-blur-sm"
       />
 
-      <div className="relative max-h-[94vh] w-full overflow-hidden rounded-t-[2rem] border border-slate-800 bg-[#020617] shadow-2xl sm:max-w-5xl sm:rounded-[2.5rem]">
+      <div role="dialog" aria-modal="true" aria-label="Cadastrar Usuário" className="relative max-h-[94vh] w-full overflow-hidden rounded-t-[2rem] border border-slate-800 bg-[#020617] shadow-2xl sm:max-w-5xl sm:rounded-[2.5rem]">
         <div className="pointer-events-none absolute right-0 top-0 h-80 w-80 rounded-full bg-blue-500/10 blur-3xl" />
         <div className="pointer-events-none absolute -right-16 -bottom-20 hidden text-blue-500/5 sm:block">
           <SparklesIcon className="h-80 w-80" />
@@ -783,6 +838,7 @@ function CreateUserModal({
             className="space-y-6 p-5 sm:space-y-8 sm:p-10"
             autoComplete="off"
           >
+            <ModalFeedback feedback={feedback} />
             <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
               <InputGroup
                 label="Nome"
@@ -861,6 +917,9 @@ function CreateUserModal({
               />
             </div>
 
+            <p className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 text-xs leading-6 text-blue-200">
+              O perfil Field terá os acessos de páginas do analista. Após o cadastro, associe a conta ao técnico em Inventário Field → Vínculos de acesso; as escolas vêm da setorização.
+            </p>
             <ModalFooter
               onClose={onClose}
               submitLabel={processing ? "Criando usuário..." : "Criar Usuário"}
@@ -874,6 +933,7 @@ function CreateUserModal({
 }
 
 function EditUserModal({
+  feedback,
   user,
   onClose,
   processing,
@@ -882,6 +942,7 @@ function EditUserModal({
   onResetPassword,
   onDelete,
 }: {
+  feedback: { type: "success" | "error" | "info"; message: string } | null
   user: Usuario
   onClose: () => void
   processing: boolean
@@ -899,7 +960,7 @@ function EditUserModal({
         className="absolute inset-0 cursor-default bg-slate-950/70 backdrop-blur-sm"
       />
 
-      <div className="relative max-h-[94vh] w-full overflow-hidden rounded-t-[2rem] border border-slate-800 bg-[#020617] shadow-2xl sm:max-w-5xl sm:rounded-[2.5rem]">
+      <div role="dialog" aria-modal="true" aria-label="Editar Usuário" className="relative max-h-[94vh] w-full overflow-hidden rounded-t-[2rem] border border-slate-800 bg-[#020617] shadow-2xl sm:max-w-5xl sm:rounded-[2.5rem]">
         <div className="pointer-events-none absolute right-0 top-0 h-80 w-80 rounded-full bg-blue-500/10 blur-3xl" />
 
         <div className="relative z-10 max-h-[94vh] overflow-y-auto">
@@ -911,6 +972,7 @@ function EditUserModal({
           />
 
           <div className="space-y-6 p-5 sm:space-y-8 sm:p-10">
+            <ModalFeedback feedback={feedback} />
             <form
               onSubmit={(event) => {
                 event.preventDefault()
@@ -970,6 +1032,7 @@ function EditUserModal({
                   required
                   options={[
                     { value: "", label: "Selecione o local...", disabled: true },
+                    ...(user.setor && !setores.includes(user.setor) ? [{ value: user.setor, label: user.setor + " (vínculo atual)" }] : []),
                     ...setores.map((setor) => ({
                       value: setor,
                       label: setor,
@@ -978,6 +1041,7 @@ function EditUserModal({
                 />
               </div>
 
+              <p className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 text-xs leading-6 text-blue-200">Para o perfil Field, associe a conta ao técnico em <a href="/fields/inventario" className="font-bold underline">Inventário Field → Vínculos de acesso</a>. As escolas vêm da setorização e o setor do perfil é preservado.</p>
               <div className="flex justify-end">
                 <button
                   type="submit"
@@ -1117,6 +1181,12 @@ function EditUserModal({
       </div>
     </div>
   )
+}
+
+function ModalFeedback({ feedback }: { feedback: { type: "success" | "error" | "info"; message: string } | null }) {
+  if (!feedback) return null
+  const cor = feedback.type === "error" ? "border-red-500/30 bg-red-500/10 text-red-200" : feedback.type === "success" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-blue-500/30 bg-blue-500/10 text-blue-200"
+  return <p role={feedback.type === "error" ? "alert" : "status"} aria-live="polite" className={`rounded-2xl border p-4 text-sm leading-6 ${cor}`}>{feedback.message}</p>
 }
 
 function UsuarioMobileCard({
@@ -1392,13 +1462,14 @@ function InputGroup({
   defaultValue?: string
 }) {
   return (
-    <div className="space-y-3">
-      <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
+    <div className="min-w-0 space-y-3">
+      <label htmlFor={`usuario-${name}`} className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
         <span className="text-blue-300">{icon}</span>
         {label}
       </label>
 
       <input
+        id={`usuario-${name}`}
         name={name}
         required={required}
         type={type}
@@ -1426,8 +1497,8 @@ function PasswordInputGroup({
   const [visible, setVisible] = useState(false)
 
   return (
-    <div className="space-y-3">
-      <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
+    <div className="min-w-0 space-y-3">
+      <label htmlFor={`usuario-${name}`} className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
         <span className="text-blue-300">
           <KeyIcon className="h-4.5 w-4.5" />
         </span>
@@ -1436,6 +1507,7 @@ function PasswordInputGroup({
 
       <div className="relative">
         <input
+          id={`usuario-${name}`}
           name={name}
           required={required}
           type={visible ? "text" : "password"}
@@ -1478,17 +1550,18 @@ function SelectGroup({
   required?: boolean
 }) {
   return (
-    <div className="space-y-3">
-      <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
+    <div className="min-w-0 space-y-3">
+      <label htmlFor={`usuario-${name}`} className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
         <span className="text-blue-300">{icon}</span>
         {label}
       </label>
 
       <select
+        id={`usuario-${name}`}
         name={name}
         defaultValue={defaultValue}
         required={required}
-        className="w-full rounded-2xl border border-slate-700 bg-slate-900/70 px-4 py-4 text-sm font-semibold text-white outline-none transition-all focus:border-blue-500 focus:ring-1 focus:ring-blue-500 md:px-5 md:text-base"
+        className="w-full min-w-0 max-w-full rounded-2xl border border-slate-700 bg-slate-900/70 px-4 py-4 text-sm font-semibold text-white outline-none transition-all focus:border-blue-500 focus:ring-1 focus:ring-blue-500 md:px-5 md:text-base"
       >
         {options.map((option) => (
           <option key={`${name}-${option.value}`} value={option.value} disabled={option.disabled}>
