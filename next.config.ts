@@ -12,6 +12,7 @@ const nextConfig: NextConfig = {
 
   outputFileTracingIncludes: {
     "/api/fields/relatorios/gerencial": arquivosPdf,
+    "/api/chamados/relatorios/gerencial": arquivosPdf,
     "/api/fields/relatorios/documento": arquivosPdf,
     "/api/fields/relatorios/backup": arquivosPdf,
   },

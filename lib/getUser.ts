@@ -1,6 +1,11 @@
 import { cache } from "react"
-import { cookies } from "next/headers"
-import { createServerClient } from "@supabase/ssr"
+import { createServerSupabase } from "@/lib/supabase-server"
+import {
+  comLimiteSessao,
+  registrarFalhaSessao,
+  sessaoAusenteOuInvalida,
+  SessaoIndisponivelError,
+} from "@/lib/sessao-servidor"
 
 type AppUser = {
   id: string
@@ -11,7 +16,6 @@ type AppUser = {
 }
 
 const IS_DEV = process.env.NODE_ENV !== "production"
-const GET_USER_TIMEOUT_MS = IS_DEV ? 3500 : 10000
 
 function getFallbackDevUser(): AppUser {
   return {
@@ -23,126 +27,84 @@ function getFallbackDevUser(): AppUser {
   }
 }
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message
-  return String(error || "")
-}
-
-async function withTimeout<T>(
-  promiseLike: PromiseLike<T>,
-  ms: number,
-  label: string
-): Promise<T> {
-  let timeout: ReturnType<typeof setTimeout> | null = null
-
-  try {
-    return await Promise.race([
-      Promise.resolve(promiseLike),
-      new Promise<T>((_, reject) => {
-        timeout = setTimeout(() => {
-          reject(new Error(`${label}: timeout após ${ms}ms`))
-        }, ms)
-      }),
-    ])
-  } finally {
-    if (timeout) {
-      clearTimeout(timeout)
-    }
-  }
-}
-
+// React cache deduplica somente dentro da renderização da requisição.
+// Não existe cache global de perfis nem compartilhamento de sessão entre usuários.
 export const getUser = cache(async (): Promise<AppUser | null> => {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-
-  if (!supabaseUrl || !supabaseAnonKey) {
-    console.error("[getUser] Variáveis de ambiente do Supabase ausentes.")
-
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    registrarFalhaSessao("ambiente", new Error("Configuração ausente"))
     if (IS_DEV) return getFallbackDevUser()
-
-    return null
+    throw new SessaoIndisponivelError("ambiente")
   }
 
+  let etapa = "autenticacao"
+
   try {
-    const cookieStore = await cookies()
+    return await comLimiteSessao(async fetchSessao => {
+      const supabase = await createServerSupabase({ fetch: fetchSessao })
 
-    const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll()
-        },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) => {
-              cookieStore.set(name, value, options)
-            })
-          } catch {
-            /*
-              Em Server Components, o Next pode bloquear escrita de cookies.
-              Ignoramos para não quebrar renderização.
-            */
-          }
-        },
-      },
-    })
+      /* Valida a assinatura do JWT, sem confiar no usuário de getSession().
+         Para chaves assimétricas, evita repetir o getUser remoto que já é
+         executado no middleware. Com chave simétrica, o SDK valida no Auth. */
+      const { data, error: authError } = await supabase.auth.getClaims()
 
-    const {
-      data: { user },
-      error: authError,
-    } = await withTimeout(
-      supabase.auth.getUser(),
-      GET_USER_TIMEOUT_MS,
-      "getUser Supabase Auth"
-    )
-
-    if (authError || !user) {
       if (authError) {
-        console.error("[getUser] Erro Auth:", authError.message)
+        if (sessaoAusenteOuInvalida(authError)) {
+          return IS_DEV ? getFallbackDevUser() : null
+        }
+        registrarFalhaSessao(etapa, authError)
+        throw new SessaoIndisponivelError(etapa)
       }
 
-      if (IS_DEV) return getFallbackDevUser()
+      const claims = data?.claims
+      if (!claims?.sub || typeof claims.sub !== "string") {
+        return IS_DEV ? getFallbackDevUser() : null
+      }
+      const identidade = {
+        id: claims.sub,
+        email: typeof claims.email === "string" ? claims.email : null,
+      }
 
-      return null
-    }
-
-    const { data: profile, error: profileError } = await withTimeout(
-      supabase
+      etapa = "perfil"
+      const { data: profile, error: profileError } = await supabase
         .from("usuarios")
         .select("id, nome, email, role, setor")
-        .eq("id", user.id)
-        .maybeSingle(),
-      GET_USER_TIMEOUT_MS,
-      "getUser Profile"
-    )
+        .eq("id", claims.sub)
+        .maybeSingle()
 
-    if (profileError || !profile?.role) {
       if (profileError) {
-        console.error("[getUser] Erro perfil:", profileError.message)
+        registrarFalhaSessao(etapa, profileError)
+        throw new SessaoIndisponivelError(etapa)
       }
 
-      if (IS_DEV) {
-        return {
-          ...getFallbackDevUser(),
-          id: user.id,
-          email: user.email || "dev.local@educacao.sp.gov.br",
+      if (!profile?.role) {
+        if (IS_DEV) {
+          return {
+            ...getFallbackDevUser(),
+            id: claims.sub,
+            email: identidade.email || "dev.local@educacao.sp.gov.br",
+          }
         }
+        return null
       }
 
-      return null
-    }
-
-    return {
-      id: profile.id,
-      nome: profile.nome,
-      email: profile.email || user.email || null,
-      role: profile.role,
-      setor: profile.setor,
-    }
+      // Permissões continuam vindo da tabela atual, nunca do role do JWT.
+      return {
+        id: profile.id,
+        nome: profile.nome,
+        email: profile.email || identidade.email || null,
+        role: profile.role,
+        setor: profile.setor,
+      }
+    })
   } catch (error) {
-    console.error("[getUser] Falha ao carregar usuário:", getErrorMessage(error))
-
+    if (!(error instanceof SessaoIndisponivelError) || error.etapa === "timeout") {
+      registrarFalhaSessao(etapa, error)
+    }
     if (IS_DEV) return getFallbackDevUser()
 
-    return null
+    /* Não devolve null em erro de rede: layouts costumam interpretar null
+       como logout e redirecionar ao login. A proteção continua fechada e a
+       falha temporária é tratada pelo error boundary existente do Next. */
+    throw error instanceof SessaoIndisponivelError ? error : new SessaoIndisponivelError(etapa)
   }
 })

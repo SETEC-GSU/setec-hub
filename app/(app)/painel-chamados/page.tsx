@@ -1,7 +1,10 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
+import dynamic from "next/dynamic"
 import { createClient } from "@/lib/supabase"
+import { podeGerarRelatoriosHub } from "@/lib/chamados-relatorios/perfis"
+import { opcoesDaPagina } from "@/lib/chamados-relatorios/analise"
 import { classificacaoChamado } from "@/lib/chamados/catalogo"
 import { lerTodasPaginas } from "@/lib/chamados/consulta"
 import FiltrosClassificacao from "@/components/chamados/FiltrosClassificacao"
@@ -17,6 +20,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts"
+
+const ModalRelatorioHub = dynamic(() => import("@/components/chamados/ModalRelatorioHub"), { ssr: false })
 
 type ChamadoRow = {
   id: string
@@ -363,6 +368,23 @@ export default function PainelChamados() {
   const [busca, setBusca] = useState("")
   const [categoriaCatalogo, setCategoriaCatalogo] = useState("")
   const [assuntoCatalogo, setAssuntoCatalogo] = useState("")
+
+  const [relatorioHubAberto, setRelatorioHubAberto] = useState(false)
+  const podeGerarRelatorioHub = podeGerarRelatoriosHub(usuarioAtual?.role)
+  const chaveRelatorioHub = usuarioAtual?.id ? `hub:relatorio-chamados:${usuarioAtual.id}` : ""
+  const opcoesRelatorioHub = useMemo(() => opcoesDaPagina(chamados, usuarios), [chamados, usuarios])
+
+  useEffect(() => {
+    if (!podeGerarRelatorioHub || !chaveRelatorioHub) { setRelatorioHubAberto(false); return }
+    try { setRelatorioHubAberto(sessionStorage.getItem(`${chaveRelatorioHub}:aberto`) === "1") } catch {}
+  }, [podeGerarRelatorioHub, chaveRelatorioHub])
+
+  function alterarRelatorioHub(aberto: boolean) {
+    setRelatorioHubAberto(aberto)
+    if (chaveRelatorioHub) {
+      try { sessionStorage.setItem(`${chaveRelatorioHub}:aberto`, aberto ? "1" : "0") } catch {}
+    }
+  }
 
   const [modoAdministrativo, setModoAdministrativo] = useState(false)
   const [filtroAnalistaAdmin, setFiltroAnalistaAdmin] = useState("")
@@ -1035,6 +1057,9 @@ export default function PainelChamados() {
 
   return (
     <main className="mx-auto w-full max-w-[1800px] space-y-6 pb-12">
+      {podeGerarRelatorioHub && relatorioHubAberto && (
+        <ModalRelatorioHub opcoes={opcoesRelatorioHub} chavePersistencia={chaveRelatorioHub} fechar={() => alterarRelatorioHub(false)} />
+      )}
       <section className="relative overflow-hidden rounded-[2rem] border border-slate-800 bg-[#020617] p-5 shadow-2xl md:p-8">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.17),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(6,182,212,0.10),transparent_30%)]" />
 
@@ -1084,6 +1109,18 @@ export default function PainelChamados() {
                 ? "Visão administrativa dos chamados, com produtividade por responsável, tempos de atendimento, backlog, SLA, descrição e resolução aplicada."
                 : "Visão consolidada dos atendimentos SETEC, com indicadores por status, categoria, origem, prioridade, evolução mensal e usuários solicitantes."}
             </p>
+
+            {podeGerarRelatorioHub && (
+              <button
+                type="button"
+                data-gerar-relatorio-hub
+                onClick={() => alterarRelatorioHub(true)}
+                className="mt-5 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-cyan-400/30 bg-gradient-to-r from-cyan-500/15 to-blue-500/15 px-5 py-3 text-sm font-bold text-cyan-100 shadow-lg shadow-blue-950/20 transition hover:border-cyan-300/60 hover:from-cyan-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 sm:w-auto"
+              >
+                <svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 17v-3M12 17v-6M16 17v-4"/></svg>
+                Gerar relatório do Hub
+              </button>
+            )}
           </div>
 
           <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-5 xl:min-w-[360px]">

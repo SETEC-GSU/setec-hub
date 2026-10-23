@@ -8,6 +8,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { createClient } from "@/lib/supabase";
 import SerialBarcodeScanner from "@/components/SerialBarcodeScanner";
 import JanelaRelatorios from "@/components/relatorios/JanelaRelatorios";
@@ -3251,7 +3252,7 @@ export default function ParecerTecnicoPage() {
   }
 
   return (
-    <div className="mx-auto max-w-[1700px] space-y-7 pb-12">
+    <div className="mx-auto max-w-[1700px] space-y-7 pb-28">
       <section
         id="parecer-tecnico-identificado"
         className="relative overflow-hidden rounded-[1.75rem] border border-slate-800 bg-[#020617] p-5 shadow-xl shadow-slate-950/20 md:p-6"
@@ -4185,6 +4186,7 @@ export default function ParecerTecnicoPage() {
                   <button
                     type="button"
                     onClick={adicionarItem}
+                    disabled={salvando}
                     className="min-h-[46px] rounded-2xl border border-cyan-500/30 bg-cyan-500/10 px-5 text-xs font-black uppercase tracking-widest text-cyan-300 transition-all hover:bg-cyan-500 hover:text-cyan-950"
                   >
                     + Adicionar equipamento
@@ -4247,7 +4249,7 @@ export default function ParecerTecnicoPage() {
               />
             </div>
 
-            <div className="mt-6 flex flex-col gap-3">
+            <div id="acoes-finalizacao-relatorio" className="mt-6 flex flex-col gap-3">
               <button
                 type="button"
                 onClick={handleFinalizar}
@@ -4296,6 +4298,16 @@ export default function ParecerTecnicoPage() {
         </section>
       </form>
 
+      <BotaoAdicionarEquipamentoFlutuante
+        onAdicionar={adicionarItem}
+        bloqueado={salvando}
+        abreOpcoes={podeReaproveitarUltimoItem}
+        oculto={Boolean(
+          adicionarItemModalAberto || historicoAberto || equipamentosAberto ||
+          itemLeitorSerial || splashValidacao || retornoChamadoModal || pdfPronto
+        )}
+      />
+
       {itemLeitorSerial && (
         <SerialBarcodeScanner
           equipamento={itemLeitorSerial.equipamento || "Novo equipamento"}
@@ -4314,21 +4326,13 @@ export default function ParecerTecnicoPage() {
       )}
 
       {adicionarItemModalAberto && (
-        <div
-          className="fixed inset-0 z-[10002] flex items-center justify-center bg-[#020617]/90 p-4 backdrop-blur-md"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setAdicionarItemModalAberto(false);
-            }
-          }}
+        <JanelaRelatorios
+          tamanho="compacto"
+          tituloId="titulo-adicionar-equipamento"
+          descricaoId="descricao-adicionar-equipamento"
+          onFechar={() => setAdicionarItemModalAberto(false)}
         >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="titulo-adicionar-equipamento"
-            className="w-full max-w-2xl overflow-hidden rounded-[2rem] border border-blue-500/30 bg-[#020617] shadow-2xl shadow-blue-950/40"
-          >
-            <div className="relative overflow-hidden border-b border-slate-800 p-5 sm:p-6">
+            <div className="relative shrink-0 overflow-hidden border-b border-slate-800 p-4 sm:p-6">
               <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(59,130,246,0.18),transparent_42%)]" />
 
               <div className="relative z-10 flex items-start justify-between gap-4">
@@ -4339,12 +4343,12 @@ export default function ParecerTecnicoPage() {
 
                   <h2
                     id="titulo-adicionar-equipamento"
-                    className="mt-2 text-2xl font-black tracking-tight text-white"
+                    className="mt-2 text-xl font-black tracking-tight text-white sm:text-2xl"
                   >
                     Como deseja adicionar?
                   </h2>
 
-                  <p className="mt-2 max-w-xl text-sm font-medium leading-relaxed text-slate-500">
+                  <p id="descricao-adicionar-equipamento" className="mt-2 max-w-xl text-sm font-medium leading-relaxed text-slate-400">
                     Comece um registro vazio ou reaproveite os dados do último
                     equipamento para agilizar atendimentos repetitivos.
                   </p>
@@ -4361,7 +4365,7 @@ export default function ParecerTecnicoPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2 sm:p-6">
+            <div data-modal-scroll className="custom-scrollbar grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-4 sm:grid-cols-2 sm:gap-4 sm:p-6">
               <button
                 type="button"
                 onClick={adicionarItemEmBranco}
@@ -4420,14 +4424,13 @@ export default function ParecerTecnicoPage() {
               </button>
             </div>
 
-            <div className="border-t border-slate-800 bg-slate-950/60 px-5 py-4 sm:px-6">
+            <div className="shrink-0 border-t border-slate-800 bg-slate-950/60 px-4 py-3 sm:px-6 sm:py-4">
               <p className="text-[10px] font-semibold leading-relaxed text-slate-600">
                 O número de série e o patrimônio não são reaproveitados, pois
                 identificam individualmente cada equipamento.
               </p>
             </div>
-          </div>
-        </div>
+        </JanelaRelatorios>
       )}
 
       {historicoAberto && (
@@ -5040,6 +5043,105 @@ export default function ParecerTecnicoPage() {
         </div>
       )}
     </div>
+  );
+}
+
+function BotaoAdicionarEquipamentoFlutuante({
+  onAdicionar,
+  bloqueado,
+  abreOpcoes,
+  oculto,
+}: {
+  onAdicionar: () => void;
+  bloqueado: boolean;
+  abreOpcoes: boolean;
+  oculto: boolean;
+}) {
+  const [montado, setMontado] = useState(false);
+  const [tecladoAberto, setTecladoAberto] = useState(false);
+  const [acoesVisiveis, setAcoesVisiveis] = useState(false);
+
+  useEffect(() => {
+    setMontado(true);
+    const viewport = window.visualViewport;
+    const telaDeToque = window.matchMedia("(max-width: 767px), (pointer: coarse)");
+    let alturaBase = window.innerHeight;
+    let frame = 0;
+
+    function atualizarTeclado() {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const ativo = document.activeElement;
+        const campoDeTexto = ativo instanceof HTMLElement && ativo.matches(
+          'textarea, input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="range"]):not([type="file"]), [contenteditable="true"]',
+        );
+        const alturaLayout = Math.max(alturaBase, window.innerHeight, document.documentElement.clientHeight);
+        const reducaoVisivel = viewport ? alturaLayout - viewport.height - viewport.offsetTop : 0;
+        setTecladoAberto(Boolean(
+          telaDeToque.matches && campoDeTexto &&
+          (!viewport || (viewport.scale <= 1.05 && reducaoVisivel > 140)),
+        ));
+      });
+    }
+
+    function atualizarOrientacao() {
+      alturaBase = window.innerHeight;
+      atualizarTeclado();
+    }
+
+    const acoes = document.getElementById("acoes-finalizacao-relatorio");
+    const observer = acoes && typeof IntersectionObserver !== "undefined"
+      ? new IntersectionObserver(([entrada]) => setAcoesVisiveis(entrada.isIntersecting))
+      : null;
+    if (acoes) observer?.observe(acoes);
+
+    document.addEventListener("focusin", atualizarTeclado);
+    document.addEventListener("focusout", atualizarTeclado);
+    viewport?.addEventListener("resize", atualizarTeclado);
+    window.addEventListener("resize", atualizarTeclado);
+    window.addEventListener("orientationchange", atualizarOrientacao);
+    atualizarTeclado();
+
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      document.removeEventListener("focusin", atualizarTeclado);
+      document.removeEventListener("focusout", atualizarTeclado);
+      viewport?.removeEventListener("resize", atualizarTeclado);
+      window.removeEventListener("resize", atualizarTeclado);
+      window.removeEventListener("orientationchange", atualizarOrientacao);
+    };
+  }, []);
+
+  if (!montado) return null;
+  const invisivel = oculto || tecladoAberto || acoesVisiveis;
+
+  // Portal mantém o atalho no canto da tela mesmo se o layout usar transform.
+  // Opacidade preserva o elemento de origem para o retorno de foco do dialog.
+  return createPortal(
+    <button
+      type="button"
+      data-atalho-adicionar-equipamento="true"
+      onClick={() => { if (!invisivel && !bloqueado) onAdicionar(); }}
+      disabled={bloqueado}
+      tabIndex={invisivel ? -1 : undefined}
+      aria-hidden={invisivel || undefined}
+      aria-label="Adicionar equipamento"
+      aria-haspopup={abreOpcoes ? "dialog" : undefined}
+      title="Adicionar equipamento"
+      style={{
+        right: "max(1rem, env(safe-area-inset-right, 0px))",
+        bottom: "calc(1.25rem + env(safe-area-inset-bottom, 0px))",
+        opacity: invisivel ? 0 : undefined,
+      }}
+      className={`fixed z-30 inline-flex h-14 w-14 touch-manipulation items-center justify-center rounded-full border border-cyan-100/40 bg-gradient-to-br from-cyan-300 via-cyan-400 to-sky-500 text-slate-950 shadow-[0_12px_36px_-8px_rgba(6,182,212,0.6)] outline-none transition-[transform,opacity,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-[0_16px_44px_-8px_rgba(6,182,212,0.7)] focus-visible:ring-4 focus-visible:ring-cyan-300/60 focus-visible:ring-offset-4 focus-visible:ring-offset-slate-950 active:scale-95 disabled:cursor-wait disabled:opacity-50 motion-reduce:transform-none motion-reduce:transition-none sm:w-auto sm:gap-2.5 sm:px-5 print:hidden ${invisivel ? "pointer-events-none opacity-0" : "pointer-events-auto opacity-100"}`}
+    >
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="h-7 w-7 shrink-0">
+        <path d="M12 5v14M5 12h14" />
+      </svg>
+      <span className="hidden text-sm font-extrabold tracking-tight sm:inline">Adicionar equipamento</span>
+    </button>,
+    document.body,
   );
 }
 
