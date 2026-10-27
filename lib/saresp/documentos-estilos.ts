@@ -135,8 +135,8 @@ export const estilosDocumentoSaresp = `
   .obs p { margin: 0; }
   .obs p + p { margin-top: 9px; }
   .notas-impressao { display: flow-root; }
-  .assinaturas { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin: 10px 0 18px; break-inside: avoid; }
-  .assinatura { padding-top: 26px; text-align: center; }
+  .assinaturas { display: grid; grid-template-columns: 1fr 1fr; gap: 20mm; margin: 8mm 0 6mm; break-inside: avoid; }
+  .assinatura { min-height: 32mm; padding-top: 18mm; text-align: center; }
   .assinatura strong { display: block; padding-top: 8px; border-top: 1px solid #7c8da1; font-size: 8.5pt; }
   .assinatura span { display: block; margin-top: 4px; color: var(--secundaria); font-size: 8pt; }
 
@@ -169,7 +169,7 @@ export const estilosDocumentoSaresp = `
   .guia .brasao { width: 48px; height: 48px; }
   .guia .metaperiodo { margin-left: 0; display: block; }
   .guia .resumo { gap: 8px; }
-  .guia .assinaturas { gap: 22px; }
+  .guia .assinaturas { gap: 18mm; }
   .guia .cabecalho { margin-bottom: 13px; }
   .guia .institucional { padding-bottom: 10px; }
   .guia .institucional-texto { font-size: 7pt; line-height: 1.25; }
@@ -192,14 +192,19 @@ export const estilosDocumentoSaresp = `
   .guia .obs { padding: 9px 11px; font-size: 7.5pt; line-height: 1.4; margin-bottom: 12px; }
   .guia .obs h2 { font-size: 9pt; margin-bottom: 6px; }
   .guia .obs p + p { margin-top: 6px; }
-  .guia .assinaturas { margin: 0 0 12px; }
-  .guia .assinatura { padding-top: 18px; }
+  .guia .assinaturas { margin: 6mm 0 5mm; }
+  .guia .assinatura { min-height: 32mm; padding-top: 18mm; }
   .guia .assinatura strong { font-size: 8pt; line-height: 1.35; padding-top: 6px; }
   .guia .assinatura span { font-size: 7pt; line-height: 1.3; }
   .documento-curto .titulo-documento .sobretitulo { display: none; }
   .documento-curto .cabecalho { margin-bottom: 12px; }
   .documento-curto .obs { font-size: 8pt; line-height: 1.45; padding: 11px 13px; }
-  .documento-curto .assinatura { padding-top: 20px; }
+  .documento-curto .assinatura { min-height: 32mm; padding-top: 18mm; }
+
+  .pagina-continuacao[data-bloco="conferencia"] .intro { display: none; }
+  [data-bloco="conferencia"] td { padding: 9px; }
+  [data-bloco="conferencia"] small { margin-top: 3px; }
+  .status small { margin-top: 4px; font-weight: 400; }
 
   .pagina-densa td { padding-top: 7px; padding-bottom: 7px; font-size: 8.5pt; }
   .pagina-densa small { margin-top: 3px; font-size: 7pt; }

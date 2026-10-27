@@ -132,7 +132,7 @@ function assinatura(titulo: string, detalhe: string) {
   return `<div class="assinatura"><strong>${titulo}</strong><span>${detalhe}</span></div>`
 }
 
-/** Plano completo da edição, seguido da conferência da base cadastrada. */
+/** Plano operacional da edição. A conferência é emitida em outro documento. */
 export function montarPlanoSaresp(
   edicao: EdicaoDocumento | null,
   itens: ItemDocumento[],
@@ -157,9 +157,9 @@ export function montarPlanoSaresp(
         <td><strong>${htmlSeguro(item.escola_destino_nome)}</strong><small>CIE ${htmlSeguro(item.escola_destino_cie || 'Não informado')}</small></td>
         <td class="numero"><strong>${quantidade(item.quantidade)}</strong></td>
         <td>${htmlSeguro(formatarPeriodo(inicio, fim))}<small>${htmlSeguro(turno(item.turno_referencia))}</small></td>
-        <td>${data(deslocarDiaUtil(inicio, -1))}<small>Horário a combinar</small></td>
-        <td>${data(deslocarDiaUtil(fim, 1))}<small>Horário a combinar</small></td>
-        <td class="status">${htmlSeguro(situacao(item.status))}</td>
+        <td>${data(deslocarDiaUtil(inicio, -1))}</td>
+        <td>${data(deslocarDiaUtil(fim, 1))}</td>
+        <td class="status">${item.status === 'sugerido' ? 'Sugerido<small>Aguarda aprovação</small>' : htmlSeguro(situacao(item.status))}</td>
       </tr>
     `
   }).join('')
@@ -198,6 +198,22 @@ export function montarPlanoSaresp(
     </section>
   `
 
+  return documento(`Plano SARESP Digital - ${edicao?.titulo || 'Edição'}`, operacoes, true, ativos.length <= 1)
+}
+
+/** Conferência independente, mantendo a mesma regra de necessidade por cadastrados. */
+export function montarConferenciaSaresp(
+  edicao: EdicaoDocumento | null,
+  itens: ItemDocumento[],
+  demandas: DemandaConferencia[] = [],
+) {
+  const emitidoEm = emissao()
+  const ativos = itens.filter(item => item.status !== 'cancelado')
+  const conferencias = demandas.map(demanda => ({
+    demanda, ...conferirDemandaSaresp(demanda, ativos),
+  })).sort((a, b) => b.falta - a.falta || b.excedente - a.excedente ||
+    String(a.demanda.escola_nome).localeCompare(String(b.demanda.escola_nome), 'pt-BR'))
+
   const linhasConferencia = conferencias.map(item => `
     <tr>
       <td><strong>${htmlSeguro(item.demanda.escola_nome)}</strong>
@@ -213,7 +229,7 @@ export function montarPlanoSaresp(
     </tr>
   `).join('')
 
-  const conferencia = demandas.length ? `
+  const conferencia = `
     <section class="pagina" data-bloco="conferencia">
       ${cabecalho('Conferência da necessidade e cobertura', edicao, 'Conferência do planejamento')}
       <div class="resumo">
@@ -232,7 +248,7 @@ export function montarPlanoSaresp(
           <th>Unidade / série / aplicação</th><th>Maior turno</th><th>Cadastrados</th><th>Previsto</th>
           <th>Confirmado</th><th>Ainda falta</th><th>A rever²</th>
         </tr></thead>
-        <tbody>${linhasConferencia}</tbody>
+        <tbody>${linhasConferencia || '<tr><td colspan="7" class="vazio">Nenhuma demanda cadastrada nesta edição.</td></tr>'}</tbody>
       </table>
       <div class="obs">
         <h2>Como interpretar a conferência</h2>
@@ -242,9 +258,9 @@ export function montarPlanoSaresp(
       </div>
       ${rodape('SETEC Hub | Conferência do planejamento SARESP', emitidoEm)}
     </section>
-  ` : ''
+  `
 
-  return documento('Plano SARESP Digital', operacoes + conferencia, true, ativos.length <= 1 && demandas.length === 0)
+  return documento(`Conferência SARESP Digital - ${edicao?.titulo || 'Edição'}`, conferencia, true)
 }
 
 /** Guia com espaço para conferência manual e assinatura em todas as folhas. */

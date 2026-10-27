@@ -13,7 +13,7 @@ import { createClient } from "@/lib/supabase"
 import Modal from "@/components/saresp/ModalSaresp"
 import pageStyles from "@/components/saresp/SarespPage.module.css"
 import { conferirDemandaSaresp, coberturaNoPeriodo, dataValida, deslocarDiaUtil, fimPeriodo, formatarPeriodo, mensagemErroSaresp, periodosSobrepostos } from "@/lib/saresp/operacao"
-import { montarEmailSaresp, montarGuiaSaresp, montarPlanoSaresp } from "@/lib/saresp/documentos"
+import { montarConferenciaSaresp, montarEmailSaresp, montarGuiaSaresp, montarPlanoSaresp } from "@/lib/saresp/documentos"
 
 
 type SarespEdicao = {
@@ -2185,6 +2185,24 @@ export default function CentralSarespPage() {
     })
   }
 
+  function exportarPdfConferencia() {
+    if (resultados.length === 0) {
+      setFeedback({ tipo: "warning", texto: "Não há demandas nesta edição para gerar a conferência." })
+      return
+    }
+
+    const janela = window.open("", "_blank")
+    if (!janela) {
+      setFeedback({ tipo: "warning", texto: "O navegador bloqueou o PDF. Libere pop-ups para gerar a conferência." })
+      return
+    }
+
+    janela.document.open()
+    janela.document.write(montarConferenciaSaresp(edicaoSelecionada, remanejamentos, resultados))
+    janela.document.close()
+    setFeedback({ tipo: "success", texto: "PDF da conferência preparado em documento separado." })
+  }
+
   async function copiarTexto(texto: string, mensagemSucesso: string) {
     try {
       await navigator.clipboard.writeText(texto)
@@ -2540,10 +2558,23 @@ export default function CentralSarespPage() {
                       className="flex w-full items-center justify-between gap-4 rounded-2xl border border-red-500/25 bg-red-500/10 p-4 text-left transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <span>
-                        <span className="block text-sm font-black text-white">Gerar PDF final</span>
+                        <span className="block text-sm font-black text-white">PDF do plano</span>
                         <span className="mt-1 block text-xs font-semibold text-red-200/70">Assinatura somente SEINTEC e SETEC</span>
                       </span>
                       <span className="text-2xl">📄</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={exportarPdfConferencia}
+                      disabled={resultados.length === 0}
+                      className="flex w-full items-center justify-between gap-4 rounded-2xl border border-blue-500/25 bg-blue-500/10 p-4 text-left transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span>
+                        <span className="block text-sm font-black text-white">PDF da conferência</span>
+                        <span className="mt-1 block text-xs font-semibold text-blue-200/70">Cadastrados, cobertura e faltas em arquivo separado</span>
+                      </span>
+                      <span className="text-2xl">📑</span>
                     </button>
                   </div>
 
@@ -3095,11 +3126,11 @@ export default function CentralSarespPage() {
                     </h2>
                     <p className="mt-1 max-w-4xl text-sm font-medium leading-relaxed text-slate-500">
                       Aprove, conclua, cancele, gere e-mails e exporte a documentação final do
-                      remanejamento em PDF institucional, Excel formatado e guias individuais por remanejamento.
+                      remanejamento em PDF do plano, PDF da conferência, Excel formatado e guias individuais.
                     </p>
                   </div>
 
-                  <div className="flex flex-col gap-3 sm:flex-row">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
                     <button
                       type="button"
                       onClick={exportarPlanilhaPlanoFinal}
@@ -3115,7 +3146,16 @@ export default function CentralSarespPage() {
                       disabled={remanejamentos.length === 0 && resultados.length === 0}
                       className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-2xl border border-red-500/25 bg-red-500/10 px-5 text-xs font-black uppercase tracking-widest text-red-300 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      📄 Gerar PDF final
+                      📄 PDF do plano
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={exportarPdfConferencia}
+                      disabled={resultados.length === 0}
+                      className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-2xl border border-blue-500/25 bg-blue-500/10 px-5 text-xs font-black uppercase tracking-widest text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      📑 PDF da conferência
                     </button>
                   </div>
                 </div>
