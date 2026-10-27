@@ -12,7 +12,7 @@ import {
 import { createClient } from "@/lib/supabase"
 import Modal from "@/components/saresp/ModalSaresp"
 import pageStyles from "@/components/saresp/SarespPage.module.css"
-import { coberturaNoPeriodo, dataValida, deslocarDiaUtil, fimPeriodo, formatarPeriodo, mensagemErroSaresp, periodosSobrepostos } from "@/lib/saresp/operacao"
+import { conferirDemandaSaresp, coberturaNoPeriodo, dataValida, deslocarDiaUtil, fimPeriodo, formatarPeriodo, mensagemErroSaresp, periodosSobrepostos } from "@/lib/saresp/operacao"
 import { montarEmailSaresp, montarGuiaSaresp, montarPlanoSaresp } from "@/lib/saresp/documentos"
 
 
@@ -277,7 +277,7 @@ const LIMITE_SUGESTOES_EXPANDIDAS = 20
 const STATUS_FILTROS = [
   { value: "todos", label: "Todos" },
   { value: "precisa_remanejamento", label: "Déficit" },
-  { value: "sem_inventario", label: "Validar inventário" },
+  { value: "sem_inventario", label: "Conferir inventário (referência)" },
   { value: "atencao", label: "Atenção" },
   { value: "atende", label: "Atende" },
   { value: "sem_demanda", label: "Sem demanda" },
@@ -325,7 +325,7 @@ const STATUS_FILTROS_SUGESTOES: {
     icon: "🟢",
     description: "Sem déficit automático, mas disponível para ajuste manual",
   },
-  { value:"validar_inventario", label:"Validar inventário", icon:"📦", description:"Escolas sem base confirmada de equipamentos funcionando" },
+  { value:"validar_inventario", label:"Conferir inventário (referência)", icon:"📦", description:"Escolas sem base confirmada de equipamentos funcionando" },
 ]
 
 const ABAS = [
@@ -689,7 +689,7 @@ function haversineKm(
 function getStatusConfig(status?: string | null) {
   const value = textoSeguro(status, "sem_demanda")
 
-  if (value === "sem_inventario") return {label:"Validar inventário",short:"Validar inventário",badge:"border-orange-500/30 bg-orange-500/10 text-orange-300",dot:"bg-orange-400"}
+  if (value === "sem_inventario") return {label:"Conferir inventário (referência)",short:"Validar inventário",badge:"border-orange-500/30 bg-orange-500/10 text-orange-300",dot:"bg-orange-400"}
   if (value === "precisa_remanejamento") {
     return {
       label: "Precisa remanejamento",
@@ -823,12 +823,7 @@ function headerToKey(header: string) {
   if (key.includes("noite")) return "alunos_noite"
   if (key.includes("total") && key.includes("aluno")) return "total_alunos"
 
-  if (
-    key.includes("equipamento") ||
-    key.includes("equipamentos") ||
-    key.includes("cadastrado") ||
-    key.includes("cadastrados")
-  ) {
+  if (key.includes("cadastrad") && !key.includes("aluno")) {
     return "equipamentos_cadastrados"
   }
 
@@ -858,6 +853,9 @@ function parseCsvSaresp(text: string) {
     return headerToKey(h)
   })
   if(!headers.includes("cie") || !headers.includes("escola") || !headers.some(h=>["alunos_manha","alunos_tarde","alunos_noite"].includes(h))) throw new Error("Confira os cabeçalhos do CSV: CIE, Escola e alunos separados por turno são necessários.")
+  if (!headers.includes("equipamentos_cadastrados")) throw new Error("Inclua a coluna Equipamentos cadastrados no CSV: ela é a base da necessidade de remanejamento.")
+  const reconhecidos = headers.filter(h => ["cie","escola","alunos_manha","alunos_tarde","alunos_noite","total_alunos","equipamentos_cadastrados"].includes(h))
+  if (new Set(reconhecidos).size !== reconhecidos.length) throw new Error("Há cabeçalhos repetidos ou ambíguos no CSV. Mantenha apenas uma coluna para Equipamentos cadastrados e para cada turno.")
   const inteiro=(valor:string, linha:number, nome:string, opcional=false)=>{
     const t=(valor || "").trim().replace(/\s/g,"")
     if(!t || (opcional && /^(pendente|n[aã]o informado|-|n\/a)$/i.test(t))) return 0
@@ -874,7 +872,8 @@ function parseCsvSaresp(text: string) {
     if(vistos.has(chave)) throw new Error(`CIE ${chave} aparece mais de uma vez. Consolide os turnos da escola antes de importar.`)
     vistos.add(chave)
     const manha=inteiro(raw.alunos_manha,registro.linha,"Manhã"), tarde=inteiro(raw.alunos_tarde,registro.linha,"Tarde"), noite=inteiro(raw.alunos_noite,registro.linha,"Noite")
-    rows.push({cie,escola,alunos_manha:manha,alunos_tarde:tarde,alunos_noite:noite,total_alunos:inteiro(raw.total_alunos,registro.linha,"Total") || manha+tarde+noite,equipamentos_cadastrados:inteiro(raw.equipamentos_cadastrados,registro.linha,"Equipamentos de referência",true),linha_original:registro.linha})
+    if (!(raw.equipamentos_cadastrados || "").trim()) throw new Error(`Linha ${registro.linha}: preencha Equipamentos cadastrados. Se não houver, informe 0 explicitamente.`)
+    rows.push({cie,escola,alunos_manha:manha,alunos_tarde:tarde,alunos_noite:noite,total_alunos:inteiro(raw.total_alunos,registro.linha,"Total") || manha+tarde+noite,equipamentos_cadastrados:inteiro(raw.equipamentos_cadastrados,registro.linha,"Equipamentos cadastrados"),linha_original:registro.linha})
   }
   if(rows.length>5000) throw new Error("O CSV deve conter até 5.000 escolas por importação.")
   return {rows,lidas:registros.length-1,ignoradas}
@@ -986,7 +985,7 @@ export default function CentralSarespPage() {
       if (error) throw error
       if (consultaRef.current !== requisicao) return
       const base = data as { versao:number; resultados:SarespResultado[]; doadoras:SarespDoadora[]; sugestoes:SarespSugestao[]; remanejamentos:SarespRemanejamento[]; pode_gerenciar:boolean; gerado_em:string; alertas:{id:string;origem:string;destino:string;quantidade:number;disponivel:number}[] }
-      if (!base || base.versao!==1 || !Array.isArray(base.resultados) || !Array.isArray(base.doadoras) || !Array.isArray(base.sugestoes) || !Array.isArray(base.remanejamentos)) throw new Error("Resposta SARESP incompleta. Atualize a página após aplicar o SQL.")
+      if (!base || base.versao!==2 || !Array.isArray(base.resultados) || !Array.isArray(base.doadoras) || !Array.isArray(base.sugestoes) || !Array.isArray(base.remanejamentos)) throw new Error("Aplique o SQL 014-saresp-necessidade-cadastrados.sql para calcular a necessidade pelos equipamentos cadastrados; depois atualize a página.")
       setResultados(base.resultados); setDoadoras(base.doadoras); setSugestoesView(base.sugestoes); setRemanejamentos(base.remanejamentos)
       setPodeGerenciar(Boolean(base.pode_gerenciar)); setAlertasPlano(base.alertas || []); setAtualizadoEm(base.gerado_em)
     } catch (error) {
@@ -1040,7 +1039,7 @@ export default function CentralSarespPage() {
         : true
 
       const matchStatus =
-        filtroStatus === "todos" ? true : item.status_calculado === filtroStatus
+        filtroStatus === "todos" ? true : filtroStatus === "sem_inventario" ? item.situacao_inventario !== "confirmado" : item.status_calculado === filtroStatus
 
       return matchBusca && matchStatus
     })
@@ -1071,7 +1070,7 @@ export default function CentralSarespPage() {
     return coberturaNoPeriodo(getRemanejamentosAtivosParaDestino(sugestao.destino_id, sugestao.destino_nome, sugestao.edicao_id), sugestao.data_prova, sugestao.data_prova_fim)
   }
   function getPlanejadoParaResultado(resultado: SarespResultado) {
-    return coberturaNoPeriodo(getRemanejamentosAtivosParaDestino(resultado.escola_id, resultado.escola_nome, resultado.edicao_id), resultado.data_prova, resultado.data_prova_fim)
+    return conferirDemandaSaresp(resultado, remanejamentos).previsto
   }
 
   function getPendenteParaDestino(sugestao: SarespSugestao) {
@@ -1101,7 +1100,7 @@ export default function CentralSarespPage() {
 
   function getStatusOperacionalResultado(resultado: SarespResultado): SugestaoStatusInfo {
     if (resultado.status_calculado === "sem_inventario") return {
-      label:"Validar inventário", description:"Não há inventário confirmado para calcular a capacidade desta escola. O total recebido não é usado como disponibilidade.",
+      label:"Conferir inventário (referência)", description:"Não há inventário confirmado para calcular a capacidade desta escola. O total recebido não é usado como disponibilidade.",
       badge:"border-orange-500/30 bg-orange-500/10 text-orange-300", dot:"bg-orange-400", tone:"yellow",
     }
     const planejado = getPlanejadoParaResultado(resultado)
@@ -1453,7 +1452,7 @@ export default function CentralSarespPage() {
           grupo.destino === filtroEscolaSugestao
 
         const statusFiltroOk =
-          filtroStatusSugestao === "todos" || grupo.statusFiltro === filtroStatusSugestao
+          filtroStatusSugestao === "todos" || (filtroStatusSugestao === "validar_inventario" ? grupo.resultado?.situacao_inventario !== "confirmado" : grupo.statusFiltro === filtroStatusSugestao)
 
         return escolaFiltroOk && statusFiltroOk
       })
@@ -2006,9 +2005,14 @@ export default function CentralSarespPage() {
       })
       .join("")
 
+    const conferenciasHtml = resultados.map(r=> {
+      const c=conferirDemandaSaresp(r,remanejamentos)
+      return `<tr>${[r.escola_nome,r.cie,r.serie,formatarPeriodo(r.data_prova,r.data_prova_fim),c.maiorTurno,c.cadastrados,c.previsto,c.confirmado,c.falta,c.excedente].map(v=>`<td>${escaparHtml(v)}</td>`).join("")}</tr>`
+    }).join("")
     const resumo = [
       ["Edição", edicaoSelecionada?.titulo || "-"],
       ["Ano", edicaoSelecionada?.ano || "-"],
+      ["Base da necessidade", "Equipamentos cadastrados, da planilha importada"],
       ["Período da aplicação", formatarPeriodo(edicaoSelecionada?.data_prova_padrao,edicaoSelecionada?.data_prova_fim_padrao || edicaoSelecionada?.data_prova_padrao)],
       ["Retirada prevista", getDataRetiradaFormatada(edicaoSelecionada?.data_prova_padrao)],
       ["Devolução prevista", getDataDevolucaoFormatada(edicaoSelecionada?.data_prova_fim_padrao || edicaoSelecionada?.data_prova_padrao)],
@@ -2080,6 +2084,13 @@ export default function CentralSarespPage() {
           <br />
 
           <table>
+            <tr><td class="section" colspan="10">Conferência do planejamento — base: Equipamentos cadastrados</td></tr>
+            <tr>${["Escola","CIE","Série","Período","Maior turno","Cadastrados","Previsto","Confirmado","Ainda falta","A rever (margem)"].map(t=>`<th>${escaparHtml(t)}</th>`).join("")}</tr>
+            ${conferenciasHtml}
+            <tr><td colspan="10">Previsto inclui sugeridos, aprovados e concluídos; confirmado inclui aprovados e concluídos. Vale a menor cobertura diária do período. Quantidade a rever não cancela planos.</td></tr>
+          </table>
+          <br />
+          <table>
             <tr><td class="section">Orientações obrigatórias</td></tr>
             ${getOrientacoesInstitucionaisTexto()
               .map((item) => `<tr><td>${escaparHtml(item)}</td></tr>`)
@@ -2093,7 +2104,7 @@ export default function CentralSarespPage() {
   function exportarPlanilhaPlanoFinal() {
     const linhas = montarLinhasPlanilhaPlanoFinal()
 
-    if (linhas.length === 0) {
+    if (linhas.length === 0 && resultados.length === 0) {
       setFeedback({
         tipo: "warning",
         texto: "Não há remanejamentos ativos para exportar.",
@@ -2114,7 +2125,7 @@ export default function CentralSarespPage() {
   }
 
   function montarHtmlPlanoFinal() {
-    return montarPlanoSaresp(edicaoSelecionada, remanejamentos, resultados.filter(r=>r.status_calculado==="sem_inventario").length)
+    return montarPlanoSaresp(edicaoSelecionada, remanejamentos, resultados)
   }
 
   function montarHtmlGuiaRemanejamento(remanejamento: SarespRemanejamento) {
@@ -2146,7 +2157,7 @@ export default function CentralSarespPage() {
   function exportarPdfPlanoFinal() {
     const ativos = getRemanejamentosAtivos()
 
-    if (ativos.length === 0) {
+    if (ativos.length === 0 && resultados.length === 0) {
       setFeedback({
         tipo: "warning",
         texto: "Não há remanejamentos ativos para gerar o PDF do plano final.",
@@ -2233,7 +2244,7 @@ export default function CentralSarespPage() {
                 Central SARESP
               </Badge>
               <Badge className="border-cyan-500/25 bg-cyan-500/10 text-cyan-300">
-                Inventário funcionando
+                Equipamentos cadastrados
               </Badge>
               <Badge className="border-emerald-500/25 bg-emerald-500/10 text-emerald-300">
                 Notebook • Tablet • Desktop PED
@@ -2248,8 +2259,8 @@ export default function CentralSarespPage() {
             </h1>
 
             <p className="mt-4 max-w-3xl text-sm font-medium leading-relaxed text-slate-400 md:text-base">
-              Simulação operacional com base no inventário atualizado, considerando somente
-              equipamentos aptos para aplicação digital e reserva por todo o período da aplicação.
+              Necessidade calculada pelos equipamentos cadastrados no CSV e pelos alunos do maior turno.
+              Empréstimos consideram todo o período; a disponibilidade das cedentes é conferida no inventário.
             </p>
 
             <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_auto_auto]">
@@ -2323,7 +2334,8 @@ export default function CentralSarespPage() {
         <span>{podeGerenciar ? "Gestão habilitada" : "Modo de consulta"} · {atualizadoEm ? `Atualizado em ${formatarDataHora(atualizadoEm)}` : "Carregando base da edição"}</span>
         {podeGerenciar && <a href="/saresp/gestao" className="font-semibold text-cyan-300 hover:underline">Gerenciar edições e datas →</a>}
       </div>
-      {resultados.some(r=>r.status_calculado==="sem_inventario") && <div role="status" className="rounded-2xl border border-orange-500/30 bg-orange-500/10 p-4 text-sm text-orange-200"><strong>{resultados.filter(r=>r.status_calculado==="sem_inventario").length} escola(s) precisam validar o inventário.</strong> A capacidade e o déficit dessas escolas aguardam confirmação. Quantidade recebida e total do CSV não substituem equipamentos funcionando.</div>}
+      <div role="status" className="rounded-2xl border border-cyan-500/25 bg-cyan-500/10 p-4 text-sm text-cyan-100"><strong>Base da necessidade: Equipamentos cadastrados, da planilha importada.</strong> A falta é o maior turno menos esse total. O inventário é uma referência separada e limita o que uma cedente pode emprestar. Margem operacional é adicional opcional.</div>
+      <ConferenciaPlanejamento resultados={resultadosFiltrados} planos={remanejamentos} />
       {alertasPlano.length>0 && <details className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200"><summary className="cursor-pointer font-bold">{alertasPlano.length} operação(ões) do plano precisam de revisão de saldo no período</summary><p className="mt-3">Os registros foram preservados. Confira o inventário, as reservas de outras edições e a quantidade antes de executar.</p><ul className="mt-3 space-y-2">{alertasPlano.map(a=><li key={a.id}>{a.origem} → {a.destino}: {a.quantidade} no plano; {a.disponivel} disponíveis para esta operação.</li>)}</ul></details>}
       <section className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_420px]">
         <Panel>
@@ -2340,13 +2352,13 @@ export default function CentralSarespPage() {
             />
             <InfoBlock
               label="Fonte"
-              value="Inventário funcionando"
-              detail="CSV mantido apenas como referência"
+              value="Equipamentos cadastrados"
+              detail="Base de necessidade: coluna do CSV"
             />
             <InfoBlock
               label="Regra SARESP"
-              value="Notebook, Tablet e Desktop PED"
-              detail="Puxa funcionando do inventário mais recente"
+              value="Maior turno − cadastrados"
+              detail="Doadoras: móveis funcionando, limitados ao cadastro quando informado"
             />
           </div>
         </Panel>
@@ -2511,7 +2523,7 @@ export default function CentralSarespPage() {
                     <button
                       type="button"
                       onClick={exportarPlanilhaPlanoFinal}
-                      disabled={getRemanejamentosAtivos().length === 0}
+                      disabled={getRemanejamentosAtivos().length === 0 && resultados.length === 0}
                       className="flex w-full items-center justify-between gap-4 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 p-4 text-left transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <span>
@@ -2524,7 +2536,7 @@ export default function CentralSarespPage() {
                     <button
                       type="button"
                       onClick={exportarPdfPlanoFinal}
-                      disabled={getRemanejamentosAtivos().length === 0}
+                      disabled={getRemanejamentosAtivos().length === 0 && resultados.length === 0}
                       className="flex w-full items-center justify-between gap-4 rounded-2xl border border-red-500/25 bg-red-500/10 p-4 text-left transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <span>
@@ -2707,7 +2719,7 @@ export default function CentralSarespPage() {
                   </h2>
                   <p className="mt-2 text-sm font-medium leading-relaxed text-slate-500">
                     Não precisa importar a coluna “Necessidade de Remanejamento”.
-                    O sistema usa o maior valor entre manhã, tarde e noite.
+                    O sistema compara o maior turno com Equipamentos cadastrados. Essa coluna é obrigatória; informe zero explicitamente quando não houver equipamentos.
                   </p>
 
                   <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950 p-4 text-xs font-bold leading-relaxed text-slate-300">
@@ -2729,9 +2741,9 @@ export default function CentralSarespPage() {
                   tone="blue"
                 />
                 <KpiCard
-                  title="Capacidade útil"
+                  title="Equipamentos cadastrados"
                   value={estatisticas.capacidadeTotal}
-                  subtitle="Após reserva técnica"
+                  subtitle="Base da necessidade na planilha"
                   tone="cyan"
                 />
                 <KpiCard
@@ -2798,7 +2810,7 @@ export default function CentralSarespPage() {
                       manual em caso de oscilação de equipamentos, logística ou necessidade operacional.
                     </p>
                     <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-cyan-500/25 bg-cyan-500/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-cyan-300">
-                      🧭 Raio mínimo ampliado para {formatarDistancia(raioSugestoesKm)}
+                      🧭 Raio de busca: {formatarDistancia(raioSugestoesKm)}
                     </div>
                   </div>
 
@@ -3091,7 +3103,7 @@ export default function CentralSarespPage() {
                     <button
                       type="button"
                       onClick={exportarPlanilhaPlanoFinal}
-                      disabled={remanejamentos.length === 0}
+                      disabled={remanejamentos.length === 0 && resultados.length === 0}
                       className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 px-5 text-xs font-black uppercase tracking-widest text-emerald-300 transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       📊 Exportar Excel
@@ -3100,7 +3112,7 @@ export default function CentralSarespPage() {
                     <button
                       type="button"
                       onClick={exportarPdfPlanoFinal}
-                      disabled={remanejamentos.length === 0}
+                      disabled={remanejamentos.length === 0 && resultados.length === 0}
                       className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-2xl border border-red-500/25 bg-red-500/10 px-5 text-xs font-black uppercase tracking-widest text-red-300 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       📄 Gerar PDF final
@@ -3184,7 +3196,7 @@ export default function CentralSarespPage() {
             <Panel>
               <SectionHeader
                 title="Escolas possíveis doadoras"
-                description="Escolas que não apareceram no CSV desta edição, com sobra calculada pelo inventário mais recente e filtrada por Notebook, Tablet e Desktop PED."
+                description="Escolas fora do CSV da edição. A sobra usa notebooks e tablets funcionando, protege o uso próprio e as reservas; quando há cadastro SARESP no mesmo ano, ele também limita a disponibilidade."
               />
 
               {doadorasDisponiveis.length === 0 ? (
@@ -3359,11 +3371,11 @@ export default function CentralSarespPage() {
                 value={getTurnoLabel(resultadoDetalhe.turno_critico)}
               />
               <DetailBox
-                label="Equipamentos base"
-                value={resultadoDetalhe.status_calculado==="sem_inventario" ? "A validar" : resultadoDetalhe.equipamentos_base}
+                label="Equipamentos cadastrados"
+                value={resultadoDetalhe.equipamentos_planilha}
               />
               <DetailBox
-                label="Capacidade útil"
+                label="Capacidade cadastrada"
                 value={resultadoDetalhe.capacidade_util}
               />
               <DetailBox
@@ -3459,6 +3471,32 @@ export default function CentralSarespPage() {
   )
 }
 
+function ConferenciaPlanejamento({ resultados, planos }: { resultados: SarespResultado[]; planos: SarespRemanejamento[] }) {
+  const linhas = resultados.map(r => ({ resultado:r, ...conferirDemandaSaresp(r,planos) }))
+    .sort((a,b)=>b.falta-a.falta || b.excedente-a.excedente || String(a.resultado.escola_nome).localeCompare(String(b.resultado.escola_nome),'pt-BR'))
+  const pendentes = linhas.filter(l=>l.falta>0)
+  const rever = linhas.filter(l=>l.excedente>0)
+  return <details className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4">
+    <summary className="cursor-pointer text-sm font-bold text-white">Conferência do planejamento · {pendentes.length} aplicação(ões) com falta · {rever.length} recebimento(s) acima da necessidade</summary>
+    <p className="mt-3 text-xs leading-relaxed text-slate-400">Recorte dos filtros atuais. Previsto inclui sugeridos, aprovados e concluídos; confirmado inclui aprovados e concluídos. A menor cobertura diária é usada em provas de dois dias. Quantidade a rever pode ser margem deliberada e não cancela nenhum plano.</p>
+    <div className="mt-3 max-h-[480px] overflow-auto rounded-xl border border-slate-800">
+      <table className="w-full min-w-[760px] text-left text-xs">
+        <thead className="bg-slate-900 text-slate-300"><tr>{["Escola / aplicação","Maior turno","Cadastrados","Funcionando¹","Previsto","Confirmado","Ainda falta","A rever²"].map(t=><th key={t} className="p-3 font-bold">{t}</th>)}</tr></thead>
+        <tbody>{linhas.map(l=><tr key={l.resultado.demanda_id} className="border-t border-slate-800 text-slate-300">
+          <td className="p-3"><strong className="text-white">{l.resultado.escola_nome}</strong><br/>CIE {l.resultado.cie} · {l.resultado.serie}<br/>{formatarPeriodo(l.resultado.data_prova,l.resultado.data_prova_fim)}</td>
+          <td className="p-3">{formatarNumero(l.maiorTurno)}</td><td className="p-3 font-bold text-cyan-300">{formatarNumero(l.cadastrados)}</td>
+          <td className="p-3">{l.resultado.situacao_inventario==='confirmado' ? formatarNumero(l.resultado.equipamentos_inventario) : "A validar"}</td>
+          <td className="p-3">{formatarNumero(l.previsto)}</td><td className="p-3">{formatarNumero(l.confirmado)}</td>
+          <td className={`p-3 font-bold ${l.falta>0 ? "text-red-300" : "text-emerald-300"}`}>{formatarNumero(l.falta)}</td>
+          <td className="p-3 text-amber-300">{l.excedente>0 ? `${formatarNumero(l.excedente)}${l.semNecessidade ? " · sem déficit" : " · margem"}` : "—"}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+    {linhas.length===0 && <p className="mt-3 text-sm text-slate-400">Nenhuma aplicação no filtro atual.</p>}
+    <p className="mt-3 text-xs text-slate-500">¹ Referência do inventário, não entra no cálculo da falta. ² Previsto acima do déficit inicial, sem incluir margem opcional.</p>
+  </details>
+}
+
 function ResultadoCard({
   resultado,
   onDetalhes,
@@ -3506,7 +3544,7 @@ function ResultadoCard({
           <MiniMetric label="Manhã" value={resultado.alunos_manha} />
           <MiniMetric label="Tarde" value={resultado.alunos_tarde} />
           <MiniMetric label="Noite" value={resultado.alunos_noite} />
-          <MiniMetric label="Capacidade" value={resultado.capacidade_util} />
+          <MiniMetric label="Cadastrados" value={resultado.equipamentos_planilha} />
           <MiniMetric
             label={deficit > 0 ? "Déficit" : "Saldo"}
             value={deficit > 0 ? deficit : saldo}
@@ -3522,13 +3560,13 @@ function ResultadoCard({
 
       <div className="mt-5 flex flex-col gap-3 border-t border-slate-800 pt-4 md:flex-row md:items-center md:justify-between">
         <div className="text-xs font-semibold text-slate-600">
-          Planilha:{" "}
+          Cadastrados (base):{" "}
           <span className="text-slate-400">
             {formatarNumero(resultado.equipamentos_planilha)}
           </span>{" "}
-          • Inventário:{" "}
+          • Funcionando (referência):{" "}
           <span className="text-slate-400">
-            {resultado.status_calculado==="sem_inventario" ? "A validar" : formatarNumero(resultado.equipamentos_inventario)}
+            {resultado.situacao_inventario!=="confirmado" ? "A validar" : formatarNumero(resultado.equipamentos_inventario)}
           </span>{" "}
           • Base usada:{" "}
           <span className="text-slate-400">
@@ -3828,8 +3866,8 @@ function DoadoraCard({ doadora }: { doadora: SarespDoadora }) {
       </div>
 
       <div className="space-y-2 text-xs font-semibold text-slate-500">
-        <p>Notebooks/tablets funcionando: {formatarNumero(doadora.equipamentos_base)}</p>
-        <p>Fonte: {textoSeguro(doadora.fonte_capacidade, "Não informada")}</p>
+        <p>Móveis considerados após limite cadastrado: {formatarNumero(doadora.equipamentos_base)}</p>
+        <p>Fonte: Inventário funcionando, limitado ao cadastro quando informado</p>
         <p>Tipos considerados: Notebook, Tablet e Desktop PED</p>
         <p>Endereço: {textoSeguro(doadora.endereco, "Não informado")}</p>
         <p>Técnico: {textoSeguro(doadora.tecnico_atribuido, "Não informado")}</p>
@@ -4032,7 +4070,7 @@ function LoadingPanel() {
           Carregando simulação
         </p>
         <p className="mt-2 text-sm font-medium text-slate-500">
-          Consolidando demandas, inventário funcionando, doadoras e sugestões por distância.
+          Consolidando equipamentos cadastrados, demandas, doadoras e sugestões por distância.
         </p>
       </div>
     </Panel>

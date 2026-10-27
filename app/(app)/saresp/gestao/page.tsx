@@ -97,7 +97,7 @@ const STATUS_OPTIONS: { value: StatusEdicao; label: string; description: string 
   },
 ]
 
-const FONTE_OPTIONS = [{value:"inventario",label:"Inventário funcionando",description:"Usa o último inventário da escola: notebooks, tablets e desktops pedagógicos funcionando. O CSV permanece como referência."}]
+const FONTE_OPTIONS = [{value:"planilha",label:"Equipamentos cadastrados (CSV)",description:"Necessidade = maior turno menos equipamentos cadastrados. O inventário é referência e limita a doação, sem substituir o cadastro da aplicação."}]
 
 
 function emptyForm(): FormEdicao {
@@ -108,7 +108,7 @@ function emptyForm(): FormEdicao {
     data_prova_fim_padrao: "",
     serie_padrao: "3ª série EM",
     status: "rascunho",
-    fonte_equipamentos: "inventario",
+    fonte_equipamentos: "planilha",
     reserva_tecnica_padrao: "0",
     margem_atencao: "5",
     distancia_maxima_km: "10",
@@ -199,7 +199,7 @@ function getStatusClass(status?: string | null) {
 
 function getFonteLabel(value?: string | null) {
   const fonte = FONTE_OPTIONS.find((item) => item.value === value)
-  return fonte?.label || "Inventário funcionando"
+  return fonte?.label || "Equipamentos cadastrados (CSV)"
 }
 
 export default function GestaoSarespPage() {
@@ -297,7 +297,7 @@ export default function GestaoSarespPage() {
       data_prova_fim_padrao: edicao.data_prova_fim_padrao || "",
       serie_padrao: edicao.serie_padrao || "",
       status: (edicao.status as StatusEdicao) || "rascunho",
-      fonte_equipamentos: "inventario",
+      fonte_equipamentos: "planilha",
       reserva_tecnica_padrao: String(edicao.reserva_tecnica_padrao ?? 0),
       margem_atencao: String(edicao.margem_atencao ?? 5),
       distancia_maxima_km:
@@ -422,7 +422,7 @@ export default function GestaoSarespPage() {
       data_prova_fim_padrao: form.data_prova_fim_padrao || null,
       serie_padrao: form.serie_padrao.trim() || null,
       status: form.status,
-      fonte_equipamentos: "inventario",
+      fonte_equipamentos: "planilha",
       reserva_tecnica_padrao: Number(form.reserva_tecnica_padrao || 0),
       margem_atencao: Number(form.margem_atencao || 0),
       distancia_maxima_km:
@@ -877,7 +877,7 @@ export default function GestaoSarespPage() {
                   Dica rápida
                 </p>
                 <p className="mt-2 text-sm font-medium leading-relaxed text-slate-400">
-                  Para EF com dois dias, informe o início e o fim. A retirada antecede o primeiro dia e a devolução ocorre após o último. O inventário funcionando é a base de capacidade.
+                  Para EF com dois dias, informe o início e o fim. A retirada antecede o primeiro dia e a devolução ocorre após o último. A necessidade usa Equipamentos cadastrados do CSV. Reserva técnica protege a cedente; margem adicional é opcional.
                 </p>
               </div>
 

@@ -1,59 +1,343 @@
-import { deslocarDiaUtil, fimPeriodo, formatarPeriodo, type EdicaoPeriodo, type PeriodoSaresp } from './operacao'
+import {
+  conferirDemandaSaresp,
+  deslocarDiaUtil,
+  fimPeriodo,
+  formatarPeriodo,
+  type DemandaConferencia,
+  type EdicaoPeriodo,
+  type PeriodoSaresp,
+} from './operacao'
+import { estilosDocumentoSaresp } from './documentos-estilos'
+import { BRASAO_SP } from './documentos-identidade'
+import { paginacaoDocumentoSaresp } from './documentos-paginacao'
 
-type EdicaoDocumento = EdicaoPeriodo & { titulo?: string | null; ano?: number | null }
+type EdicaoDocumento = EdicaoPeriodo & {
+  titulo?: string | null
+  ano?: number | null
+}
+
 type ItemDocumento = PeriodoSaresp & {
-  id: string; escola_origem_nome: string | null; escola_origem_cie?: string | null;
-  escola_destino_nome: string | null; escola_destino_cie?: string | null;
-  quantidade: number | null; turno_referencia?: string | null; status: string;
-  observacao?: string | null; distancia_km?: number | null;
+  id: string
+  edicao_id?: string | null
+  escola_destino_id?: string | null
+  escola_origem_nome: string | null
+  escola_origem_cie?: string | null
+  escola_destino_nome: string | null
+  escola_destino_cie?: string | null
+  quantidade: number | null
+  turno_referencia?: string | null
+  status: string
+  observacao?: string | null
+  distancia_km?: number | null
 }
-type EscolaContato = { nome_escola?: string | null; cie?: string | null; endereco?: string | null; telefone?: string | null; email?: string | null }
-export function htmlSeguro(v: unknown) { return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!) }
-const data = (d?: string | null) => d ? formatarPeriodo(d, d) : 'A combinar'
-const quantidade = (n?: number | null) => Math.max(Number(n) || 0, 0).toLocaleString('pt-BR')
-const situacao = (s: string) => ({sugerido:'Sugerido · aguarda aprovação',aprovado:'Aprovado',concluido:'Concluído',cancelado:'Cancelado'})[s] || s
-const turno = (t?: string | null) => ({manha:'Manhã',tarde:'Tarde',noite:'Noite'})[t || ''] || t || 'A combinar'
-const emissao = () => new Date().toLocaleString('pt-BR', {timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'short'})
-function cabecalho(titulo: string, edicao?: EdicaoDocumento | null) {
-  return `<header><div class="marca">SETEC<span>HUB</span></div><div><p class="institucional">SECRETARIA DA EDUCAÇÃO DO ESTADO DE SÃO PAULO · URE GUARULHOS SUL</p><p class="setores">SEINTEC · Serviço de Informações Educacionais e Tecnologia<br>SETEC · Seção de Tecnologia</p><h1>${htmlSeguro(titulo)}</h1><p class="edicao">${htmlSeguro(edicao?.titulo || 'SARESP Digital')} · ${htmlSeguro(formatarPeriodo(edicao?.data_prova_padrao,edicao?.data_prova_fim_padrao || edicao?.data_prova_padrao))}</p></div></header>`
-}
-const css = `
-*{box-sizing:border-box}body{margin:0;color:#17263d;background:white;font:10pt Arial,Helvetica,sans-serif;line-height:1.4}header{display:flex;align-items:flex-start;gap:16px;border-bottom:3px solid #163d6a;padding-bottom:12px;margin-bottom:14px}.marca{font-weight:800;color:#163d6a;font-size:17pt;letter-spacing:-.6px;line-height:1;padding:8px 12px 8px 0;border-right:1px solid #c7d4e0}.marca span{display:block;color:#267f98;font-size:10pt;letter-spacing:3px;margin-top:7px}.institucional{font-size:7.5pt;font-weight:700;letter-spacing:.35px;margin:0 0 5px;color:#314863}.setores{font-size:8pt;color:#53657b;margin:0 0 8px}h1{font-size:18pt;line-height:1.2;margin:0 0 5px;color:#163d6a}.edicao{margin:0;font-size:9pt;color:#53657b}.resumo{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0}.resumo>div{border:1px solid #cfdae5;border-top:3px solid #267f98;padding:9px 12px;border-radius:4px;background:#f7fafc}.resumo span{display:block;font-size:7.5pt;color:#53657b}.resumo strong{display:block;font-size:15pt;margin-top:3px}table{width:100%;border-collapse:collapse;table-layout:fixed;margin:12px 0}thead{display:table-header-group}th{background:#163d6a;color:white;text-align:left;font-size:8pt;padding:8px;border:1px solid #163d6a}td{padding:8px;border:1px solid #cfdae5;vertical-align:top;font-size:9pt;overflow-wrap:anywhere}tr{break-inside:avoid;page-break-inside:avoid}tbody tr:nth-child(even){background:#f7fafc}small{display:block;color:#61738b;font-size:8pt;margin-top:3px}.center{text-align:center}.obs{font-size:9pt;border-left:3px solid #267f98;padding:9px 12px;background:#f3f8fb;margin:12px 0;break-inside:avoid}.obs p{margin:3px 0}.assinaturas{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:28px;break-inside:avoid}.assinaturas div{border-top:1px solid #61738b;text-align:center;padding-top:6px;font-size:8.5pt}footer{margin-top:16px;border-top:1px solid #cfdae5;padding-top:7px;font-size:7.5pt;color:#61738b;display:flex;justify-content:space-between;gap:15px}.pagina+.pagina{break-before:page;page-break-before:always}.serial td{height:25px;padding:4px 8px;font-size:8pt}.serial th{padding:6px}.ficha{display:grid;grid-template-columns:1fr 1fr;gap:10px}.ficha div{padding:10px 12px;border:1px solid #cfdae5;border-radius:4px}.ficha span{display:block;font-size:7.5pt;text-transform:uppercase;letter-spacing:.5px;color:#53657b;margin-bottom:4px}.ficha strong{font-size:10pt}.titulo-secao{font-size:11pt;margin:14px 0 5px;color:#163d6a}.print-toolbar{background:#f1f5f9;border-bottom:1px solid #cfdae5;padding:12px 20px;display:flex;gap:15px;align-items:center;font-size:10pt}.print-toolbar button{background:#163d6a;color:white;border:0;border-radius:6px;padding:10px 16px;cursor:pointer}main{padding:20px;max-width:1400px;margin:auto}@media print{.print-toolbar{display:none}main{padding:0;max-width:none}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}a{color:inherit;text-decoration:none}}
-`
-const roteiroPaginacao = "<script>\nwindow.addEventListener('load', function () {\n  var main=document.querySelector('main'),originais=Array.from(main.querySelectorAll('.pagina'));\n  if(!originais.length)return;\n  var guia=!!originais[0].querySelector('.serial'),primeira=originais[0],ultima=originais[originais.length-1];\n  var modelo=primeira.querySelector('table'),rodape=primeira.querySelector('footer');\n  var linhas=originais.flatMap(function(p){return Array.from(p.querySelectorAll('tbody tr'));});\n  var prefixo=[],aux=modelo.previousElementSibling;\n  while(aux){prefixo.unshift(aux.cloneNode(true));aux=aux.previousElementSibling;}\n  var notas=document.createElement('div');notas.className='notas-impressao';\n  [ultima.querySelector('.obs'),ultima.querySelector('.assinaturas')].forEach(function(e){if(e)notas.appendChild(e.cloneNode(true));});\n  var altura=(guia?273:186)*96/25.4-12,largura=(guia?186:273)+'mm';\n  main.style.width=largura;main.style.padding='0';main.style.maxWidth='none';\n  main.replaceChildren();var paginas=[];\n  function nova(primeiraPagina,comTabela){\n    var p=document.createElement('section');p.className='pagina';p.style.display='flow-root';p.style.width=largura;\n    prefixo.forEach(function(e){if(!guia&&!primeiraPagina&&e.classList.contains('resumo'))return;p.appendChild(e.cloneNode(true));});\n    if(comTabela){var t=modelo.cloneNode(true);t.querySelector('tbody').replaceChildren();p.appendChild(t);}\n    if(guia)p.appendChild(notas.cloneNode(true));p.appendChild(rodape.cloneNode(true));main.appendChild(p);paginas.push(p);return p;\n  }\n  var atual=nova(true,true);\n  linhas.forEach(function(linha){\n    var corpo=atual.querySelector('tbody');corpo.appendChild(linha.cloneNode(true));\n    if(atual.getBoundingClientRect().height>altura&&corpo.rows.length>1){var retirar=corpo.lastElementChild;retirar.remove();atual=nova(false,true);atual.querySelector('tbody').appendChild(retirar);}\n  });\n  if(!guia){atual.insertBefore(notas,atual.querySelector('footer'));if(atual.getBoundingClientRect().height>altura){notas.remove();atual=nova(false,false);atual.insertBefore(notas,atual.querySelector('footer'));}}\n  paginas.forEach(function(p,i){\n    var f=p.querySelector('footer');f.lastElementChild.textContent=(guia?'Conferência e assinatura nesta folha':'Plano operacional')+' · '+(i+1)+'/'+paginas.length;\n    if(guia){var numeros=Array.from(p.querySelectorAll('tbody tr td:nth-child(3n+1)')).map(function(e){return Number(e.textContent);}).filter(Boolean);var titulo=p.querySelector('.titulo-secao');if(titulo&&numeros.length)titulo.textContent='Conferência dos equipamentos '+Math.min.apply(null,numeros)+' a '+Math.max.apply(null,numeros);}\n  });\n  window.__sarespPaginado=true;\n},{once:true});\n</script>\n"
 
-function documento(titulo: string, corpo: string, paisagem = false) {
- return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${htmlSeguro(titulo)}</title><style>@page{size:A4 ${paisagem?'landscape':'portrait'};margin:12mm}${css}</style></head><body><div class="print-toolbar"><button type="button" onclick="window.print()">Salvar em PDF / imprimir</button><span>Confira o documento e escolha “Salvar como PDF”. Na guia, emita duas vias.</span></div><main>${corpo}</main>${roteiroPaginacao}</body></html>`
+type EscolaContato = {
+  nome_escola?: string | null
+  cie?: string | null
+  endereco?: string | null
+  telefone?: string | null
+  email?: string | null
 }
-export function montarPlanoSaresp(edicao: EdicaoDocumento | null, itens: ItemDocumento[], pendenciasInventario = 0) {
- const ativos = itens.filter(m => m.status !== 'cancelado')
- const porPagina = 7, paginas = Math.max(Math.ceil(ativos.length / porPagina),1)
- const total = ativos.reduce((s,m) => s+(Number(m.quantidade)||0),0)
- const conteudo = Array.from({length:paginas},(_,p) => {
-  const linhas = ativos.slice(p*porPagina,(p+1)*porPagina).map((m,i) => {
-   const ini = m.data_prova || edicao?.data_prova_padrao, fim = fimPeriodo(m,edicao)
-   return `<tr><td class="center">${p*porPagina+i+1}</td><td><strong>${htmlSeguro(m.escola_origem_nome)}</strong><small>CIE ${htmlSeguro(m.escola_origem_cie || '—')}</small></td><td><strong>${htmlSeguro(m.escola_destino_nome)}</strong><small>CIE ${htmlSeguro(m.escola_destino_cie || '—')}</small></td><td class="center"><strong>${quantidade(m.quantidade)}</strong></td><td>${htmlSeguro(formatarPeriodo(ini,fim))}<small>${htmlSeguro(turno(m.turno_referencia))}</small></td><td>${data(deslocarDiaUtil(ini,-1))}<small>Horário a combinar</small></td><td>${data(deslocarDiaUtil(fim,1))}<small>Horário a combinar</small></td><td>${htmlSeguro(situacao(m.status))}</td></tr>`
+
+/** Escapa os dados das escolas antes de inseri-los no documento. */
+export function htmlSeguro(valor: unknown) {
+  return String(valor ?? '').replace(/[&<>"']/g, caractere => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[caractere]!)
+}
+
+const data = (valor?: string | null) => valor ? formatarPeriodo(valor, valor) : 'A combinar'
+const quantidade = (valor?: number | null) => Math.max(Number(valor) || 0, 0).toLocaleString('pt-BR')
+const situacao = (valor: string) => ({
+  sugerido: 'Sugerido - aguarda aprovação',
+  aprovado: 'Aprovado',
+  concluido: 'Concluído',
+  cancelado: 'Cancelado',
+})[valor] || valor
+const turno = (valor?: string | null) => ({
+  manha: 'Manhã', tarde: 'Tarde', noite: 'Noite',
+})[valor || ''] || valor || 'A combinar'
+const emissao = () => new Date().toLocaleString('pt-BR', {
+  timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short',
+})
+
+function cabecalho(titulo: string, edicao: EdicaoDocumento | null, assunto: string) {
+  const periodo = formatarPeriodo(
+    edicao?.data_prova_padrao,
+    edicao?.data_prova_fim_padrao || edicao?.data_prova_padrao,
+  )
+
+  return `
+    <header class="cabecalho">
+      <div class="institucional">
+        <img class="brasao" src="${BRASAO_SP}" alt="Brasão do Estado de São Paulo" width="54" height="54">
+        <div class="institucional-texto">
+          <p>GOVERNO DO ESTADO DE SÃO PAULO</p>
+          <p>SECRETARIA DE ESTADO DA EDUCAÇÃO</p>
+          <p>UNIDADE REGIONAL DE ENSINO GUARULHOS SUL</p>
+          <p>SEINTEC - SERVIÇO DE INFORMAÇÕES EDUCACIONAIS E TECNOLOGIA</p>
+          <p>SETEC - SEÇÃO DE TECNOLOGIA</p>
+        </div>
+        <div aria-hidden="true"></div>
+      </div>
+      <div class="titulo-documento">
+        <p class="sobretitulo">SARESP Digital / ${htmlSeguro(assunto)}</p>
+        <h1>${htmlSeguro(titulo)}</h1>
+        <p class="edicao">
+          <strong>${htmlSeguro(edicao?.titulo || 'Edição selecionada')}</strong>
+          <span class="metaperiodo">Aplicação: ${htmlSeguro(periodo)}</span>
+        </p>
+      </div>
+    </header>
+  `
+}
+
+function rodape(referencia: string, emitidoEm: string) {
+  return `
+    <footer>
+      <span>URE Guarulhos Sul - SEINTEC / SETEC<br>${htmlSeguro(referencia)} | Emissão: ${htmlSeguro(emitidoEm)}</span>
+      <span>Página 1 de 1</span>
+    </footer>
+  `
+}
+
+function documento(titulo: string, corpo: string, paisagem = false, compacto = false) {
+  const largura = paisagem ? 267 : 180
+  const altura = paisagem ? 180 : 267
+
+  return `<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>${htmlSeguro(titulo)}</title>
+    <style>
+      @page { size: A4 ${paisagem ? 'landscape' : 'portrait'}; margin: 15mm; }
+      ${estilosDocumentoSaresp}
+    </style>
+  </head>
+  <body class="${paisagem ? 'plano' : 'guia'}${compacto ? ' documento-curto' : ''}">
+    <div class="print-toolbar">
+      <button id="imprimir-documento" type="button" disabled onclick="window.print()">Preparando documento...</button>
+      <span id="estado-documento">Carregando o brasão e organizando as páginas.</span>
+    </div>
+    <p id="aviso-impressao" class="aviso-impressao" role="alert"></p>
+    <main style="width:${largura}mm" data-altura="${altura}">${corpo}</main>
+    ${paginacaoDocumentoSaresp}
+  </body>
+</html>`
+}
+
+function assinatura(titulo: string, detalhe: string) {
+  return `<div class="assinatura"><strong>${titulo}</strong><span>${detalhe}</span></div>`
+}
+
+/** Plano completo da edição, seguido da conferência da base cadastrada. */
+export function montarPlanoSaresp(
+  edicao: EdicaoDocumento | null,
+  itens: ItemDocumento[],
+  demandas: DemandaConferencia[] = [],
+) {
+  const emitidoEm = emissao()
+  const ativos = itens.filter(item => item.status !== 'cancelado')
+  const total = ativos.reduce((soma, item) => soma + (Number(item.quantidade) || 0), 0)
+  const conferencias = demandas.map(demanda => ({
+    demanda, ...conferirDemandaSaresp(demanda, ativos),
+  })).sort((a, b) => b.falta - a.falta || b.excedente - a.excedente ||
+    String(a.demanda.escola_nome).localeCompare(String(b.demanda.escola_nome), 'pt-BR'))
+
+  const linhasOperacoes = ativos.map((item, indice) => {
+    const inicio = item.data_prova || edicao?.data_prova_padrao
+    const fim = fimPeriodo(item, edicao)
+
+    return `
+      <tr>
+        <td class="numero">${indice + 1}</td>
+        <td><strong>${htmlSeguro(item.escola_origem_nome)}</strong><small>CIE ${htmlSeguro(item.escola_origem_cie || 'Não informado')}</small></td>
+        <td><strong>${htmlSeguro(item.escola_destino_nome)}</strong><small>CIE ${htmlSeguro(item.escola_destino_cie || 'Não informado')}</small></td>
+        <td class="numero"><strong>${quantidade(item.quantidade)}</strong></td>
+        <td>${htmlSeguro(formatarPeriodo(inicio, fim))}<small>${htmlSeguro(turno(item.turno_referencia))}</small></td>
+        <td>${data(deslocarDiaUtil(inicio, -1))}<small>Horário a combinar</small></td>
+        <td>${data(deslocarDiaUtil(fim, 1))}<small>Horário a combinar</small></td>
+        <td class="status">${htmlSeguro(situacao(item.status))}</td>
+      </tr>
+    `
   }).join('')
-  return `<section class="pagina">${cabecalho('Plano de remanejamento · SARESP Digital',edicao)}${p===0?`<div class="resumo"><div><span>Operações no plano</span><strong>${ativos.length}</strong></div><div><span>Equipamentos nas operações¹</span><strong>${quantidade(total)}</strong></div><div><span>Operações aprovadas</span><strong>${ativos.filter(m=>m.status==='aprovado').length}</strong></div><div><span>Inventários a validar</span><strong>${pendenciasInventario}</strong></div></div>`:''}<table><colgroup><col style="width:4%"><col style="width:21%"><col style="width:21%"><col style="width:6%"><col style="width:14%"><col style="width:11%"><col style="width:11%"><col style="width:12%"></colgroup><thead><tr><th>#</th><th>Unidade cedente</th><th>Unidade contemplada</th><th>Qtd.</th><th>Aplicação</th><th>Retirada</th><th>Devolução</th><th>Situação</th></tr></thead><tbody>${linhas||'<tr><td colspan="8">Nenhuma operação ativa.</td></tr>'}</tbody></table>${p===paginas-1?`<div class="obs"><p><strong>Orientações:</strong> combinar horários diretamente entre as unidades; conferir funcionamento, acessórios, patrimônio e número de série na retirada e na devolução; assinar duas vias da guia e encaminhar à SETEC após a retirada.</p><p>Retirada: dia útil anterior ao início. Devolução: dia útil posterior ao fim. Datas consideram fins de semana e feriados nacionais; alinhar feriados locais.</p><p>¹ A quantidade é a soma das operações; o mesmo equipamento pode ser reutilizado em períodos distintos. Não representa estoque único. Documentos não alteram o inventário nem os status.</p></div><div class="assinaturas"><div>SEINTEC · Conferência e ciência</div><div>SETEC · Registro e acompanhamento</div></div>`:''}<footer><span>SETEC Hub · Emissão ${htmlSeguro(emissao())}</span><span>Plano operacional · ${p+1}/${paginas}</span></footer></section>`
- }).join('')
- return documento('Plano SARESP Digital',conteudo,true)
+
+  const operacoes = `
+    <section class="pagina" data-bloco="plano">
+      ${cabecalho('Plano de remanejamento de equipamentos', edicao, 'Planejamento operacional')}
+      <div class="resumo">
+        <div><span>Operações ativas</span><strong>${ativos.length}</strong></div>
+        <div><span>Equipamentos nas operações¹</span><strong>${quantidade(total)}</strong></div>
+        <div><span>Operações aprovadas</span><strong>${ativos.filter(item => item.status === 'aprovado').length}</strong></div>
+        <div><span>Aplicações com falta no plano</span><strong>${conferencias.filter(item => item.falta > 0).length}</strong></div>
+      </div>
+      <table>
+        <colgroup>
+          <col style="width:4%"><col style="width:19%"><col style="width:19%"><col style="width:6%">
+          <col style="width:15%"><col style="width:12%"><col style="width:12%"><col style="width:13%">
+        </colgroup>
+        <thead><tr>
+          <th>#</th><th>Unidade cedente</th><th>Unidade contemplada</th><th>Qtd.</th>
+          <th>Aplicação</th><th>Retirada prevista</th><th>Devolução prevista</th><th>Situação</th>
+        </tr></thead>
+        <tbody>${linhasOperacoes || '<tr><td colspan="8" class="vazio">Nenhuma operação ativa registrada nesta edição.</td></tr>'}</tbody>
+      </table>
+      ${ativos.length ? `<div class="obs">
+        <h2>Orientações para as unidades</h2>
+        <p>Combinar os horários diretamente entre as escolas. Conferir funcionamento, acessórios, patrimônio e número de série na retirada e na devolução. Preencher e assinar duas vias da guia e encaminhá-la à SETEC após a retirada.</p>
+        <p><strong>Logística:</strong> retirada no dia útil anterior ao início da aplicação e devolução no dia útil posterior ao término. As datas excluem fins de semana e feriados nacionais; alinhar feriados locais com as unidades.</p>
+        <p>¹ A quantidade soma as operações do plano. Um equipamento pode ser reutilizado em períodos distintos; esse total não representa estoque único. A emissão do documento não altera inventários nem status.</p>
+      </div>
+      <div class="assinaturas">
+        ${assinatura('SEINTEC', 'Conferência e ciência')}
+        ${assinatura('SETEC', 'Registro e acompanhamento')}
+      </div>` : ''}
+      ${rodape('SETEC Hub | Plano operacional SARESP', emitidoEm)}
+    </section>
+  `
+
+  const linhasConferencia = conferencias.map(item => `
+    <tr>
+      <td><strong>${htmlSeguro(item.demanda.escola_nome)}</strong>
+        <small>CIE ${htmlSeguro(item.demanda.cie || 'Não informado')} | ${htmlSeguro(item.demanda.serie || '')}</small>
+        <small>${htmlSeguro(formatarPeriodo(item.demanda.data_prova, item.demanda.data_prova_fim))}</small>
+      </td>
+      <td class="numero">${quantidade(item.maiorTurno)}</td>
+      <td class="numero"><strong>${quantidade(item.cadastrados)}</strong></td>
+      <td class="numero">${quantidade(item.previsto)}</td>
+      <td class="numero">${quantidade(item.confirmado)}</td>
+      <td class="numero ${item.falta > 0 ? 'falta' : 'coberto'}"><strong>${quantidade(item.falta)}</strong></td>
+      <td>${item.excedente > 0 ? `${quantidade(item.excedente)}<small>${item.semNecessidade ? 'Sem déficit inicial' : 'Margem acima da falta'}</small>` : '-'}</td>
+    </tr>
+  `).join('')
+
+  const conferencia = demandas.length ? `
+    <section class="pagina" data-bloco="conferencia">
+      ${cabecalho('Conferência da necessidade e cobertura', edicao, 'Conferência do planejamento')}
+      <div class="resumo">
+        <div><span>Aplicações conferidas</span><strong>${conferencias.length}</strong></div>
+        <div><span>Aplicações com falta</span><strong>${conferencias.filter(item => item.falta > 0).length}</strong></div>
+        <div><span>Quantidade ainda necessária¹</span><strong>${quantidade(conferencias.reduce((soma, item) => soma + item.falta, 0))}</strong></div>
+        <div><span>Recebimentos a rever</span><strong>${conferencias.filter(item => item.excedente > 0).length}</strong></div>
+      </div>
+      <p class="intro"><strong>Base: Equipamentos cadastrados, da planilha importada.</strong><br>Falta inicial = maior turno menos cadastrados. O inventário não substitui esse total no cálculo da necessidade.</p>
+      <table>
+        <colgroup>
+          <col style="width:34%"><col style="width:10%"><col style="width:11%"><col style="width:10%">
+          <col style="width:11%"><col style="width:10%"><col style="width:14%">
+        </colgroup>
+        <thead><tr>
+          <th>Unidade / série / aplicação</th><th>Maior turno</th><th>Cadastrados</th><th>Previsto</th>
+          <th>Confirmado</th><th>Ainda falta</th><th>A rever²</th>
+        </tr></thead>
+        <tbody>${linhasConferencia}</tbody>
+      </table>
+      <div class="obs">
+        <h2>Como interpretar a conferência</h2>
+        <p><strong>Previsto:</strong> sugeridos, aprovados e concluídos. <strong>Confirmado:</strong> aprovados e concluídos. Cancelados não são contabilizados. Em aplicações de dois dias, considera-se a menor cobertura diária do período.</p>
+        <p>² Quantidade prevista acima da falta inicial, antes da margem opcional. Pode representar uma reserva deliberada e requer conferência. Nenhum plano é cancelado automaticamente. O registro não comprova a entrega física.</p>
+        <p>¹ Soma de necessidades por aplicação, não de estoque único. A disponibilidade da cedente permanece limitada aos móveis funcionando, ao cadastro conhecido, ao uso próprio e às demais reservas.</p>
+      </div>
+      ${rodape('SETEC Hub | Conferência do planejamento SARESP', emitidoEm)}
+    </section>
+  ` : ''
+
+  return documento('Plano SARESP Digital', operacoes + conferencia, true, ativos.length <= 1 && demandas.length === 0)
 }
+
+/** Guia com espaço para conferência manual e assinatura em todas as folhas. */
 export function montarGuiaSaresp(edicao: EdicaoDocumento | null, item: ItemDocumento) {
- const ini=item.data_prova||edicao?.data_prova_padrao, fim=fimPeriodo(item,edicao)
- const qtd=Math.max(Math.trunc(Number(item.quantidade)||0),1), porPagina=36, paginas=Math.ceil(qtd/porPagina)
- const ref=item.id.slice(0,8).toUpperCase()
- const corpo=Array.from({length:paginas},(_,p)=>{
-  const indices=Array.from({length:Math.min(porPagina,qtd-p*porPagina)},(_,i)=>p*porPagina+i+1)
-  const linhas=Array.from({length:Math.ceil(indices.length/2)},(_,r)=>`<tr>${[indices[r*2],indices[r*2+1]].map(n=>n?`<td>${n}</td><td></td><td></td>`:'<td></td><td></td><td></td>').join('')}</tr>`).join('')
-  return `<section class="pagina">${cabecalho('Guia de remanejamento de equipamentos',edicao)}<div class="ficha"><div><span>Unidade cedente · de</span><strong>${htmlSeguro(item.escola_origem_nome)}</strong><small>CIE ${htmlSeguro(item.escola_origem_cie||'—')}</small></div><div><span>Unidade contemplada · para</span><strong>${htmlSeguro(item.escola_destino_nome)}</strong><small>CIE ${htmlSeguro(item.escola_destino_cie||'—')}</small></div></div><div class="resumo"><div><span>Quantidade total</span><strong>${quantidade(item.quantidade)}</strong></div><div><span>Aplicação</span><strong style="font-size:10pt">${htmlSeguro(formatarPeriodo(ini,fim))}</strong></div><div><span>Retirada prevista</span><strong style="font-size:11pt">${data(deslocarDiaUtil(ini,-1))}</strong></div><div><span>Devolução prevista</span><strong style="font-size:11pt">${data(deslocarDiaUtil(fim,1))}</strong></div></div><p><strong>Referência:</strong> ${htmlSeguro(ref)} · <strong>Situação:</strong> ${htmlSeguro(situacao(item.status))}</p><h2 class="titulo-secao">Conferência dos equipamentos ${p*porPagina+1} a ${p*porPagina+indices.length}</h2><table class="serial"><colgroup><col style="width:6%"><col style="width:27%"><col style="width:17%"><col style="width:6%"><col style="width:27%"><col style="width:17%"></colgroup><thead><tr><th>#</th><th>Número de série</th><th>Patrimônio</th><th>#</th><th>Número de série</th><th>Patrimônio</th></tr></thead><tbody>${linhas}</tbody></table><div class="obs"><p>Conferir funcionamento, acessórios e integridade na entrega e na devolução. Registrar divergências nesta guia e comunicar às direções e à SETEC. Guardar os equipamentos em local seguro durante todo o empréstimo.</p><p>Horários a combinar entre as unidades. Emitir duas vias assinadas; encaminhar à SETEC após a retirada.</p></div><div class="assinaturas"><div>Entregue por: __________________________<br>Nome / cargo · Data: ____/____/________</div><div>Recebido por: __________________________<br>Nome / cargo · Data: ____/____/________</div></div><footer><span>Guia ${htmlSeguro(ref)} · Emissão ${htmlSeguro(emissao())}</span><span>Conferência e assinatura nesta folha · ${p+1}/${paginas}</span></footer></section>`
- }).join('')
- return documento(`Guia_SARESP_${ref}`,corpo)
+  const inicio = item.data_prova || edicao?.data_prova_padrao
+  const fim = fimPeriodo(item, edicao)
+  const total = Math.max(Math.trunc(Number(item.quantidade) || 0), 1)
+  const referencia = item.id.slice(0, 8).toUpperCase()
+  const indices = Array.from({ length: total }, (_, indice) => indice + 1)
+  const linhas = Array.from({ length: Math.ceil(total / 2) }, (_, linha) => `
+    <tr>${[indices[linha * 2], indices[linha * 2 + 1]].map(numero =>
+      numero ? `<td class="numero">${numero}</td><td></td><td></td>` : '<td></td><td></td><td></td>',
+    ).join('')}</tr>
+  `).join('')
+
+  const corpo = `
+    <section class="pagina" data-bloco="guia">
+      ${cabecalho('Guia de remanejamento de equipamentos', edicao, 'Registro de entrega e recebimento')}
+      <div class="ficha">
+        <div><span class="rotulo">Unidade cedente - de</span><strong>${htmlSeguro(item.escola_origem_nome)}</strong><small>CIE ${htmlSeguro(item.escola_origem_cie || 'Não informado')}</small></div>
+        <div><span class="rotulo">Unidade contemplada - para</span><strong>${htmlSeguro(item.escola_destino_nome)}</strong><small>CIE ${htmlSeguro(item.escola_destino_cie || 'Não informado')}</small></div>
+      </div>
+      <div class="resumo">
+        <div><span>Quantidade total</span><strong>${quantidade(item.quantidade)}</strong></div>
+        <div><span>Aplicação</span><strong class="texto-data">${htmlSeguro(formatarPeriodo(inicio, fim))}</strong></div>
+        <div><span>Retirada prevista</span><strong class="texto-data">${data(deslocarDiaUtil(inicio, -1))}</strong></div>
+        <div><span>Devolução prevista</span><strong class="texto-data">${data(deslocarDiaUtil(fim, 1))}</strong></div>
+      </div>
+      <div class="referencia"><span><strong>Referência:</strong> ${htmlSeguro(referencia)}</span><span><strong>Situação:</strong> ${htmlSeguro(situacao(item.status))}</span></div>
+      <h2 class="titulo-secao">Conferência dos equipamentos 1 a ${total}</h2>
+      <table class="serial">
+        <colgroup>
+          <col style="width:6%"><col style="width:28%"><col style="width:16%">
+          <col style="width:6%"><col style="width:28%"><col style="width:16%">
+        </colgroup>
+        <thead><tr><th>#</th><th>Número de série</th><th>Patrimônio</th><th>#</th><th>Número de série</th><th>Patrimônio</th></tr></thead>
+        <tbody>${linhas}</tbody>
+      </table>
+      <div class="obs">
+        <h2>Conferência e responsabilidade</h2>
+        <p>Conferir funcionamento, acessórios, patrimônio e integridade na entrega e na devolução. Registrar divergências e comunicar às direções e à SETEC. Manter os equipamentos em local seguro.</p>
+        <p>Combinar horários entre as unidades. Assinar duas vias e encaminhar à SETEC após a retirada. Preencher os responsáveis em todas as folhas.</p>
+      </div>
+      <div class="assinaturas">
+        ${assinatura('Entregue por', 'Nome / cargo: ______________________<br>Data: ____/____/________')}
+        ${assinatura('Recebido por', 'Nome / cargo: ______________________<br>Data: ____/____/________')}
+      </div>
+      ${rodape(`SETEC Hub | Guia ${referencia}`, emissao())}
+    </section>
+  `
+
+  return documento(`Guia_SARESP_${referencia}`, corpo)
 }
+
+/** Rascunho de e-mail. Nenhuma mensagem é enviada automaticamente. */
 export function montarEmailSaresp(edicao: EdicaoDocumento | null, item: ItemDocumento, origem?: EscolaContato | null, destino?: EscolaContato | null) {
  const ini=item.data_prova||edicao?.data_prova_padrao, fim=fimPeriodo(item,edicao)
  const de=origem?.nome_escola||item.escola_origem_nome||'Unidade cedente', para=destino?.nome_escola||item.escola_destino_nome||'Unidade contemplada'
  const destinatarios=Array.from(new Set([origem?.email,destino?.email].flatMap(v=>(v||'').split(/[;,\s]+/)).map(v=>v.trim()).filter(v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)))).join('; ')
  const assunto=`SARESP Digital | ${quantidade(item.quantidade)} equipamentos | ${formatarPeriodo(ini,fim)} | ${para}`
- const corpo=`Prezados(as),\n\nEncaminhamos o planejamento de empréstimo de equipamentos para a aplicação do SARESP Digital — ${edicao?.titulo||'edição selecionada'}.\n${item.status==='sugerido'?'Esta proposta está sujeita à aprovação da SETEC. Aguarde a confirmação antes de realizar a movimentação.':`Situação do registro: ${situacao(item.status)}.`}\n\nRESUMO DO EMPRÉSTIMO\n• Quantidade: ${quantidade(item.quantidade)} equipamento(s).\n• Aplicação: ${formatarPeriodo(ini,fim)}.\n• Turno de referência: ${turno(item.turno_referencia)}.\n• Retirada prevista: ${data(deslocarDiaUtil(ini,-1))}.\n• Devolução prevista: ${data(deslocarDiaUtil(fim,1))}.\n\nUNIDADE CEDENTE\n${de} — CIE ${origem?.cie||item.escola_origem_cie||'não informado'}\nLocal de retirada: ${origem?.endereco||'confirmar diretamente com a unidade'}\nTelefone: ${origem?.telefone||'não informado'}\n\nUNIDADE CONTEMPLADA\n${para} — CIE ${destino?.cie||item.escola_destino_cie||'não informado'}\nTelefone: ${destino?.telefone||'não informado'}\n\nPROVIDÊNCIAS\n1. A unidade contemplada deverá alinhar os horários de retirada e devolução diretamente com a cedente. As datas acima são previsões que excluem fins de semana e feriados nacionais; ajustar feriados locais e particularidades com ciência à SETEC.\n2. Na retirada, conferir funcionamento, acessórios, patrimônio, número de série e integridade dos equipamentos. Preencher a Guia de Remanejamento, assinar duas vias e encaminhar à SETEC.\n3. Manter os itens em local seguro durante todo o período. Qualquer dano ou divergência deverá ser comunicado imediatamente à direção da cedente, com ciência à SETEC.\n4. Devolver os equipamentos nas mesmas condições de recebimento, com nova conferência entre as unidades.\n\nSolicitamos que respondam a este e-mail confirmando o responsável, o horário combinado e, após a execução, a retirada e a devolução.\n\nAtenciosamente,\nSEINTEC / SETEC\nUnidade Regional de Ensino de Guarulhos Sul\n\nReferência do planejamento: ${item.id.slice(0,8).toUpperCase()}`
+ const corpo=`Prezados(as),
+
+Encaminhamos o planejamento de empréstimo de equipamentos para a aplicação do SARESP Digital — ${edicao?.titulo||'edição selecionada'}.
+${item.status==='sugerido'?'Esta proposta está sujeita à aprovação da SETEC. Aguarde a confirmação antes de realizar a movimentação.':`Situação do registro: ${situacao(item.status)}.`}
+
+RESUMO DO EMPRÉSTIMO
+• Quantidade: ${quantidade(item.quantidade)} equipamento(s).
+• Aplicação: ${formatarPeriodo(ini,fim)}.
+• Turno de referência: ${turno(item.turno_referencia)}.
+• Retirada prevista: ${data(deslocarDiaUtil(ini,-1))}.
+• Devolução prevista: ${data(deslocarDiaUtil(fim,1))}.
+
+UNIDADE CEDENTE
+${de} — CIE ${origem?.cie||item.escola_origem_cie||'não informado'}
+Local de retirada: ${origem?.endereco||'confirmar diretamente com a unidade'}
+Telefone: ${origem?.telefone||'não informado'}
+
+UNIDADE CONTEMPLADA
+${para} — CIE ${destino?.cie||item.escola_destino_cie||'não informado'}
+Telefone: ${destino?.telefone||'não informado'}
+
+PROVIDÊNCIAS
+1. A unidade contemplada deverá alinhar os horários de retirada e devolução diretamente com a cedente. As datas acima são previsões que excluem fins de semana e feriados nacionais; ajustar feriados locais e particularidades com ciência à SETEC.
+2. Na retirada, conferir funcionamento, acessórios, patrimônio, número de série e integridade dos equipamentos. Preencher a Guia de Remanejamento, assinar duas vias e encaminhar à SETEC.
+3. Manter os itens em local seguro durante todo o período. Qualquer dano ou divergência deverá ser comunicado imediatamente à direção da cedente, com ciência à SETEC.
+4. Devolver os equipamentos nas mesmas condições de recebimento, com nova conferência entre as unidades.
+
+Solicitamos que respondam a este e-mail confirmando o responsável, o horário combinado e, após a execução, a retirada e a devolução.
+
+Atenciosamente,
+SEINTEC / SETEC
+Unidade Regional de Ensino de Guarulhos Sul
+
+Referência do planejamento: ${item.id.slice(0,8).toUpperCase()}`
  return {assunto,corpo,destinatarios}
 }
