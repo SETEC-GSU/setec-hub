@@ -9,6 +9,9 @@ import {
   type ReactNode,
 } from "react"
 import { createClient } from "@/lib/supabase"
+import Modal from "@/components/saresp/ModalSaresp"
+import pageStyles from "@/components/saresp/SarespPage.module.css"
+import { dataValida, formatarPeriodo, mensagemErroSaresp } from "@/lib/saresp/operacao"
 import {
   AlertTriangle,
   Archive,
@@ -28,13 +31,14 @@ import {
   X,
 } from "lucide-react"
 
-type StatusEdicao = "rascunho" | "ativo" | "finalizado" | "arquivado"
+type StatusEdicao = "rascunho" | "ativo" | "concluido" | "arquivado"
 
 type SarespEdicao = {
   id: string
   titulo: string
   ano: number
   data_prova_padrao: string | null
+  data_prova_fim_padrao: string | null
   serie_padrao: string | null
   status: StatusEdicao | string
   fonte_equipamentos: string
@@ -50,6 +54,7 @@ type FormEdicao = {
   titulo: string
   ano: string
   data_prova_padrao: string
+  data_prova_fim_padrao: string
   serie_padrao: string
   status: StatusEdicao
   fonte_equipamentos: string
@@ -78,10 +83,10 @@ const STATUS_OPTIONS: { value: StatusEdicao; label: string; description: string 
   {
     value: "ativo",
     label: "Ativo",
-    description: "Edição principal usada na Central SARESP.",
+    description: "Edição disponível para operação. Outras edições ativas permanecem ativas.",
   },
   {
-    value: "finalizado",
+    value: "concluido",
     label: "Finalizado",
     description: "Edição encerrada, mantida para histórico.",
   },
@@ -92,32 +97,18 @@ const STATUS_OPTIONS: { value: StatusEdicao; label: string; description: string 
   },
 ]
 
-const FONTE_OPTIONS = [
-  {
-    value: "planilha",
-    label: "Planilha",
-    description: "Usa a coluna EQUIPAMENTOS CADASTRADOS importada no CSV.",
-  },
-  {
-    value: "inventario",
-    label: "Inventário",
-    description: "Prioriza dados de equipamentos funcionando no inventário.",
-  },
-  {
-    value: "maior_valor",
-    label: "Maior valor",
-    description: "Usa o maior valor entre planilha e inventário quando disponível.",
-  },
-]
+const FONTE_OPTIONS = [{value:"inventario",label:"Inventário funcionando",description:"Usa o último inventário da escola: notebooks, tablets e desktops pedagógicos funcionando. O CSV permanece como referência."}]
+
 
 function emptyForm(): FormEdicao {
   return {
     titulo: "",
     ano: String(new Date().getFullYear()),
     data_prova_padrao: "",
+    data_prova_fim_padrao: "",
     serie_padrao: "3ª série EM",
     status: "rascunho",
-    fonte_equipamentos: "planilha",
+    fonte_equipamentos: "inventario",
     reserva_tecnica_padrao: "0",
     margem_atencao: "5",
     distancia_maxima_km: "10",
@@ -179,10 +170,7 @@ function formatarNumero(value: unknown) {
   return numeroSeguro(value).toLocaleString("pt-BR")
 }
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message
-  return "Não foi possível concluir a operação."
-}
+function getErrorMessage(error: unknown) { return mensagemErroSaresp(error) }
 
 function getStatusLabel(status?: string | null) {
   const item = STATUS_OPTIONS.find((option) => option.value === status)
@@ -198,7 +186,7 @@ function getStatusClass(status?: string | null) {
     return "border-yellow-500/30 bg-yellow-500/10 text-yellow-300"
   }
 
-  if (status === "finalizado") {
+  if (status === "concluido") {
     return "border-blue-500/30 bg-blue-500/10 text-blue-300"
   }
 
@@ -211,7 +199,7 @@ function getStatusClass(status?: string | null) {
 
 function getFonteLabel(value?: string | null) {
   const fonte = FONTE_OPTIONS.find((item) => item.value === value)
-  return fonte?.label || textoSeguro(value, "Não informada")
+  return fonte?.label || "Inventário funcionando"
 }
 
 export default function GestaoSarespPage() {
@@ -296,7 +284,7 @@ export default function GestaoSarespPage() {
       total: edicoes.length,
       ativas: edicoes.filter((item) => item.status === "ativo").length,
       rascunhos: edicoes.filter((item) => item.status === "rascunho").length,
-      finalizadas: edicoes.filter((item) => item.status === "finalizado").length,
+      finalizadas: edicoes.filter((item) => item.status === "concluido").length,
       arquivadas: edicoes.filter((item) => item.status === "arquivado").length,
     }
   }, [edicoes])
@@ -306,9 +294,10 @@ export default function GestaoSarespPage() {
       titulo: edicao.titulo || "",
       ano: String(edicao.ano || new Date().getFullYear()),
       data_prova_padrao: edicao.data_prova_padrao || "",
+      data_prova_fim_padrao: edicao.data_prova_fim_padrao || "",
       serie_padrao: edicao.serie_padrao || "",
       status: (edicao.status as StatusEdicao) || "rascunho",
-      fonte_equipamentos: edicao.fonte_equipamentos || "planilha",
+      fonte_equipamentos: "inventario",
       reserva_tecnica_padrao: String(edicao.reserva_tecnica_padrao ?? 0),
       margem_atencao: String(edicao.margem_atencao ?? 5),
       distancia_maxima_km:
@@ -383,10 +372,12 @@ export default function GestaoSarespPage() {
       return "Informe um ano válido."
     }
 
-    if (!form.data_prova_padrao) {
+    if (!dataValida(form.data_prova_padrao)) {
       return "Informe a data padrão da prova."
     }
 
+    if (form.data_prova_fim_padrao && (!dataValida(form.data_prova_fim_padrao) || form.data_prova_fim_padrao<form.data_prova_padrao)) return "A data final precisa ser igual ou posterior à data inicial."
+    if ([reserva,margem,ano].some(valor=>!Number.isInteger(valor))) return "Ano, reserva e margem precisam ser números inteiros."
     if (!form.serie_padrao.trim()) {
       return "Informe a série padrão da edição."
     }
@@ -406,18 +397,7 @@ export default function GestaoSarespPage() {
     return null
   }
 
-  async function desativarOutrasEdicoes(edicaoIdAtiva: string) {
-    const { error } = await supabase
-      .from("saresp_edicoes")
-      .update({
-        status: "finalizado",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("status", "ativo")
-      .neq("id", edicaoIdAtiva)
 
-    if (error) throw error
-  }
 
   async function salvarEdicao(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -439,9 +419,10 @@ export default function GestaoSarespPage() {
       titulo: form.titulo.trim(),
       ano: Number(form.ano),
       data_prova_padrao: form.data_prova_padrao || null,
+      data_prova_fim_padrao: form.data_prova_fim_padrao || null,
       serie_padrao: form.serie_padrao.trim() || null,
       status: form.status,
-      fonte_equipamentos: form.fonte_equipamentos,
+      fonte_equipamentos: "inventario",
       reserva_tecnica_padrao: Number(form.reserva_tecnica_padrao || 0),
       margem_atencao: Number(form.margem_atencao || 0),
       distancia_maxima_km:
@@ -463,9 +444,6 @@ export default function GestaoSarespPage() {
 
         if (error) throw error
 
-        if (payload.status === "ativo") {
-          await desativarOutrasEdicoes(edicaoSelecionada.id)
-        }
 
         setEdicoes((prev) =>
           prev.map((item) =>
@@ -488,9 +466,6 @@ export default function GestaoSarespPage() {
 
         const novaEdicao = data as SarespEdicao
 
-        if (payload.status === "ativo") {
-          await desativarOutrasEdicoes(novaEdicao.id)
-        }
 
         setEdicoes((prev) => [novaEdicao, ...prev])
 
@@ -503,7 +478,9 @@ export default function GestaoSarespPage() {
         })
       }
 
-      fecharModal()
+      setModalAtivo(null)
+      setEdicaoSelecionada(null)
+      setForm(emptyForm())
       await carregarEdicoes()
     } catch (error) {
       console.error("[Gestão SARESP] Erro ao salvar edição:", error)
@@ -531,9 +508,6 @@ export default function GestaoSarespPage() {
 
       if (error) throw error
 
-      if (status === "ativo") {
-        await desativarOutrasEdicoes(edicao.id)
-      }
 
       setFeedback({
         tipo: "success",
@@ -559,10 +533,7 @@ export default function GestaoSarespPage() {
     setFeedback(null)
 
     try {
-      const { error } = await supabase
-        .from("saresp_edicoes")
-        .delete()
-        .eq("id", edicaoSelecionada.id)
+      const { error } = await supabase.rpc("hub_saresp_excluir_edicao", {p_edicao_id:edicaoSelecionada.id})
 
       if (error) throw error
 
@@ -571,7 +542,9 @@ export default function GestaoSarespPage() {
         texto: "Edição excluída com sucesso.",
       })
 
-      fecharModal()
+      setModalAtivo(null)
+      setEdicaoSelecionada(null)
+      setForm(emptyForm())
       await carregarEdicoes()
     } catch (error) {
       console.error("[Gestão SARESP] Erro ao excluir edição:", error)
@@ -586,7 +559,7 @@ export default function GestaoSarespPage() {
   }
 
   return (
-    <div className="mx-auto max-w-[1700px] space-y-6 pb-12">
+    <div className={`${pageStyles.page} mx-auto max-w-[1700px] space-y-6 pb-12`}>
       <section className="relative overflow-hidden rounded-[2rem] border border-blue-500/20 bg-[#020617] p-5 shadow-xl shadow-blue-950/10 md:p-7">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.22),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(6,182,212,0.14),transparent_34%)]" />
 
@@ -613,7 +586,7 @@ export default function GestaoSarespPage() {
 
             <p className="mt-4 max-w-3xl text-sm font-medium leading-relaxed text-slate-400 md:text-base">
               Cadastre edições, datas, séries, parâmetros técnicos, fonte de capacidade,
-              distância máxima e regras usadas na simulação de remanejamento.
+              datas inicial e final, reserva e distância máxima. Cada edição tem operação e histórico próprios.
             </p>
 
             <div className="mt-5 flex flex-col gap-3 sm:flex-row">
@@ -641,9 +614,9 @@ export default function GestaoSarespPage() {
           <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
             <MiniStat label="Total" value={estatisticas.total} tone="blue" />
             <MiniStat label="Ativas" value={estatisticas.ativas} tone="emerald" />
-            <MiniStat label="Rascunhos" value={estatisticas.rascunhos} tone="yellow" />
-            <MiniStat label="Finalizadas" value={estatisticas.finalizadas} tone="cyan" />
-            <MiniStat label="Arquivadas" value={estatisticas.arquivadas} tone="slate" />
+            <MiniStat label="Rascunho" value={estatisticas.rascunhos} tone="yellow" />
+            <MiniStat label="Concluídas" value={estatisticas.finalizadas} tone="cyan" />
+            <MiniStat label="Arquivo" value={estatisticas.arquivadas} tone="slate" />
           </div>
         </div>
       </section>
@@ -713,8 +686,7 @@ export default function GestaoSarespPage() {
             <div>
               <h2 className="text-lg font-black text-white">Controle seguro</h2>
               <p className="mt-1 text-sm font-medium leading-relaxed text-slate-500">
-                Ao marcar uma edição como ativa, as demais edições ativas são finalizadas
-                automaticamente para evitar conflito na Central SARESP.
+                As edições podem permanecer ativas ao mesmo tempo. A disponibilidade considera os períodos de prova e os empréstimos entre as escolas.
               </p>
             </div>
           </div>
@@ -741,7 +713,7 @@ export default function GestaoSarespPage() {
                 onDuplicar={() => abrirDuplicar(edicao)}
                 onDeletar={() => abrirDeletar(edicao)}
                 onAtivar={() => atualizarStatus(edicao, "ativo")}
-                onFinalizar={() => atualizarStatus(edicao, "finalizado")}
+                onFinalizar={() => atualizarStatus(edicao, "concluido")}
                 onArquivar={() => atualizarStatus(edicao, "arquivado")}
                 onRascunho={() => atualizarStatus(edicao, "rascunho")}
               />
@@ -800,7 +772,7 @@ export default function GestaoSarespPage() {
                 />
               </Field>
 
-              <Field label="Data padrão da prova *">
+              <Field label="Início da aplicação *">
                 <input
                   type="date"
                   value={form.data_prova_padrao}
@@ -812,6 +784,10 @@ export default function GestaoSarespPage() {
                 />
               </Field>
 
+              <Field label="Fim da aplicação (opcional)">
+                <input type="date" min={form.data_prova_padrao || undefined} value={form.data_prova_fim_padrao} onChange={event=>atualizarCampo("data_prova_fim_padrao",event.target.value)} className="input-field" />
+                <p className="mt-2 text-xs text-slate-400">Em branco: um dia de prova. Preencha para reservar até o fim da aplicação.</p>
+              </Field>
               <Field label="Série padrão *">
                 <input
                   value={form.serie_padrao}
@@ -901,8 +877,7 @@ export default function GestaoSarespPage() {
                   Dica rápida
                 </p>
                 <p className="mt-2 text-sm font-medium leading-relaxed text-slate-400">
-                  Para o piloto do 3º EM, mantenha fonte “Planilha” caso queira usar a
-                  quantidade importada no CSV como referência principal.
+                  Para EF com dois dias, informe o início e o fim. A retirada antecede o primeiro dia e a devolução ocorre após o último. O inventário funcionando é a base de capacidade.
                 </p>
               </div>
 
@@ -913,7 +888,7 @@ export default function GestaoSarespPage() {
                     onChange={(event) =>
                       atualizarCampo("descricao", event.target.value)
                     }
-                    placeholder="Ex.: Edição piloto para aplicação do 3º EM, baseada na planilha operacional enviada pelas unidades."
+                    placeholder="Ex.: Aplicação do 8º ano EF em dois dias, com empréstimo até a conclusão das provas."
                     className="input-field min-h-[140px] resize-none leading-relaxed"
                   />
                 </Field>
@@ -992,7 +967,7 @@ export default function GestaoSarespPage() {
                 {edicaoSelecionada.titulo}
               </h3>
               <p className="mt-2 text-sm font-semibold text-slate-500">
-                {edicaoSelecionada.ano} • {formatarData(edicaoSelecionada.data_prova_padrao)} •{" "}
+                {edicaoSelecionada.ano} • {formatarPeriodo(edicaoSelecionada.data_prova_padrao,edicaoSelecionada.data_prova_fim_padrao || edicaoSelecionada.data_prova_padrao)} •{" "}
                 {textoSeguro(edicaoSelecionada.serie_padrao, "Série não informada")}
               </p>
             </div>
@@ -1114,9 +1089,9 @@ function EdicaoCard({
 
           <div className="mt-4 grid grid-cols-1 gap-2 text-xs font-semibold text-slate-500 md:grid-cols-2">
             <p>
-              Data padrão:{" "}
+              Aplicação:{" "}
               <span className="font-black text-slate-300">
-                {formatarData(edicao.data_prova_padrao)}
+                {formatarPeriodo(edicao.data_prova_padrao,edicao.data_prova_fim_padrao || edicao.data_prova_padrao)}
               </span>
             </p>
             <p>
@@ -1152,7 +1127,7 @@ function EdicaoCard({
             }
             tone="cyan"
           />
-          <MetricCard label="Fonte" value={getFonteLabel(edicao.fonte_equipamentos)} tone="emerald" />
+          <MetricCard label="Base" value="Inventário" tone="emerald" />
         </div>
       </div>
 
@@ -1178,7 +1153,7 @@ function EdicaoCard({
             />
           )}
 
-          {edicao.status !== "finalizado" && (
+          {edicao.status !== "concluido" && (
             <ActionButton
               icon={<Check size={15} />}
               label="Finalizar"
@@ -1286,7 +1261,7 @@ function MiniStat({
 
   return (
     <div className={`rounded-2xl border p-4 shadow-xl ${styles[tone]}`}>
-      <p className="text-[10px] font-black uppercase tracking-[0.18em] opacity-80">
+      <p className="text-[9px] font-bold uppercase tracking-wider opacity-80">
         {label}
       </p>
       <p className="mt-2 text-2xl font-black text-white md:text-3xl">
@@ -1317,7 +1292,7 @@ function MetricCard({
       <p className="text-[9px] font-black uppercase tracking-widest opacity-80">
         {label}
       </p>
-      <p className="mt-2 break-words text-lg font-black text-white">
+      <p className={`mt-2 break-words font-black text-white ${String(value).length>10 ? "text-sm leading-snug" : "text-lg"}`}>
         {value}
       </p>
     </div>
@@ -1402,47 +1377,6 @@ function EmptyBox({
       <p className="mt-2 max-w-xl text-sm font-medium leading-relaxed text-slate-500">
         {description}
       </p>
-    </div>
-  )
-}
-
-function Modal({
-  title,
-  onClose,
-  children,
-  maxWidth,
-}: {
-  title: string
-  onClose: () => void
-  children: ReactNode
-  maxWidth: string
-}) {
-  return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#020617]/90 p-4 backdrop-blur-md">
-      <div
-        className={`max-h-[92vh] w-full ${maxWidth} overflow-hidden rounded-[2rem] border border-slate-700 bg-[#020617] shadow-2xl`}
-      >
-        <div className="flex items-center justify-between gap-4 border-b border-slate-800 bg-slate-950 p-5">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-700 bg-[#020617] text-blue-300">
-              <Settings2 size={20} />
-            </div>
-            <h2 className="text-xl font-black text-white">{title}</h2>
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl p-2 text-slate-500 transition hover:bg-red-500/10 hover:text-red-300"
-          >
-            <X size={20} />
-          </button>
-        </div>
-
-        <div className="max-h-[calc(92vh-84px)] overflow-y-auto p-5 md:p-6">
-          {children}
-        </div>
-      </div>
     </div>
   )
 }

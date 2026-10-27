@@ -4,17 +4,24 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
   type ReactNode,
 } from "react"
 import { createClient } from "@/lib/supabase"
+import Modal from "@/components/saresp/ModalSaresp"
+import pageStyles from "@/components/saresp/SarespPage.module.css"
+import { coberturaNoPeriodo, dataValida, deslocarDiaUtil, fimPeriodo, formatarPeriodo, mensagemErroSaresp, periodosSobrepostos } from "@/lib/saresp/operacao"
+import { montarEmailSaresp, montarGuiaSaresp, montarPlanoSaresp } from "@/lib/saresp/documentos"
+
 
 type SarespEdicao = {
   id: string
   titulo: string
   ano: number
   data_prova_padrao: string | null
+  data_prova_fim_padrao: string | null
   serie_padrao: string | null
   status: string
   fonte_equipamentos: string
@@ -40,6 +47,7 @@ type SarespResultado = {
   escola_id: string | null
   escola_nome: string | null
   data_prova: string | null
+  data_prova_fim: string | null
   serie: string | null
   alunos_manha: number | null
   alunos_tarde: number | null
@@ -50,6 +58,10 @@ type SarespResultado = {
   turno_critico: string | null
   equipamentos_planilha: number | null
   equipamentos_inventario: number | null
+  situacao_inventario: string
+  notebooks_funcionando: number | null
+  tablets_funcionando: number | null
+  desktops_ped_funcionando: number | null
   ultima_atualizacao_inventario: string | null
   endereco: string | null
   telefone: string | null
@@ -89,6 +101,10 @@ type SarespDoadora = {
   fonte_capacidade: string | null
   sobra_disponivel: number | null
   status_doadora: string | null
+  data_prova: string | null
+  data_prova_fim: string | null
+  reservados: number | null
+  uso_proprio: number | null
 }
 
 type SarespSugestao = {
@@ -98,6 +114,7 @@ type SarespSugestao = {
   destino_cie: string | null
   destino_nome: string | null
   data_prova: string | null
+  data_prova_fim: string | null
   serie: string | null
   turno_critico: string | null
   demanda_considerada: number | null
@@ -123,6 +140,7 @@ type SarespRemanejamento = {
   escola_destino_nome: string | null
   quantidade: number | null
   data_prova: string | null
+  data_prova_fim: string | null
   turno_referencia: string | null
   distancia_km: number | null
   status: string
@@ -233,6 +251,7 @@ type SugestaoFiltroStatus =
   | "concluido"
   | "em_atencao"
   | "sem_indicacao"
+  | "validar_inventario"
 
 type SugestaoGrupo = {
   destino: string
@@ -258,6 +277,7 @@ const LIMITE_SUGESTOES_EXPANDIDAS = 20
 const STATUS_FILTROS = [
   { value: "todos", label: "Todos" },
   { value: "precisa_remanejamento", label: "Déficit" },
+  { value: "sem_inventario", label: "Validar inventário" },
   { value: "atencao", label: "Atenção" },
   { value: "atende", label: "Atende" },
   { value: "sem_demanda", label: "Sem demanda" },
@@ -305,6 +325,7 @@ const STATUS_FILTROS_SUGESTOES: {
     icon: "🟢",
     description: "Sem déficit automático, mas disponível para ajuste manual",
   },
+  { value:"validar_inventario", label:"Validar inventário", icon:"📦", description:"Escolas sem base confirmada de equipamentos funcionando" },
 ]
 
 const ABAS = [
@@ -499,15 +520,8 @@ function subtrairDiasUteis(value?: string | null, quantidade = 1) {
   return date
 }
 
-function getDataRetiradaPrevista(value?: string | null) {
-  const retirada = subtrairDiasUteis(value, 1)
-  return retirada ? toIsoDateLocal(ajustarParaDiaUtil(retirada, "anterior")) : null
-}
-
-function getDataDevolucaoPrevista(value?: string | null) {
-  const devolucao = adicionarDiasUteis(value, 1)
-  return devolucao ? toIsoDateLocal(ajustarParaDiaUtil(devolucao, "posterior")) : null
-}
+function getDataRetiradaPrevista(value?: string | null) { return deslocarDiaUtil(value,-1) }
+function getDataDevolucaoPrevista(value?: string | null) { return deslocarDiaUtil(value,1) }
 
 function getDataProvaReferencia(remanejamento?: Partial<SarespRemanejamento> | null, edicao?: SarespEdicao | null) {
   return remanejamento?.data_prova || edicao?.data_prova_padrao || null
@@ -675,6 +689,7 @@ function haversineKm(
 function getStatusConfig(status?: string | null) {
   const value = textoSeguro(status, "sem_demanda")
 
+  if (value === "sem_inventario") return {label:"Validar inventário",short:"Validar inventário",badge:"border-orange-500/30 bg-orange-500/10 text-orange-300",dot:"bg-orange-400"}
   if (value === "precisa_remanejamento") {
     return {
       label: "Precisa remanejamento",
@@ -742,10 +757,7 @@ function getRemanejamentoStatus(status: string) {
   }
 }
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message
-  return "Não foi possível concluir a operação."
-}
+function getErrorMessage(error: unknown) { return mensagemErroSaresp(error) }
 
 function detectarDelimitador(headerLine: string) {
   const opcoes = [",", ";", "\t"]
@@ -824,65 +836,48 @@ function headerToKey(header: string) {
 }
 
 function parseCsvSaresp(text: string) {
-  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
-  const lines = normalized
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-
-  if (lines.length <= 1) {
-    return {
-      rows: [] as CsvLinha[],
-      lidas: Math.max(lines.length - 1, 0),
-      ignoradas: 0,
-    }
+  const conteudo = text.replace(/^\uFEFF/, "").replace(/\r\n/g,"\n").replace(/\r/g,"\n")
+  const delimiter = detectarDelimitador(conteudo.split("\n").find(l=>l.trim()) || "")
+  const registros: {valores:string[];linha:number}[] = []
+  let valores:string[] = [], campo="", aspas=false, linha=1, inicioLinha=1
+  for (let i=0;i<conteudo.length;i++) {
+    const c=conteudo[i]
+    if(c==='"') { if(aspas && conteudo[i+1]==='"'){campo+='"';i++} else aspas=!aspas }
+    else if(c===delimiter && !aspas) {valores.push(campo.trim());campo=""}
+    else if(c==="\n" && !aspas) { valores.push(campo.trim()); if(valores.some(Boolean)) registros.push({valores,linha:inicioLinha});valores=[];campo="";inicioLinha=linha+1 }
+    else campo+=c
+    if(c==="\n") linha++
   }
-
-  const delimiter = detectarDelimitador(lines[0])
-  const headers = parseCsvLine(lines[0], delimiter).map(headerToKey)
-
-  const rows: CsvLinha[] = []
-  let ignoradas = 0
-
-  for (let index = 1; index < lines.length; index += 1) {
-    const values = parseCsvLine(lines[index], delimiter)
-    const raw: Record<string, string> = {}
-
-    headers.forEach((key, headerIndex) => {
-      raw[key] = values[headerIndex] || ""
-    })
-
-    const cie = textoSeguro(raw.cie)
-    const escola = textoSeguro(raw.escola)
-
-    if (!cie || !escola) {
-      ignoradas += 1
-      continue
-    }
-
-    const alunosManha = limparNumero(raw.alunos_manha)
-    const alunosTarde = limparNumero(raw.alunos_tarde)
-    const alunosNoite = limparNumero(raw.alunos_noite)
-    const totalInformado = limparNumero(raw.total_alunos)
-    const totalCalculado = alunosManha + alunosTarde + alunosNoite
-
-    rows.push({
-      cie,
-      escola,
-      alunos_manha: alunosManha,
-      alunos_tarde: alunosTarde,
-      alunos_noite: alunosNoite,
-      total_alunos: totalInformado || totalCalculado,
-      equipamentos_cadastrados: limparNumero(raw.equipamentos_cadastrados),
-      linha_original: index + 1,
-    })
+  if(aspas) throw new Error("O CSV contém aspas sem fechamento. Exporte novamente o arquivo.")
+  valores.push(campo.trim());if(valores.some(Boolean)) registros.push({valores,linha:inicioLinha})
+  if(registros.length<2) return {rows:[] as CsvLinha[],lidas:0,ignoradas:0}
+  const headers=registros[0].valores.map(h=>{
+    const normal=normalizarHeader(h)
+    if(normal==="codesc") return "cie"
+    if(normal==="nomesc") return "escola"
+    return headerToKey(h)
+  })
+  if(!headers.includes("cie") || !headers.includes("escola") || !headers.some(h=>["alunos_manha","alunos_tarde","alunos_noite"].includes(h))) throw new Error("Confira os cabeçalhos do CSV: CIE, Escola e alunos separados por turno são necessários.")
+  const inteiro=(valor:string, linha:number, nome:string, opcional=false)=>{
+    const t=(valor || "").trim().replace(/\s/g,"")
+    if(!t || (opcional && /^(pendente|n[aã]o informado|-|n\/a)$/i.test(t))) return 0
+    const normal=/^\d{1,3}(\.\d{3})+$/.test(t)?t.replace(/\./g,""):t.replace(",",".")
+    const n=Number(normal)
+    if(!Number.isSafeInteger(n) || n<0 || n>10000000) throw new Error(`Linha ${linha}: quantidade inválida em ${nome}. Informe um inteiro zero ou maior.`)
+    return n
   }
-
-  return {
-    rows,
-    lidas: lines.length - 1,
-    ignoradas,
+  const rows:CsvLinha[]=[], vistos=new Set<string>();let ignoradas=0
+  for(const registro of registros.slice(1)) {
+    const raw:Record<string,string>={};headers.forEach((h,i)=>{raw[h]=registro.valores[i]||""})
+    const cie=textoSeguro(raw.cie), escola=textoSeguro(raw.escola), chave=limparCie(cie)
+    if(!cie || !escola || !chave) throw new Error(`Linha ${registro.linha}: informe CIE e escola válidos.`)
+    if(vistos.has(chave)) throw new Error(`CIE ${chave} aparece mais de uma vez. Consolide os turnos da escola antes de importar.`)
+    vistos.add(chave)
+    const manha=inteiro(raw.alunos_manha,registro.linha,"Manhã"), tarde=inteiro(raw.alunos_tarde,registro.linha,"Tarde"), noite=inteiro(raw.alunos_noite,registro.linha,"Noite")
+    rows.push({cie,escola,alunos_manha:manha,alunos_tarde:tarde,alunos_noite:noite,total_alunos:inteiro(raw.total_alunos,registro.linha,"Total") || manha+tarde+noite,equipamentos_cadastrados:inteiro(raw.equipamentos_cadastrados,registro.linha,"Equipamentos de referência",true),linha_original:registro.linha})
   }
+  if(rows.length>5000) throw new Error("O CSV deve conter até 5.000 escolas por importação.")
+  return {rows,lidas:registros.length-1,ignoradas}
 }
 
 export default function CentralSarespPage() {
@@ -894,6 +889,11 @@ export default function CentralSarespPage() {
   const [doadoras, setDoadoras] = useState<SarespDoadora[]>([])
   const [sugestoesView, setSugestoesView] = useState<SarespSugestao[]>([])
   const [remanejamentos, setRemanejamentos] = useState<SarespRemanejamento[]>([])
+  const [podeGerenciar, setPodeGerenciar] = useState(false)
+  const [alertasPlano, setAlertasPlano] = useState<{id:string;origem:string;destino:string;quantidade:number;disponivel:number}[]>([])
+  const [atualizadoEm, setAtualizadoEm] = useState<string | null>(null)
+  const consultaRef = useRef(0)
+  const controladorRef = useRef<AbortController | null>(null)
 
   const [aba, setAba] = useState("painel")
   const [busca, setBusca] = useState("")
@@ -916,6 +916,7 @@ export default function CentralSarespPage() {
   const [csvRows, setCsvRows] = useState<CsvLinha[]>([])
   const [importResumo, setImportResumo] = useState<ImportResumo>(null)
   const [dataProvaImport, setDataProvaImport] = useState("")
+  const [dataProvaFimImport, setDataProvaFimImport] = useState("")
   const [serieImport, setSerieImport] = useState("3ª série EM")
 
   const [sugestaoSelecionada, setSugestaoSelecionada] = useState<SarespSugestao | null>(null)
@@ -927,8 +928,8 @@ export default function CentralSarespPage() {
 
   const raioSugestoesKm = useMemo(() => {
     return Math.max(
-      numeroSeguro(edicaoSelecionada?.distancia_maxima_km),
-      RAIO_MINIMO_SUGESTOES_KM
+      numeroSeguro(edicaoSelecionada?.distancia_maxima_km) || 10,
+      0.1
     )
   }, [edicaoSelecionada?.distancia_maxima_km])
 
@@ -936,6 +937,7 @@ export default function CentralSarespPage() {
     if (!edicaoSelecionada) return
 
     setDataProvaImport(edicaoSelecionada.data_prova_padrao || "")
+    setDataProvaFimImport(edicaoSelecionada.data_prova_fim_padrao || "")
     setSerieImport(edicaoSelecionada.serie_padrao || "3ª série EM")
   }, [edicaoSelecionada?.id])
 
@@ -955,7 +957,7 @@ export default function CentralSarespPage() {
       setEdicoes(lista)
 
       setEdicaoId((current) => {
-        if (current) return current
+        if (current && lista.some(item => item.id === current)) return current
 
         const ativa = lista.find((item) => item.status === "ativo") || lista[0]
         return ativa?.id || ""
@@ -971,358 +973,38 @@ export default function CentralSarespPage() {
     }
   }, [supabase])
 
-  async function buscarModelosPorIds(modeloIds: string[]) {
-    const ids = Array.from(new Set(modeloIds.filter(Boolean)))
-
-    if (ids.length === 0) return new Map<string, EquipamentoModelo>()
-
-    const { data, error } = await supabase
-      .from("equipamentos_modelos")
-      .select("id, equipamento, tipo, marca, uso, finalidade")
-      .in("id", ids)
-
-    if (error) throw error
-
-    return new Map(
-      ((data || []) as EquipamentoModelo[])
-        .filter((modelo) => modelo.id)
-        .map((modelo) => [String(modelo.id), modelo])
-    )
-  }
-
-  async function calcularCapacidadePorEscola() {
-    const capacidadeInventario = new Map<
-      string,
-      { quantidade: number; fonte: string }
-    >()
-
-    const capacidadeRecebidos = new Map<
-      string,
-      { quantidade: number; fonte: string }
-    >()
-
+  const carregarDadosEdicao = useCallback(async (id: string) => {
+    controladorRef.current?.abort()
+    const requisicao = ++consultaRef.current
+    if (!id) { setResultados([]); setDoadoras([]); setSugestoesView([]); setRemanejamentos([]); return }
+    const controlador = new AbortController()
+    controladorRef.current = controlador
+    const prazo = window.setTimeout(() => controlador.abort(), 25000)
+    setLoadingDados(true)
     try {
-      const { data: inventariosData, error: invError } = await supabase
-        .from("inventario_respostas")
-        .select("id, escola_nome, created_at")
-        .order("created_at", { ascending: false })
-
-      if (invError) throw invError
-
-      const ultimosPorEscola = new Map<string, InventarioRespostaRow>()
-
-      ;((inventariosData || []) as InventarioRespostaRow[]).forEach((inventario) => {
-        const key = normalizar(inventario.escola_nome)
-        if (!key) return
-
-        if (!ultimosPorEscola.has(key)) {
-          ultimosPorEscola.set(key, inventario)
-        }
-      })
-
-      const inventarios = Array.from(ultimosPorEscola.values())
-      const inventarioPorId = new Map<string, InventarioRespostaRow>()
-
-      inventarios.forEach((inventario) => {
-        inventarioPorId.set(inventario.id, inventario)
-      })
-
-      const inventarioIds = inventarios.map((item) => item.id)
-
-      if (inventarioIds.length > 0) {
-        const { data: itensData, error: itensError } = await supabase
-          .from("inventario_itens")
-          .select("inventario_id, modelo_id, funcionando")
-          .in("inventario_id", inventarioIds)
-
-        if (itensError) throw itensError
-
-        const itens = (itensData || []) as InventarioItemRow[]
-        const modeloIds = itens.map((item) => textoSeguro(item.modelo_id)).filter(Boolean)
-        const modelosPorId = await buscarModelosPorIds(modeloIds)
-
-        itens.forEach((item) => {
-          const modeloId = textoSeguro(item.modelo_id)
-          const modelo = modelosPorId.get(modeloId)
-
-          if (!isEquipamentoSaresp(modelo)) return
-
-          const inventario = item.inventario_id
-            ? inventarioPorId.get(item.inventario_id)
-            : null
-
-          const escolaKey = normalizar(inventario?.escola_nome)
-          if (!escolaKey) return
-
-          const atual = capacidadeInventario.get(escolaKey)?.quantidade || 0
-
-          capacidadeInventario.set(escolaKey, {
-            quantidade: atual + numeroSeguro(item.funcionando),
-            fonte: "inventario_funcionando_notebook_tablet_desktop_ped",
-          })
-        })
-      }
+      const { data, error } = await supabase.rpc("hub_saresp_contexto", { p_edicao_id: id }).abortSignal(controlador.signal)
+      if (error) throw error
+      if (consultaRef.current !== requisicao) return
+      const base = data as { versao:number; resultados:SarespResultado[]; doadoras:SarespDoadora[]; sugestoes:SarespSugestao[]; remanejamentos:SarespRemanejamento[]; pode_gerenciar:boolean; gerado_em:string; alertas:{id:string;origem:string;destino:string;quantidade:number;disponivel:number}[] }
+      if (!base || base.versao!==1 || !Array.isArray(base.resultados) || !Array.isArray(base.doadoras) || !Array.isArray(base.sugestoes) || !Array.isArray(base.remanejamentos)) throw new Error("Resposta SARESP incompleta. Atualize a página após aplicar o SQL.")
+      setResultados(base.resultados); setDoadoras(base.doadoras); setSugestoesView(base.sugestoes); setRemanejamentos(base.remanejamentos)
+      setPodeGerenciar(Boolean(base.pode_gerenciar)); setAlertasPlano(base.alertas || []); setAtualizadoEm(base.gerado_em)
     } catch (error) {
-      console.warn("[Central SARESP] Inventário indisponível para capacidade:", error)
+      if (consultaRef.current === requisicao) setFeedback({ tipo:"error", texto:getErrorMessage(error) })
+    } finally {
+      window.clearTimeout(prazo)
+      if (consultaRef.current === requisicao) setLoadingDados(false)
     }
-
-    try {
-      const { data: recebidosData, error: recebidosError } = await supabase
-        .from("equipamentos_recebidos")
-        .select("escola_nome, modelo_id, quantidade_recebida")
-
-      if (recebidosError) throw recebidosError
-
-      const recebidos = (recebidosData || []) as EquipamentoRecebidoRow[]
-      const modeloIds = recebidos.map((item) => textoSeguro(item.modelo_id)).filter(Boolean)
-      const modelosPorId = await buscarModelosPorIds(modeloIds)
-
-      recebidos.forEach((item) => {
-        const modeloId = textoSeguro(item.modelo_id)
-        const modelo = modelosPorId.get(modeloId)
-
-        if (!isEquipamentoSaresp(modelo)) return
-
-        const escolaKey = normalizar(item.escola_nome)
-        if (!escolaKey) return
-
-        const atual = capacidadeRecebidos.get(escolaKey)?.quantidade || 0
-
-        capacidadeRecebidos.set(escolaKey, {
-          quantidade: atual + numeroSeguro(item.quantidade_recebida),
-          fonte: "equipamentos_recebidos_notebook_tablet_desktop_ped",
-        })
-      })
-    } catch (error) {
-      console.warn("[Central SARESP] Recebidos indisponível para fallback:", error)
-    }
-
-    return {
-      capacidadeInventario,
-      capacidadeRecebidos,
-    }
-  }
-
-  async function calcularDoadorasFallback(
-    edicao: SarespEdicao | null,
-    resultadosData: SarespResultado[]
-  ) {
-    if (!edicao) return []
-
-    const { data: escolasData, error: escolasError } = await supabase
-      .from("escolas")
-      .select(`
-        id,
-        nome_escola,
-        cie,
-        endereco,
-        telefone,
-        email,
-        diretor,
-        latitude,
-        longitude,
-        tecnico_atribuido,
-        total_equipamentos_funcionando
-      `)
-      .order("nome_escola", { ascending: true })
-
-    if (escolasError) throw escolasError
-
-    const participantesPorCie = new Set(
-      resultadosData
-        .map((item) => limparCie(item.cie_limpo || item.cie))
-        .filter(Boolean)
-    )
-
-    const { capacidadeInventario, capacidadeRecebidos } =
-      await calcularCapacidadePorEscola()
-
-    const reserva = numeroSeguro(edicao.reserva_tecnica_padrao)
-
-    return ((escolasData || []) as Escola[])
-      .filter((escola) => {
-        const cie = limparCie(escola.cie)
-        return cie && !participantesPorCie.has(cie)
-      })
-      .map((escola) => {
-        const escolaKey = normalizar(escola.nome_escola)
-        const inventario = capacidadeInventario.get(escolaKey)
-        const recebidos = capacidadeRecebidos.get(escolaKey)
-
-        let equipamentosBase = 0
-        let fonte = "sem_dados"
-
-        if (inventario && inventario.quantidade > 0) {
-          equipamentosBase = inventario.quantidade
-          fonte = inventario.fonte
-        } else if (recebidos && recebidos.quantidade > 0) {
-          equipamentosBase = recebidos.quantidade
-          fonte = recebidos.fonte
-        } else if (numeroSeguro(escola.total_equipamentos_funcionando) > 0) {
-          equipamentosBase = numeroSeguro(escola.total_equipamentos_funcionando)
-          fonte = "escolas_total_funcionando_fallback"
-        }
-
-        const sobraDisponivel = Math.max(equipamentosBase - reserva, 0)
-
-        const doadora: SarespDoadora = {
-          edicao_id: edicao.id,
-          edicao_titulo: edicao.titulo,
-          ano: edicao.ano,
-          reserva_tecnica_padrao: edicao.reserva_tecnica_padrao,
-          distancia_maxima_km: edicao.distancia_maxima_km,
-          escola_id: escola.id,
-          nome_escola: escola.nome_escola,
-          cie: escola.cie,
-          cie_limpo: limparCie(escola.cie),
-          endereco: escola.endereco,
-          telefone: escola.telefone,
-          email: escola.email,
-          diretor: escola.diretor,
-          latitude: escola.latitude,
-          longitude: escola.longitude,
-          tecnico_atribuido: escola.tecnico_atribuido,
-          equipamentos_base: equipamentosBase,
-          fonte_capacidade: fonte,
-          sobra_disponivel: sobraDisponivel,
-          status_doadora:
-            sobraDisponivel > 0 ? "possivel_doadora" : "sem_sobra",
-        }
-
-        return doadora
-      })
-  }
-
-  const carregarDadosEdicao = useCallback(
-    async (id: string) => {
-      if (!id) {
-        setResultados([])
-        setDoadoras([])
-        setSugestoesView([])
-        setRemanejamentos([])
-        return
-      }
-
-      setLoadingDados(true)
-      setFeedback(null)
-
-      try {
-        const edicaoAtual =
-          edicoes.find((item) => item.id === id) || edicaoSelecionada
-
-        const [
-          resultadosResponse,
-          doadorasResponse,
-          sugestoesResponse,
-          remanejamentosResponse,
-        ] = await Promise.all([
-          supabase
-            .from("v_saresp_resultados")
-            .select("*")
-            .eq("edicao_id", id)
-            .order("deficit", { ascending: false })
-            .order("escola_nome", { ascending: true }),
-
-          supabase
-            .from("v_saresp_doadoras_potenciais")
-            .select("*")
-            .eq("edicao_id", id)
-            .order("sobra_disponivel", { ascending: false })
-            .order("nome_escola", { ascending: true }),
-
-          supabase
-            .from("v_saresp_sugestoes_distancia")
-            .select("*")
-            .eq("edicao_id", id)
-            .order("destino_nome", { ascending: true })
-            .order("distancia_km", { ascending: true }),
-
-          supabase
-            .from("saresp_remanejamentos")
-            .select("*")
-            .eq("edicao_id", id)
-            .order("created_at", { ascending: false }),
-        ])
-
-        if (resultadosResponse.error) throw resultadosResponse.error
-        if (remanejamentosResponse.error) throw remanejamentosResponse.error
-
-        const resultadosData = (resultadosResponse.data || []) as SarespResultado[]
-
-        let doadorasConsolidadas = [] as SarespDoadora[]
-
-        if (!doadorasResponse.error && doadorasResponse.data?.length) {
-          doadorasConsolidadas = doadorasResponse.data as SarespDoadora[]
-        }
-
-        const doadorasFallback = await calcularDoadorasFallback(
-          edicaoAtual,
-          resultadosData
-        )
-
-        const mapaDoadoras = new Map<string, SarespDoadora>()
-
-        doadorasConsolidadas.forEach((item) => {
-          const key = item.escola_id || limparCie(item.cie)
-          if (key) mapaDoadoras.set(key, item)
-        })
-
-        doadorasFallback.forEach((item) => {
-          const key = item.escola_id || limparCie(item.cie)
-          if (!key) return
-
-          const atual = mapaDoadoras.get(key)
-          const atualSobra = numeroSeguro(atual?.sobra_disponivel)
-          const novaSobra = numeroSeguro(item.sobra_disponivel)
-
-          if (!atual || novaSobra > atualSobra) {
-            mapaDoadoras.set(key, item)
-          }
-        })
-
-        setResultados(resultadosData)
-        setDoadoras(
-          Array.from(mapaDoadoras.values()).sort(
-            (a, b) =>
-              numeroSeguro(b.sobra_disponivel) -
-                numeroSeguro(a.sobra_disponivel) ||
-              textoSeguro(a.nome_escola).localeCompare(
-                textoSeguro(b.nome_escola),
-                "pt-BR"
-              )
-          )
-        )
-
-        if (!sugestoesResponse.error) {
-          setSugestoesView((sugestoesResponse.data || []) as SarespSugestao[])
-        } else {
-          setSugestoesView([])
-        }
-
-        setRemanejamentos(
-          (remanejamentosResponse.data || []) as SarespRemanejamento[]
-        )
-      } catch (error) {
-        console.error("[Central SARESP] Erro ao carregar dados:", error)
-        setFeedback({
-          tipo: "error",
-          texto: getErrorMessage(error),
-        })
-      } finally {
-        setLoadingDados(false)
-      }
-    },
-    [edicoes, edicaoSelecionada, supabase]
-  )
+  }, [supabase])
 
   useEffect(() => {
     carregarEdicoes()
   }, [carregarEdicoes])
 
   useEffect(() => {
-    if (edicaoId) {
-      carregarDadosEdicao(edicaoId)
-    }
+    setResultados([]); setDoadoras([]); setSugestoesView([]); setRemanejamentos([]); setAlertasPlano([]); setAtualizadoEm(null)
+    if (edicaoId) carregarDadosEdicao(edicaoId)
+    return () => { ++consultaRef.current; controladorRef.current?.abort() }
   }, [carregarDadosEdicao, edicaoId])
 
   useEffect(() => {
@@ -1371,34 +1053,25 @@ export default function CentralSarespPage() {
   function getRemanejamentosAtivosParaDestino(
     destinoId?: string | null,
     destinoNome?: string | null,
-    edicaoRef?: string | null
+    edicaoRef?: string | null,
+    inicio?: string | null, fim?: string | null
   ) {
     return remanejamentos.filter((item) => {
       if (item.status === "cancelado") return false
       if (edicaoRef && item.edicao_id !== edicaoRef) return false
 
       const matchId = destinoId && item.escola_destino_id === destinoId
-      const matchNome =
-        normalizar(item.escola_destino_nome) === normalizar(destinoNome)
-
-      return Boolean(matchId || matchNome)
+      const matchNome = !destinoId && Boolean(destinoNome) && normalizar(item.escola_destino_nome) === normalizar(destinoNome)
+      const periodo = !inicio || periodosSobrepostos(item.data_prova, item.data_prova_fim, inicio, fim)
+      return Boolean(matchId || matchNome) && periodo
     })
   }
 
   function getPlanejadoParaDestino(sugestao: SarespSugestao) {
-    return getRemanejamentosAtivosParaDestino(
-      sugestao.destino_id,
-      sugestao.destino_nome,
-      sugestao.edicao_id
-    ).reduce((acc, item) => acc + numeroSeguro(item.quantidade), 0)
+    return coberturaNoPeriodo(getRemanejamentosAtivosParaDestino(sugestao.destino_id, sugestao.destino_nome, sugestao.edicao_id), sugestao.data_prova, sugestao.data_prova_fim)
   }
-
   function getPlanejadoParaResultado(resultado: SarespResultado) {
-    return getRemanejamentosAtivosParaDestino(
-      resultado.escola_id,
-      resultado.escola_nome,
-      resultado.edicao_id
-    ).reduce((acc, item) => acc + numeroSeguro(item.quantidade), 0)
+    return coberturaNoPeriodo(getRemanejamentosAtivosParaDestino(resultado.escola_id, resultado.escola_nome, resultado.edicao_id), resultado.data_prova, resultado.data_prova_fim)
   }
 
   function getPendenteParaDestino(sugestao: SarespSugestao) {
@@ -1422,24 +1095,22 @@ export default function CentralSarespPage() {
 
   function getLimiteQuantidadeSugestao(sugestao: SarespSugestao) {
     const sobraOrigem = numeroSeguro(sugestao.sobra_disponivel)
-    const pendenteComGordura = getPendenteComGorduraParaDestino(sugestao)
-    const quantidadeSugerida = numeroSeguro(sugestao.quantidade_sugerida)
-    const deficit = numeroSeguro(sugestao.deficit)
-
-    // Agora este número é apenas uma referência operacional para preenchimento.
-    // Não é usado como trava, porque algumas aplicações exigem quantidade superior
-    // ao déficit calculado por condições reais de aplicação, logística e reserva local.
-    return Math.max(sobraOrigem, pendenteComGordura, quantidadeSugerida, deficit, 1)
+    // Pode superar o déficit, mas respeita o saldo confirmado para o período.
+    return Math.max(sobraOrigem, 0)
   }
 
   function getStatusOperacionalResultado(resultado: SarespResultado): SugestaoStatusInfo {
+    if (resultado.status_calculado === "sem_inventario") return {
+      label:"Validar inventário", description:"Não há inventário confirmado para calcular a capacidade desta escola. O total recebido não é usado como disponibilidade.",
+      badge:"border-orange-500/30 bg-orange-500/10 text-orange-300", dot:"bg-orange-400", tone:"yellow",
+    }
     const planejado = getPlanejadoParaResultado(resultado)
     const deficit = numeroSeguro(resultado.deficit)
     const metaComGordura = calcularMetaComGordura(resultado.deficit)
     const itensAtivos = getRemanejamentosAtivosParaDestino(
       resultado.escola_id,
       resultado.escola_nome,
-      resultado.edicao_id
+      resultado.edicao_id, resultado.data_prova, resultado.data_prova_fim
     )
 
     const temPendenteAprovacao = itensAtivos.some((item) => item.status === "sugerido")
@@ -1534,8 +1205,8 @@ export default function CentralSarespPage() {
   function getStatusOperacionalSugestao(sugestao: SarespSugestao): SugestaoStatusInfo {
     const resultado = resultados.find((item) => {
       const matchId = sugestao.destino_id && item.escola_id === sugestao.destino_id
-      const matchNome = normalizar(item.escola_nome) === normalizar(sugestao.destino_nome)
-      return item.edicao_id === sugestao.edicao_id && Boolean(matchId || matchNome)
+      const matchNome = !sugestao.destino_id && normalizar(item.escola_nome) === normalizar(sugestao.destino_nome)
+      return item.demanda_id === sugestao.demanda_id && Boolean(matchId || matchNome)
     })
 
     if (resultado) return getStatusOperacionalResultado(resultado)
@@ -1546,7 +1217,7 @@ export default function CentralSarespPage() {
     const itensAtivos = getRemanejamentosAtivosParaDestino(
       sugestao.destino_id,
       sugestao.destino_nome,
-      sugestao.edicao_id
+      sugestao.edicao_id, sugestao.data_prova, sugestao.data_prova_fim
     )
 
     const temPendenteAprovacao = itensAtivos.some((item) => item.status === "sugerido")
@@ -1624,6 +1295,7 @@ export default function CentralSarespPage() {
 
   function getFiltroStatusSugestaoPorResultado(resultado: SarespResultado): SugestaoGrupo["statusFiltro"] {
     const statusInfo = getStatusOperacionalResultado(resultado)
+    if (resultado.status_calculado==="sem_inventario") return "validar_inventario"
 
     if (statusInfo.label === "Pendente de remanejamento" || statusInfo.label === "Plano parcial") {
       return "pendente_remanejamento"
@@ -1656,95 +1328,7 @@ export default function CentralSarespPage() {
     return "todos"
   }
 
-  const sugestoesFallback = useMemo(() => {
-    if (!edicaoSelecionada) return []
-
-    const distanciaMaxima = raioSugestoesKm
-    const resultadosParaSugestao = resultados.filter((item) => item.edicao_id === edicaoSelecionada.id)
-
-    const sugestoesCalculadas: SarespSugestao[] = []
-
-    resultadosParaSugestao.forEach((destino) => {
-      const deficitDestino = numeroSeguro(destino.deficit)
-      const metaDestinoComGordura =
-        deficitDestino > 0
-          ? calcularMetaComGordura(destino.deficit)
-          : GORDURA_OPERACIONAL_MINIMA
-
-      const candidatas = doadorasDisponiveis
-        .map((origem) => {
-          const distancia = haversineKm(
-            destino.latitude,
-            destino.longitude,
-            origem.latitude,
-            origem.longitude
-          )
-
-          if (distancia === null || distancia > distanciaMaxima) return null
-
-          const quantidade = Math.min(
-            metaDestinoComGordura,
-            numeroSeguro(origem.sobra_disponivel)
-          )
-
-          if (quantidade <= 0) return null
-
-          const sugestao: SarespSugestao = {
-            edicao_id: destino.edicao_id,
-            demanda_id: destino.demanda_id,
-            destino_id: destino.escola_id,
-            destino_cie: destino.cie,
-            destino_nome: destino.escola_nome,
-            data_prova: destino.data_prova,
-            serie: destino.serie,
-            turno_critico: destino.turno_critico,
-            demanda_considerada: destino.demanda_considerada,
-            capacidade_util: destino.capacidade_util,
-            deficit: destino.deficit,
-            origem_id: origem.escola_id,
-            origem_cie: origem.cie,
-            origem_nome: origem.nome_escola,
-            sobra_disponivel: origem.sobra_disponivel,
-            fonte_capacidade: origem.fonte_capacidade,
-            distancia_km: distancia,
-            quantidade_sugerida: quantidade,
-          }
-
-          return sugestao
-        })
-        .filter(Boolean) as SarespSugestao[]
-
-      candidatas
-        .sort(
-          (a, b) =>
-            numeroSeguro(a.distancia_km) - numeroSeguro(b.distancia_km) ||
-            numeroSeguro(b.quantidade_sugerida) -
-              numeroSeguro(a.quantidade_sugerida)
-        )
-        .slice(0, LIMITE_SUGESTOES_EXPANDIDAS)
-        .forEach((item) => sugestoesCalculadas.push(item))
-    })
-
-    return sugestoesCalculadas
-  }, [doadorasDisponiveis, edicaoSelecionada, raioSugestoesKm, resultados])
-
-  const sugestoes = useMemo(() => {
-    const map = new Map<string, SarespSugestao>()
-
-    ;[...sugestoesView, ...sugestoesFallback].forEach((item) => {
-      const key = [
-        item.demanda_id,
-        item.destino_id || item.destino_nome,
-        item.origem_id || item.origem_nome,
-      ].join("::")
-
-      if (!map.has(key)) {
-        map.set(key, item)
-      }
-    })
-
-    return Array.from(map.values())
-  }, [sugestoesFallback, sugestoesView])
+  const sugestoes = useMemo(() => sugestoesView, [sugestoesView])
 
   const resultadosBaseSugestoes = useMemo(() => {
     return resultados
@@ -1782,7 +1366,7 @@ export default function CentralSarespPage() {
     const map = new Map<string, SugestaoGrupo>()
 
     resultadosBaseSugestoes.forEach((resultado) => {
-      const key = resultado.escola_id || resultado.demanda_id || textoSeguro(resultado.escola_nome)
+      const key = resultado.demanda_id
       if (!key) return
 
       const statusInfo = getStatusOperacionalResultado(resultado)
@@ -1814,7 +1398,7 @@ export default function CentralSarespPage() {
     })
 
     sugestoes.forEach((sugestao) => {
-      const key = sugestao.destino_id || sugestao.demanda_id || textoSeguro(sugestao.destino_nome)
+      const key = sugestao.demanda_id
       if (!key) return
 
       if (!map.has(key)) {
@@ -1972,58 +1556,9 @@ export default function CentralSarespPage() {
       (item) => numeroSeguro(item.deficit) > 0
     )
 
-    const resultadosPendentesRemanejamento = resultadosComDeficit.filter((resultado) => {
-      const planejado = planoAtivo
-        .filter((item) => {
-          const matchId =
-            resultado.escola_id && item.escola_destino_id === resultado.escola_id
-
-          const matchNome =
-            normalizar(item.escola_destino_nome) === normalizar(resultado.escola_nome)
-
-          return item.edicao_id === resultado.edicao_id && Boolean(matchId || matchNome)
-        })
-        .reduce((acc, item) => acc + numeroSeguro(item.quantidade), 0)
-
-      return planejado < numeroSeguro(resultado.deficit)
-    })
-
-    const quantidadePendenteRemanejamento = resultadosPendentesRemanejamento.reduce(
-      (acc, item) => {
-        const planejado = planoAtivo
-          .filter((remanejamento) => {
-            const matchId =
-              item.escola_id && remanejamento.escola_destino_id === item.escola_id
-
-            const matchNome =
-              normalizar(remanejamento.escola_destino_nome) === normalizar(item.escola_nome)
-
-            return remanejamento.edicao_id === item.edicao_id && Boolean(matchId || matchNome)
-          })
-          .reduce((sum, remanejamento) => sum + numeroSeguro(remanejamento.quantidade), 0)
-
-        return acc + Math.max(numeroSeguro(item.deficit) - planejado, 0)
-      },
-      0
-    )
-
-    const resultadosAtendidosNoPlano = resultadosComDeficit.filter(
-      (resultado) => {
-        const planejado = planoAtivo
-          .filter((item) => {
-            const matchId =
-              resultado.escola_id && item.escola_destino_id === resultado.escola_id
-
-            const matchNome =
-              normalizar(item.escola_destino_nome) === normalizar(resultado.escola_nome)
-
-            return item.edicao_id === resultado.edicao_id && Boolean(matchId || matchNome)
-          })
-          .reduce((acc, item) => acc + numeroSeguro(item.quantidade), 0)
-
-        return planejado >= numeroSeguro(resultado.deficit)
-      }
-    )
+    const resultadosPendentesRemanejamento = resultadosComDeficit.filter(item => getPlanejadoParaResultado(item) < numeroSeguro(item.deficit))
+    const quantidadePendenteRemanejamento = resultadosPendentesRemanejamento.reduce((soma,item) => soma+Math.max(numeroSeguro(item.deficit)-getPlanejadoParaResultado(item),0),0)
+    const resultadosAtendidosNoPlano = resultadosComDeficit.filter(item => getPlanejadoParaResultado(item) >= numeroSeguro(item.deficit))
 
     return {
       escolasAplicam,
@@ -2094,7 +1629,7 @@ export default function CentralSarespPage() {
         setImportResumo(null)
         setFeedback({
           tipo: "error",
-          texto: "Não foi possível ler o CSV. Verifique o arquivo exportado.",
+          texto: getErrorMessage(error),
         })
       }
     }
@@ -2109,17 +1644,10 @@ export default function CentralSarespPage() {
     reader.readAsText(file, "UTF-8")
   }
 
-  async function limparTemporaria() {
-    const { error } = await supabase
-      .from("saresp_import_temp")
-      .delete()
-      .not("id", "is", null)
 
-    if (error) throw error
-  }
 
   async function zerarEdicaoAtual() {
-    if (!edicaoId) return
+    if (!edicaoId || !podeGerenciar) return
 
     const confirmado = window.confirm(
       "Deseja zerar os dados processados desta edição? Isso removerá demandas importadas e plano de remanejamento desta edição."
@@ -2131,21 +1659,9 @@ export default function CentralSarespPage() {
     setFeedback(null)
 
     try {
-      const { error: remanejamentosError } = await supabase
-        .from("saresp_remanejamentos")
-        .delete()
-        .eq("edicao_id", edicaoId)
+      const { error } = await supabase.rpc("hub_saresp_zerar_edicao", { p_edicao_id: edicaoId })
+      if (error) throw error
 
-      if (remanejamentosError) throw remanejamentosError
-
-      const { error: demandasError } = await supabase
-        .from("saresp_demandas")
-        .delete()
-        .eq("edicao_id", edicaoId)
-
-      if (demandasError) throw demandasError
-
-      await limparTemporaria()
 
       setCsvRows([])
       setImportResumo(null)
@@ -2173,6 +1689,7 @@ export default function CentralSarespPage() {
   }
 
   async function importarCsvEProcessar() {
+    if (!podeGerenciar) { setFeedback({tipo:"warning",texto:"Seu perfil possui acesso de consulta."}); return }
     if (!edicaoId) {
       setFeedback({
         tipo: "warning",
@@ -2181,10 +1698,10 @@ export default function CentralSarespPage() {
       return
     }
 
-    if (!dataProvaImport) {
+    if (!dataValida(dataProvaImport) || (dataProvaFimImport && (!dataValida(dataProvaFimImport) || dataProvaFimImport<dataProvaImport))) {
       setFeedback({
         tipo: "warning",
-        texto: "Informe a data da prova para processar a importação.",
+        texto: "Confira as datas: o fim deve ser igual ou posterior ao início da aplicação.",
       })
       return
     }
@@ -2201,8 +1718,6 @@ export default function CentralSarespPage() {
     setFeedback(null)
 
     try {
-      await limparTemporaria()
-
       const registros = csvRows.map((row) => ({
         cie: row.cie,
         escola: row.escola,
@@ -2213,20 +1728,10 @@ export default function CentralSarespPage() {
         equipamentos_cadastrados: row.equipamentos_cadastrados,
       }))
 
-      const chunkSize = 500
-
-      for (let index = 0; index < registros.length; index += chunkSize) {
-        const chunk = registros.slice(index, index + chunkSize)
-
-        const { error } = await supabase.from("saresp_import_temp").insert(chunk)
-
-        if (error) throw error
-      }
-
-      const { data, error } = await supabase.rpc("processar_saresp_import", {
-        p_edicao_id: edicaoId,
-        p_data_prova: dataProvaImport,
-        p_serie: serieImport || "3ª série EM",
+      const { data, error } = await supabase.rpc("hub_saresp_importar", {
+        p_edicao_id: edicaoId, p_data_prova: dataProvaImport,
+        p_data_prova_fim: dataProvaFimImport || dataProvaImport,
+        p_serie: serieImport.trim(), p_linhas: registros,
       })
 
       if (error) throw error
@@ -2265,7 +1770,7 @@ export default function CentralSarespPage() {
     const referencia = getLimiteQuantidadeSugestao(sugestao)
 
     setSugestaoSelecionada(sugestao)
-    setQuantidadePlano(referencia)
+    setQuantidadePlano(Math.min(referencia, Math.max(getPendenteComGorduraParaDestino(sugestao), numeroSeguro(sugestao.quantidade_sugerida), 1)))
   }
 
   function fecharModalQuantidadePlano() {
@@ -2280,7 +1785,7 @@ export default function CentralSarespPage() {
     const quantidade = Number(quantidadeInformada)
     const referencia = getLimiteQuantidadeSugestao(sugestao)
 
-    if (!edicaoId || quantidade <= 0 || !Number.isFinite(quantidade)) {
+    if (!edicaoId || quantidade <= 0 || !Number.isSafeInteger(quantidade)) {
       setFeedback({
         tipo: "warning",
         texto: "Informe uma quantidade válida para adicionar ao plano.",
@@ -2288,12 +1793,15 @@ export default function CentralSarespPage() {
       return
     }
 
+    if (!podeGerenciar) return
+    if (quantidade > numeroSeguro(sugestao.sobra_disponivel)) { setFeedback({tipo:"warning",texto:"A quantidade ultrapassa o saldo de notebooks e tablets funcionando para este período."}); return }
     const jaExiste = remanejamentos.some((item) => {
       return (
         item.status !== "cancelado" &&
         item.escola_origem_id === sugestao.origem_id &&
         item.escola_destino_id === sugestao.destino_id &&
-        item.edicao_id === sugestao.edicao_id
+        item.edicao_id === sugestao.edicao_id &&
+        periodosSobrepostos(item.data_prova,item.data_prova_fim,sugestao.data_prova,sugestao.data_prova_fim)
       )
     })
 
@@ -2320,6 +1828,7 @@ export default function CentralSarespPage() {
         quantidade,
         data_prova:
           sugestao.data_prova || edicaoSelecionada?.data_prova_padrao || null,
+        data_prova_fim: sugestao.data_prova_fim || sugestao.data_prova || edicaoSelecionada?.data_prova_fim_padrao || edicaoSelecionada?.data_prova_padrao || null,
         turno_referencia: sugestao.turno_critico || null,
         distancia_km: sugestao.distancia_km || null,
         status: "sugerido",
@@ -2358,6 +1867,7 @@ export default function CentralSarespPage() {
     remanejamento: SarespRemanejamento,
     novoStatus: "sugerido" | "aprovado" | "concluido" | "cancelado"
   ) {
+    if (!podeGerenciar) return
     setSalvando(true)
 
     try {
@@ -2418,91 +1928,7 @@ export default function CentralSarespPage() {
         buscarEscolaDetalhe(remanejamento.escola_destino_id),
       ])
 
-      const escolaOrigemNome = textoSeguro(
-        origem?.nome_escola,
-        remanejamento.escola_origem_nome || "Escola origem"
-      )
-
-      const escolaDestinoNome = textoSeguro(
-        destino?.nome_escola,
-        remanejamento.escola_destino_nome || "Escola destino"
-      )
-
-      const quantidade = numeroSeguro(remanejamento.quantidade)
-      const dataProvaReferencia = getDataProvaReferencia(remanejamento, edicaoSelecionada)
-      const dataProva = formatarData(dataProvaReferencia)
-      const dataRetirada = getDataRetiradaFormatada(dataProvaReferencia)
-      const dataDevolucao = getDataDevolucaoFormatada(dataProvaReferencia)
-      const turno = getTurnoLabel(remanejamento.turno_referencia)
-
-      const assunto =
-        `SARESP Digital — Remanejamento de ${quantidade} equipamento(s) entre unidades escolares`
-
-      const destinatarios = [origem?.email, destino?.email]
-        .map((item) => textoSeguro(item))
-        .filter(Boolean)
-        .join("; ")
-
-      const corpo = `Prezados(as), boa tarde.
-
-Conforme planejamento realizado pelo SEINTEC e SETEC para viabilização da aplicação do SARESP Digital, encaminhamos as orientações para o remanejamento paliativo de equipamentos entre as unidades escolares abaixo indicadas.
-
-DADOS DO REMANEJAMENTO
-
-Unidade cedente:
-${escolaOrigemNome}
-CIE: ${textoSeguro(origem?.cie || remanejamento.escola_origem_cie, "Não informado")}
-Endereço para retirada: ${textoSeguro(origem?.endereco, "Não informado")}
-Telefone: ${textoSeguro(origem?.telefone, "Não informado")}
-
-Unidade contemplada:
-${escolaDestinoNome}
-CIE: ${textoSeguro(destino?.cie || remanejamento.escola_destino_cie, "Não informado")}
-Endereço: ${textoSeguro(destino?.endereco, "Não informado")}
-Telefone: ${textoSeguro(destino?.telefone, "Não informado")}
-
-Quantidade a ser remanejada:
-${quantidade} equipamento(s)
-
-Data de referência da aplicação:
-${dataProva}
-
-Turno crítico identificado:
-${turno}
-
-Retirada dos equipamentos:
-Preferencialmente em ${dataRetirada}, um dia útil antes da data da prova, em horário a combinar diretamente entre as unidades escolares envolvidas.
-
-Devolução dos equipamentos:
-Preferencialmente em ${dataDevolucao}, um dia útil após a data da prova, em horário a combinar diretamente entre as unidades escolares envolvidas.
-
-Cabe lembrar que a escola deverá fazer a retirada dos equipamentos e que sua devolução na U.E. supramencionada deverá ocorrer na data combinada e com os equipamentos em plenas condições de uso, da mesma forma como foram emprestados.
-
-ORIENTAÇÕES OBRIGATÓRIAS
-
-1. O remanejamento possui caráter paliativo e tem como finalidade apoiar a aplicação do SARESP Digital.
-2. A unidade contemplada deverá alinhar a retirada dos equipamentos diretamente com a unidade cedente.
-3. O campo de número de série dos equipamentos deverá ser preenchido pela escola no ato da retirada/conferência, conforme Guia de Remanejamento.
-4. O termo de remanejamento/guia de remessa deverá conter a quantidade remanejada entre as escolas.
-5. As duas vias do termo/remessa deverão ser assinadas pelas unidades envolvidas e enviadas à SETEC após a retirada dos equipamentos.
-6. As movimentações serão formalizadas por RELAÇÃO DE REMESSA.
-7. Enviamos em anexo o modelo de remessa para apoio na retirada dos equipamentos.
-
-CUIDADOS COM OS EQUIPAMENTOS RECEBIDOS EM EMPRÉSTIMO
-
-A unidade contemplada deverá manter atenção aos equipamentos recebidos em todos os aspectos, inclusive etiquetas, identificações, número de série, patrimônio e integridade física.
-
-As unidades cedentes são, em sua maioria, escolas de Ciclo I, que possuem poucos equipamentos para uso cotidiano. Por isso, os equipamentos emprestados devem ser armazenados e manuseados com zelo durante todo o processo.
-
-Caso algum equipamento chegue à unidade contemplada danificado, sem teclas, com tela quebrada, falha de funcionamento ou qualquer divergência, a direção da escola cedente deverá ser comunicada imediatamente, com ciência à SETEC.
-
-Os equipamentos deverão permanecer guardados em local seguro durante todo o período de empréstimo, com servidor responsável pela conferência diária dos itens recebidos.
-
-O remanejamento considera as necessidades e possibilidades de uso de equipamentos em cada Unidade Escolar, conforme infraestrutura lógica e tecnológica local, priorizando tablets e notebooks como equipamentos remanejáveis quando aplicável.
-
-Todas as unidades envolvidas deverão cumprir o procedimento conforme orientação da COINTEC/SEDUC, sem possibilidade de negativa, por se tratar de processo de organização estadual para viabilização das provas digitais agendadas.
-
-Solicitamos, após a retirada, que ambas as unidades confirmem a execução do remanejamento, informando a data, o responsável pela retirada e eventuais observações.`
+      const { assunto, corpo, destinatarios } = montarEmailSaresp(edicaoSelecionada, remanejamento, origem, destino)
 
       setEmailGerado({
         assunto,
@@ -2538,9 +1964,10 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
         "Destino": textoSeguro(item.escola_destino_nome, "Não informado"),
         "CIE destino": textoSeguro(item.escola_destino_cie, "Não informado"),
         "Quantidade": numeroSeguro(item.quantidade),
-        "Data da prova": formatarData(dataProvaRef),
+        "Início da aplicação": formatarData(dataProvaRef),
+        "Fim da aplicação": formatarData(fimPeriodo(item,edicaoSelecionada)),
         "Retirada prevista": getDataRetiradaFormatada(dataProvaRef),
-        "Devolução prevista": getDataDevolucaoFormatada(dataProvaRef),
+        "Devolução prevista": getDataDevolucaoFormatada(fimPeriodo(item,edicaoSelecionada)),
         "Horário": "A combinar entre as escolas",
         "Turno de referência": getTurnoLabel(item.turno_referencia),
         "Distância aproximada": formatarDistancia(item.distancia_km),
@@ -2582,9 +2009,9 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
     const resumo = [
       ["Edição", edicaoSelecionada?.titulo || "-"],
       ["Ano", edicaoSelecionada?.ano || "-"],
-      ["Data padrão da prova", formatarData(edicaoSelecionada?.data_prova_padrao)],
+      ["Período da aplicação", formatarPeriodo(edicaoSelecionada?.data_prova_padrao,edicaoSelecionada?.data_prova_fim_padrao || edicaoSelecionada?.data_prova_padrao)],
       ["Retirada prevista", getDataRetiradaFormatada(edicaoSelecionada?.data_prova_padrao)],
-      ["Devolução prevista", getDataDevolucaoFormatada(edicaoSelecionada?.data_prova_padrao)],
+      ["Devolução prevista", getDataDevolucaoFormatada(edicaoSelecionada?.data_prova_fim_padrao || edicaoSelecionada?.data_prova_padrao)],
       ["Remanejamentos ativos", getRemanejamentosAtivos().length],
       ["Equipamentos planejados", estatisticas.quantidadePlanejada],
       ["Concluídos", estatisticas.quantidadeConcluida],
@@ -2687,438 +2114,11 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
   }
 
   function montarHtmlPlanoFinal() {
-    const ativos = getRemanejamentosAtivos()
-    const linhasTabela = ativos
-      .map((item, index) => {
-        const dataProvaRef = getDataProvaReferencia(item, edicaoSelecionada)
-        const status = getRemanejamentoStatus(item.status)
-
-        return `
-          <tr>
-            <td>${index + 1}</td>
-            <td><strong>${escaparHtml(item.escola_origem_nome || "Não informado")}</strong><br/><span>CIE ${escaparHtml(item.escola_origem_cie || "-")}</span></td>
-            <td><strong>${escaparHtml(item.escola_destino_nome || "Não informado")}</strong><br/><span>CIE ${escaparHtml(item.escola_destino_cie || "-")}</span></td>
-            <td class="center">${escaparHtml(numeroSeguro(item.quantidade))}</td>
-            <td class="center">${escaparHtml(formatarData(dataProvaRef))}</td>
-            <td class="center">${escaparHtml(getDataRetiradaFormatada(dataProvaRef))}</td>
-            <td class="center">${escaparHtml(getDataDevolucaoFormatada(dataProvaRef))}</td>
-            <td class="center">${escaparHtml(getTurnoLabel(item.turno_referencia))}</td>
-            <td class="center">${escaparHtml(formatarDistancia(item.distancia_km))}</td>
-            <td class="center">${escaparHtml(status.label)}</td>
-          </tr>
-        `
-      })
-      .join("")
-
-    const dataEmissao = new Date().toLocaleString("pt-BR", {
-      timeZone: "America/Sao_Paulo",
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    })
-
-    return `
-      <!doctype html>
-      <html lang="pt-BR">
-        <head>
-          <meta charset="utf-8" />
-          <title>Plano Final SARESP Digital</title>
-          <style>
-            @page {
-              size: A4 landscape;
-              margin: 12mm;
-            }
-
-            * {
-              box-sizing: border-box;
-            }
-
-            body {
-              margin: 0;
-              color: #0f172a;
-              font-family: Arial, Helvetica, sans-serif;
-              background: #ffffff;
-              font-size: 11px;
-            }
-
-            .header {
-              display: flex;
-              justify-content: space-between;
-              gap: 24px;
-              border-bottom: 3px solid #1d4ed8;
-              padding-bottom: 14px;
-              margin-bottom: 14px;
-            }
-
-            .eyebrow {
-              color: #1d4ed8;
-              font-size: 10px;
-              font-weight: 800;
-              letter-spacing: 0.12em;
-              text-transform: uppercase;
-              margin: 0 0 6px;
-            }
-
-            h1 {
-              font-size: 24px;
-              line-height: 1.1;
-              margin: 0;
-              color: #020617;
-            }
-
-            .subtitle {
-              max-width: 760px;
-              margin: 8px 0 0;
-              color: #475569;
-              line-height: 1.45;
-              font-size: 11px;
-            }
-
-            .meta {
-              min-width: 260px;
-              border: 1px solid #cbd5e1;
-              border-radius: 14px;
-              padding: 12px;
-              background: #f8fafc;
-            }
-
-            .meta p {
-              margin: 0 0 6px;
-              line-height: 1.35;
-            }
-
-            .cards {
-              display: grid;
-              grid-template-columns: repeat(5, 1fr);
-              gap: 8px;
-              margin: 14px 0;
-            }
-
-            .card {
-              border: 1px solid #cbd5e1;
-              border-radius: 12px;
-              padding: 10px;
-              background: #f8fafc;
-            }
-
-            .card span {
-              display: block;
-              color: #64748b;
-              font-size: 9px;
-              font-weight: 800;
-              text-transform: uppercase;
-              letter-spacing: 0.1em;
-              margin-bottom: 5px;
-            }
-
-            .card strong {
-              color: #020617;
-              font-size: 18px;
-            }
-
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              margin-top: 10px;
-              page-break-inside: auto;
-            }
-
-            thead {
-              display: table-header-group;
-            }
-
-            tr {
-              page-break-inside: avoid;
-              page-break-after: auto;
-            }
-
-            th {
-              background: #1e3a8a;
-              color: #ffffff;
-              font-size: 9px;
-              text-transform: uppercase;
-              letter-spacing: 0.06em;
-              text-align: left;
-              padding: 8px;
-              border: 1px solid #1e40af;
-            }
-
-            td {
-              vertical-align: top;
-              padding: 8px;
-              border: 1px solid #cbd5e1;
-              line-height: 1.35;
-            }
-
-            td span {
-              color: #64748b;
-              font-size: 10px;
-            }
-
-            .center {
-              text-align: center;
-              vertical-align: middle;
-              white-space: nowrap;
-            }
-
-            .section {
-              margin-top: 16px;
-              border: 1px solid #cbd5e1;
-              border-radius: 14px;
-              padding: 12px 14px;
-              background: #ffffff;
-            }
-
-            .section h2 {
-              margin: 0 0 8px;
-              font-size: 15px;
-              color: #020617;
-            }
-
-            .section ol {
-              margin: 0;
-              padding-left: 18px;
-              columns: 2;
-              column-gap: 24px;
-            }
-
-            .section li {
-              break-inside: avoid;
-              margin: 0 0 7px;
-              line-height: 1.45;
-              color: #334155;
-            }
-
-            .signatures {
-              display: grid;
-              grid-template-columns: repeat(2, 1fr);
-              gap: 18px;
-              margin-top: 22px;
-            }
-
-            .signature {
-              text-align: center;
-              padding-top: 32px;
-              border-top: 1px solid #334155;
-              color: #334155;
-              font-size: 10px;
-              font-weight: 700;
-            }
-
-            .footer {
-              margin-top: 14px;
-              padding-top: 10px;
-              border-top: 1px solid #cbd5e1;
-              color: #64748b;
-              font-size: 9px;
-              line-height: 1.4;
-            }
-
-            @media print {
-              .no-print {
-                display: none;
-              }
-            }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div>
-              <p class="eyebrow">SETEC/SEINTEC — URE Guarulhos Sul</p>
-              <h1>Plano Final de Remanejamento — SARESP Digital</h1>
-              <p class="subtitle">
-                Documento institucional para registro, acompanhamento e formalização dos remanejamentos de equipamentos entre unidades escolares.
-              </p>
-            </div>
-
-            <div class="meta">
-              <p><strong>Edição:</strong> ${escaparHtml(edicaoSelecionada?.titulo || "-")}</p>
-              <p><strong>Ano:</strong> ${escaparHtml(edicaoSelecionada?.ano || "-")}</p>
-              <p><strong>Data padrão da prova:</strong> ${escaparHtml(formatarData(edicaoSelecionada?.data_prova_padrao))}</p>
-              <p><strong>Emissão:</strong> ${escaparHtml(dataEmissao)}</p>
-            </div>
-          </div>
-
-          <div class="cards">
-            <div class="card"><span>Itens ativos</span><strong>${escaparHtml(ativos.length)}</strong></div>
-            <div class="card"><span>Equipamentos planejados</span><strong>${escaparHtml(estatisticas.quantidadePlanejada)}</strong></div>
-            <div class="card"><span>Concluídos</span><strong>${escaparHtml(estatisticas.quantidadeConcluida)}</strong></div>
-            <div class="card"><span>Déficit seco</span><strong>${escaparHtml(estatisticas.deficitTotal)}</strong></div>
-            <div class="card"><span>Meta segura</span><strong>${escaparHtml(estatisticas.metaComGorduraTotal)}</strong></div>
-          </div>
-
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Unidade cedente</th>
-                <th>Unidade contemplada</th>
-                <th>Qtd.</th>
-                <th>Prova</th>
-                <th>Retirada</th>
-                <th>Devolução</th>
-                <th>Turno</th>
-                <th>Distância</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${
-                linhasTabela ||
-                `<tr><td colspan="10" class="center">Nenhum remanejamento ativo no plano final.</td></tr>`
-              }
-            </tbody>
-          </table>
-
-          <div class="section">
-            <h2>Orientações institucionais obrigatórias</h2>
-            <ol>
-              ${getOrientacoesInstitucionaisHtml()}
-            </ol>
-          </div>
-
-          <div class="signatures">
-            <div class="signature">SEINTEC<br/>Conferência e ciência</div>
-            <div class="signature">SETEC<br/>Registro e acompanhamento</div>
-          </div>
-
-          <div class="footer">
-            Documento gerado pela Central SARESP Digital — SETEC Hub. A retirada deverá ocorrer preferencialmente um dia útil antes da prova e a devolução um dia útil após a prova, em horário a combinar entre as escolas.
-          </div>
-
-          <script>
-            window.addEventListener("load", () => {
-              setTimeout(() => window.print(), 450)
-            })
-          </script>
-        </body>
-      </html>
-    `
+    return montarPlanoSaresp(edicaoSelecionada, remanejamentos, resultados.filter(r=>r.status_calculado==="sem_inventario").length)
   }
 
   function montarHtmlGuiaRemanejamento(remanejamento: SarespRemanejamento) {
-    const origem = textoSeguro(remanejamento.escola_origem_nome, "UNIDADE CEDENTE")
-    const destino = textoSeguro(remanejamento.escola_destino_nome, "UNIDADE CONTEMPLADA")
-    const quantidade = numeroSeguro(remanejamento.quantidade)
-    const dataProvaRef = getDataProvaReferencia(remanejamento, edicaoSelecionada)
-    const dataRetirada = getDataRetiradaFormatada(dataProvaRef)
-    const dataDevolucao = getDataDevolucaoFormatada(dataProvaRef)
-    const nomeArquivoGuia = getNomeArquivoGuia(remanejamento)
-
-    return `
-      <!doctype html>
-      <html lang="pt-BR">
-        <head>
-          <meta charset="utf-8" />
-          <title>${escaparHtml(nomeArquivoGuia.replace(/\.pdf$/i, ""))}</title>
-          <style>
-            @page { size: A4 portrait; margin: 12mm; }
-            * { box-sizing: border-box; }
-            body { margin: 0; background: #ffffff; color: #000000; font-family: Arial, Helvetica, sans-serif; }
-            .page { width: 100%; min-height: 267mm; padding: 0; }
-            .top { text-align: center; margin-top: 6mm; margin-bottom: 24mm; position: relative; }
-            .brasao { position: absolute; left: 16mm; top: -2mm; width: 29mm; height: 25mm; border: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #333; }
-            .header-text { font-weight: 900; font-size: 14px; line-height: 1.05; text-transform: uppercase; }
-            .title { border: 3px solid #000; background: #e6e6e6; text-align: center; font-weight: 900; font-size: 18px; line-height: 1.1; padding: 4px; text-transform: uppercase; margin: 0 2mm 6mm; }
-            table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-            .mini td { border: 3px solid #000; height: 10mm; font-size: 12px; font-weight: 900; padding: 2px 5px; text-transform: uppercase; }
-            .mini .label { width: 28mm; background: #d9d9d9; text-align: center; }
-            .mini .value { font-size: 11px; font-weight: 800; }
-            .main { margin-top: 8mm; }
-            .main th { border: 3px solid #000; background: #d9d9d9; font-size: 14px; font-weight: 900; text-transform: uppercase; padding: 7px; }
-            .main td { border: 3px solid #000; height: 59mm; vertical-align: top; padding: 8px; }
-            .interessado { font-family: 'Times New Roman', Times, serif; font-size: 14px; font-weight: 900; line-height: 1.15; text-transform: uppercase; }
-            .alerta { margin-top: 8px; color: #ff0000; font-family: 'Times New Roman', Times, serif; font-size: 14px; font-weight: 900; line-height: 1.15; }
-            .assunto { text-align: center; font-size: 14px; font-weight: 900; line-height: 1.55; padding-top: 18px; }
-            .serial { margin-top: 14px; font-weight: 900; }
-            .serial-box { margin-top: 10px; height: 30mm; border: 0; text-align: left; font-size: 12px; font-weight: 700; color: #555; }
-            .foot { margin-top: 16mm; }
-            .foot th { border: 3px solid #000; background: #d9d9d9; font-size: 14px; font-weight: 900; text-transform: uppercase; padding: 7px; }
-            .foot td { border: 3px solid #000; height: 46mm; vertical-align: top; text-align: center; font-size: 12px; font-weight: 900; padding-top: 7px; }
-            .info { margin-top: 5mm; font-size: 10px; color: #333; line-height: 1.35; }
-            @media print { .no-print { display: none; } }
-          </style>
-        </head>
-        <body>
-          <div class="page">
-            <div class="top">
-              <div class="brasao">SP</div>
-              <div class="header-text">
-                SECRETARIA DE ESTADO DA EDUCAÇÃO<br />
-                URE GUARULHOS SUL<br />
-                SERVIÇO DE INFORMAÇÕES EDUCACIONAIS E TECNOLOGIA – SEINTEC<br />
-                SEÇÃO DE TECNOLOGIA – SETEC
-              </div>
-            </div>
-
-            <div class="title">
-              RELAÇÃO DE REMESSA DE DOCUMENTOS<br />
-              EMPRÉSTIMO DE EQUIPAMENTOS - SARESP DIGITAL
-            </div>
-
-            <table class="mini">
-              <tr>
-                <td class="label">DE</td>
-                <td class="value">${escaparHtml(origem)}${remanejamento.escola_origem_cie ? ` - CIE ${escaparHtml(remanejamento.escola_origem_cie)}` : ""}</td>
-              </tr>
-              <tr>
-                <td class="label">PARA</td>
-                <td class="value">${escaparHtml(destino)}${remanejamento.escola_destino_cie ? ` - CIE ${escaparHtml(remanejamento.escola_destino_cie)}` : ""}</td>
-              </tr>
-            </table>
-
-            <table class="main">
-              <tr>
-                <th>INTERESSADO</th>
-                <th>ASSUNTO</th>
-              </tr>
-              <tr>
-                <td>
-                  <div class="interessado">
-                    RETIRADA DE EQUIPAMENTOS EM<br />
-                    EMPRÉSTIMO PARA A APLICAÇÃO DA PROVA<br />
-                    SARESP DIGITAL
-                  </div>
-                  <div class="alerta">
-                    *** Cabe lembrar que a escola deverá fazer a retirada dos equipamentos e que sua devolução na U.E. supramencionada deverá ocorrer na data combinada e com os equipamentos em plenas condições de uso, da mesma forma como foram emprestados.
-                  </div>
-                  <div class="info">
-                    Retirada prevista: ${escaparHtml(dataRetirada)} - horário a combinar entre as unidades.<br />
-                    Devolução prevista: ${escaparHtml(dataDevolucao)} - horário a combinar entre as unidades.
-                  </div>
-                </td>
-                <td>
-                  <div class="assunto">
-                    “${escaparHtml(quantidade)} EQUIPAMENTO(S) REMANEJADO(S)”
-                    <div class="serial">NÚMERO DE SÉRIE DOS EQUIPAMENTOS:</div>
-                    <div class="serial-box">Campo a ser preenchido pela escola no ato da retirada/conferência.</div>
-                  </div>
-                </td>
-              </tr>
-            </table>
-
-            <table class="foot">
-              <tr>
-                <th>ENVIADO</th>
-                <th>RECEBIDO</th>
-              </tr>
-              <tr>
-                <td>EM ____/____/______</td>
-                <td>EM ____/____/______</td>
-              </tr>
-            </table>
-          </div>
-
-          <script>
-            window.addEventListener("load", () => {
-              setTimeout(() => window.print(), 450)
-            })
-          </script>
-        </body>
-      </html>
-    `
+    return montarGuiaSaresp(edicaoSelecionada, remanejamento)
   }
 
   function exportarGuiaRemanejamento(remanejamento: SarespRemanejamento) {
@@ -3222,7 +2222,7 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
   const mostrarFiltrosGerais = ["diagnostico", "doadoras"].includes(aba)
 
   return (
-    <div className="mx-auto max-w-[1700px] space-y-6 pb-12">
+    <div className={`${pageStyles.page} mx-auto max-w-[1700px] space-y-6 pb-12`}>
       <section className="relative overflow-hidden rounded-[2rem] border border-blue-500/20 bg-[#020617] p-5 shadow-xl shadow-blue-950/10 md:p-7">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.22),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(6,182,212,0.14),transparent_34%)]" />
 
@@ -3249,7 +2249,7 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
 
             <p className="mt-4 max-w-3xl text-sm font-medium leading-relaxed text-slate-400 md:text-base">
               Simulação operacional com base no inventário atualizado, considerando somente
-              equipamentos aptos para aplicação digital e margem de segurança para remanejamento.
+              equipamentos aptos para aplicação digital e reserva por todo o período da aplicação.
             </p>
 
             <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_auto_auto]">
@@ -3282,7 +2282,7 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
               <button
                 type="button"
                 onClick={zerarEdicaoAtual}
-                disabled={zerando || !edicaoId}
+                disabled={zerando || !edicaoId || !podeGerenciar}
                 className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-2xl border border-red-500/25 bg-red-500/10 px-5 text-sm font-black uppercase tracking-widest text-red-300 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {zerando ? "Zerando..." : "Zerar edição"}
@@ -3319,6 +2319,12 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
         </div>
       )}
 
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+        <span>{podeGerenciar ? "Gestão habilitada" : "Modo de consulta"} · {atualizadoEm ? `Atualizado em ${formatarDataHora(atualizadoEm)}` : "Carregando base da edição"}</span>
+        {podeGerenciar && <a href="/saresp/gestao" className="font-semibold text-cyan-300 hover:underline">Gerenciar edições e datas →</a>}
+      </div>
+      {resultados.some(r=>r.status_calculado==="sem_inventario") && <div role="status" className="rounded-2xl border border-orange-500/30 bg-orange-500/10 p-4 text-sm text-orange-200"><strong>{resultados.filter(r=>r.status_calculado==="sem_inventario").length} escola(s) precisam validar o inventário.</strong> A capacidade e o déficit dessas escolas aguardam confirmação. Quantidade recebida e total do CSV não substituem equipamentos funcionando.</div>}
+      {alertasPlano.length>0 && <details className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200"><summary className="cursor-pointer font-bold">{alertasPlano.length} operação(ões) do plano precisam de revisão de saldo no período</summary><p className="mt-3">Os registros foram preservados. Confira o inventário, as reservas de outras edições e a quantidade antes de executar.</p><ul className="mt-3 space-y-2">{alertasPlano.map(a=><li key={a.id}>{a.origem} → {a.destino}: {a.quantidade} no plano; {a.disponivel} disponíveis para esta operação.</li>)}</ul></details>}
       <section className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_420px]">
         <Panel>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
@@ -3328,14 +2334,14 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
               detail={`Status: ${edicaoSelecionada?.status || "-"}`}
             />
             <InfoBlock
-              label="Data padrão"
-              value={formatarData(edicaoSelecionada?.data_prova_padrao)}
+              label="Período de aplicação"
+              value={formatarPeriodo(edicaoSelecionada?.data_prova_padrao,edicaoSelecionada?.data_prova_fim_padrao || edicaoSelecionada?.data_prova_padrao)}
               detail={textoSeguro(edicaoSelecionada?.serie_padrao, "Série não informada")}
             />
             <InfoBlock
               label="Fonte"
-              value={edicaoSelecionada?.fonte_equipamentos || "-"}
-              detail="Base usada para capacidade"
+              value="Inventário funcionando"
+              detail="CSV mantido apenas como referência"
             />
             <InfoBlock
               label="Regra SARESP"
@@ -3550,7 +2556,7 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <div>
                     <label className="mb-2 block text-xs font-black uppercase tracking-widest text-slate-500">
-                      Data da prova
+                      Início da aplicação
                     </label>
                     <input
                       type="date"
@@ -3560,6 +2566,11 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
                     />
                   </div>
 
+                  <div>
+                    <label className="mb-2 block text-xs font-black uppercase tracking-widest text-slate-500" htmlFor="saresp-data-fim">Fim da aplicação (opcional)</label>
+                    <input id="saresp-data-fim" type="date" min={dataProvaImport || undefined} value={dataProvaFimImport} onChange={event=>setDataProvaFimImport(event.target.value)} className="w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 text-sm font-bold text-white outline-none focus:border-blue-500/60" />
+                    <p className="mt-2 text-xs text-slate-400">Em branco: aplicação de um dia. Nos dois dias, a quantidade de equipamentos é a mesma.</p>
+                  </div>
                   <div>
                     <label className="mb-2 block text-xs font-black uppercase tracking-widest text-slate-500">
                       Série
@@ -3653,7 +2664,7 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
                   <button
                     type="button"
                     onClick={importarCsvEProcessar}
-                    disabled={importando || csvRows.length === 0 || !edicaoId}
+                    disabled={importando || csvRows.length === 0 || !edicaoId || !podeGerenciar || loadingDados}
                     className="rounded-2xl bg-blue-600 px-6 py-4 text-sm font-black uppercase tracking-widest text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-700"
                   >
                     {importando ? "Processando..." : "Importar e calcular"}
@@ -3874,6 +2885,7 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
                   <div className="space-y-5">
                     {sugestoesAgrupadas.map((grupo) => {
                       const statusGrupo = grupo.statusInfo
+                      const semInventario = grupo.resultado?.status_calculado === "sem_inventario"
                       const ehAtencao = grupo.tipo === "atencao"
                       const semIndicacao = grupo.tipo === "sem_indicacao"
                       const grupoKey = `${grupo.resultado?.demanda_id || grupo.resultado?.escola_id || grupo.destino}`
@@ -3912,11 +2924,11 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
                                     ehAtencao
                                       ? "border-yellow-500/25 bg-yellow-500/10 text-yellow-300"
                                       : semIndicacao
-                                        ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+                                        ? (semInventario ? "border-orange-500/25 bg-orange-500/10 text-orange-300" : "border-emerald-500/25 bg-emerald-500/10 text-emerald-300")
                                         : "border-red-500/25 bg-red-500/10 text-red-300"
                                   }`}
                                 >
-                                  {ehAtencao
+                                  {semInventario ? "Inventário pendente de validação" : ehAtencao
                                     ? "Escola em atenção"
                                     : semIndicacao
                                       ? "Sem indicação automática"
@@ -3934,15 +2946,15 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
 
                               <p className="mt-2 text-sm font-semibold text-slate-500">
                                 Planejado: <span className="font-black text-blue-300">{formatarNumero(grupo.planejado)}</span>
-                                {" • "}Déficit: <span className="font-black text-red-300">{formatarNumero(grupo.deficit)}</span>
-                                {" • "}Referência segura: <span className="font-black text-cyan-300">{formatarNumero(grupo.metaComGordura)}</span>
+                                {" • "}Déficit: <span className="font-black text-red-300">{semInventario ? "A validar" : formatarNumero(grupo.deficit)}</span>
+                                {" • "}Referência segura: <span className="font-black text-cyan-300">{semInventario ? "A validar" : formatarNumero(grupo.metaComGordura)}</span>
                               </p>
                             </div>
 
                             <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
                               <MiniMetric label="Planejado" value={grupo.planejado} />
-                              <MiniMetric label="Falta" value={grupo.pendente} danger={grupo.pendente > 0} />
-                              <MiniMetric label="Falta c/ margem" value={grupo.pendenteComGordura} danger={grupo.pendenteComGordura > 0} />
+                              <MiniMetric label="Falta" value={semInventario ? "A validar" : grupo.pendente} danger={grupo.pendente > 0} />
+                              <MiniMetric label="Falta c/ margem" value={semInventario ? "A validar" : grupo.pendenteComGordura} danger={grupo.pendenteComGordura > 0} />
                               <MiniMetric label="Turno" value={getTurnoLabel(grupo.turnoCritico)} />
                             </div>
                           </div>
@@ -3956,7 +2968,7 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
                               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                                 <div>
                                   <p className="text-sm font-black text-white">
-                                    Escola disponível para análise manual
+                                    {semInventario ? "Confirme o inventário desta escola" : "Escola disponível para análise manual"}
                                   </p>
                                   <p className="mt-1 text-sm font-medium leading-relaxed text-yellow-100/75">
                                     Esta unidade não possui sugestão automática de origem neste momento. Caso haja oscilação de equipamentos,
@@ -3978,7 +2990,7 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
                                     key={`${sugestao.demanda_id}-${sugestao.origem_id}`}
                                     sugestao={sugestao}
                                     statusOperacional={statusOperacional}
-                                    salvando={salvando}
+                                    salvando={salvando || !podeGerenciar}
                                     planejadoDestino={getPlanejadoParaDestino(sugestao)}
                                     pendenteDestino={getPendenteParaDestino(sugestao)}
                                     gorduraDestino={getGorduraParaDestino(sugestao)}
@@ -4100,12 +3112,12 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
                   <InfoBlock
                     label="Retirada prevista"
                     value={getDataRetiradaFormatada(edicaoSelecionada?.data_prova_padrao)}
-                    detail="Um dia útil antes da prova"
+                    detail="Antes do primeiro dia de aplicação"
                   />
                   <InfoBlock
                     label="Devolução prevista"
-                    value={getDataDevolucaoFormatada(edicaoSelecionada?.data_prova_padrao)}
-                    detail="Um dia útil após a prova"
+                    value={getDataDevolucaoFormatada(edicaoSelecionada?.data_prova_fim_padrao || edicaoSelecionada?.data_prova_padrao)}
+                    detail="Depois do último dia de aplicação"
                   />
                   <InfoBlock
                     label="Horário"
@@ -4147,6 +3159,7 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
                       <RemanejamentoCard
                         key={item.id}
                         remanejamento={item}
+                        podeGerenciar={podeGerenciar}
                         salvando={salvando}
                         onAprovar={() =>
                           atualizarStatusRemanejamento(item, "aprovado")
@@ -4202,20 +3215,11 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
           maxWidth="max-w-4xl"
         >
           <div className="space-y-5">
-            <div className="rounded-[1.5rem] border border-cyan-500/20 bg-cyan-500/10 p-5">
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-300">
-                Configuração do remanejamento
-              </p>
-              <h2 className="mt-2 text-2xl font-black text-white">
-                Ajustar quantidade com margem operacional
-              </h2>
-              <p className="mt-2 text-sm font-medium leading-relaxed text-cyan-100/80">
-                A quantidade pode ser ajustada livremente para atender a realidade da
-                aplicação, logística, reserva de segurança e condições de cada unidade.
-              </p>
-            </div>
+            <p className="rounded-2xl border border-cyan-500/20 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
+              Aplicação: <strong>{formatarPeriodo(sugestaoSelecionada.data_prova,sugestaoSelecionada.data_prova_fim)}</strong>. Ajuste a quantidade até o saldo disponível no período.
+            </p>
 
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_auto_1fr] lg:items-stretch">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-[1fr_auto_1fr] lg:items-stretch">
               <SchoolFlow
                 label="Origem doadora"
                 school={sugestaoSelecionada.origem_nome}
@@ -4233,23 +3237,6 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
-              <MiniMetric
-                label="Déficit"
-                value={sugestaoSelecionada.deficit}
-                danger
-              />
-              <MiniMetric label="Gordura" value={gorduraModal} />
-              <MiniMetric label="Meta segura" value={metaComGorduraModal} />
-              <MiniMetric label="Já planejado" value={planejadoModal} />
-              <MiniMetric
-                label="Falta c/ margem"
-                value={pendenteComGorduraModal}
-                danger={pendenteComGorduraModal > 0}
-              />
-              <MiniMetric label="Referência" value={limiteModal} />
-            </div>
-
             <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/70 p-5">
               <label className="mb-2 block text-xs font-black uppercase tracking-widest text-slate-500">
                 Quantidade a enviar para o plano
@@ -4258,6 +3245,7 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
               <input
                 type="number"
                 min={1}
+                max={limiteModal}
                 step={1}
                 value={quantidadePlano}
                 onChange={(event) => {
@@ -4288,10 +3276,26 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
                 <span className="font-black text-yellow-300">
                   {formatarNumero(pendenteModal)}
                 </span>
-                . Este campo não possui limite travado para permitir ajustes
-                conforme a condição real de aplicação.
+                . Disponíveis no período: {formatarNumero(limiteModal)}. A quantidade pode superar o déficit, respeitando este saldo.
               </p>
             </div>
+
+            <details className="rounded-2xl border border-slate-800 p-4"><summary className="cursor-pointer text-sm font-semibold text-slate-300">Ver cálculo e margem operacional</summary><div className="mt-4"><div className="grid grid-cols-2 gap-3 md:grid-cols-6">
+              <MiniMetric
+                label="Déficit"
+                value={sugestaoSelecionada.deficit}
+                danger
+              />
+              <MiniMetric label="Gordura" value={gorduraModal} />
+              <MiniMetric label="Meta segura" value={metaComGorduraModal} />
+              <MiniMetric label="Já planejado" value={planejadoModal} />
+              <MiniMetric
+                label="Falta c/ margem"
+                value={pendenteComGorduraModal}
+                danger={pendenteComGorduraModal > 0}
+              />
+              <MiniMetric label="Saldo no período" value={limiteModal} />
+            </div></div></details>
 
             <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button
@@ -4314,7 +3318,7 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
                 disabled={
                   salvando ||
                   quantidadePlano === "" ||
-                  Number(quantidadePlano) <= 0
+                  Number(quantidadePlano) <= 0 || !Number.isSafeInteger(Number(quantidadePlano)) || Number(quantidadePlano)>limiteModal || !podeGerenciar
                 }
                 className="rounded-2xl bg-cyan-600 px-6 py-4 text-sm font-black uppercase tracking-widest text-white shadow-lg shadow-cyan-950/30 transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-slate-700"
               >
@@ -4356,7 +3360,7 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
               />
               <DetailBox
                 label="Equipamentos base"
-                value={resultadoDetalhe.equipamentos_base}
+                value={resultadoDetalhe.status_calculado==="sem_inventario" ? "A validar" : resultadoDetalhe.equipamentos_base}
               />
               <DetailBox
                 label="Capacidade útil"
@@ -4397,6 +3401,7 @@ Solicitamos, após a retirada, que ambas as unidades confirmem a execução do r
                 }
               />
               <DetailText label="Assunto" value={emailGerado.assunto} />
+              <div className="flex flex-wrap gap-2"><button type="button" onClick={()=>copiarTexto(emailGerado.destinatarios,"Destinatários copiados.")} className="rounded-xl border border-cyan-500/30 px-4 py-2 text-sm font-semibold text-cyan-300">Copiar destinatários</button><button type="button" onClick={()=>baixarArquivo(`Email_SARESP_${emailGerado.remanejamento.id.slice(0,8)}.txt`,`Para: ${emailGerado.destinatarios}\nAssunto: ${emailGerado.assunto}\n\n${emailGerado.corpo}`,"text/plain;charset=utf-8")} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300">Baixar rascunho</button></div>
             </div>
 
             <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/70 p-4">
@@ -4523,11 +3528,11 @@ function ResultadoCard({
           </span>{" "}
           • Inventário:{" "}
           <span className="text-slate-400">
-            {formatarNumero(resultado.equipamentos_inventario)}
+            {resultado.status_calculado==="sem_inventario" ? "A validar" : formatarNumero(resultado.equipamentos_inventario)}
           </span>{" "}
           • Base usada:{" "}
           <span className="text-slate-400">
-            {formatarNumero(resultado.equipamentos_base)}
+            {resultado.status_calculado==="sem_inventario" ? "A validar" : formatarNumero(resultado.equipamentos_base)}
           </span>{" "}
           • Gordura:{" "}
           <span className="text-cyan-300">{formatarNumero(gordura)}</span>
@@ -4595,7 +3600,7 @@ function SugestaoCard({
 
         <div className="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-center">
           <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">
-            Referência
+            Saldo no período
           </p>
           <p className="mt-1 text-2xl font-black text-white">
             {formatarNumero(limiteQuantidade)}
@@ -4620,7 +3625,7 @@ function SugestaoCard({
       </button>
 
       <p className="relative z-10 mt-3 text-[11px] font-semibold leading-relaxed text-slate-600">
-        {statusOperacional.description} A quantidade continua flexível para atender condições reais de aplicação.
+        {statusOperacional.description} A quantidade pode superar o déficit até o limite disponível no período.
       </p>
     </article>
   )
@@ -4629,6 +3634,7 @@ function SugestaoCard({
 
 function RemanejamentoCard({
   remanejamento,
+  podeGerenciar,
   salvando,
   onAprovar,
   onConcluir,
@@ -4637,6 +3643,7 @@ function RemanejamentoCard({
   onGuia,
 }: {
   remanejamento: SarespRemanejamento
+  podeGerenciar: boolean
   salvando: boolean
   onAprovar: () => void
   onConcluir: () => void
@@ -4647,7 +3654,7 @@ function RemanejamentoCard({
   const status = getRemanejamentoStatus(remanejamento.status)
   const dataProvaRef = remanejamento.data_prova
   const dataRetirada = getDataRetiradaFormatada(dataProvaRef)
-  const dataDevolucao = getDataDevolucaoFormatada(dataProvaRef)
+  const dataDevolucao = getDataDevolucaoFormatada(remanejamento.data_prova_fim || dataProvaRef)
 
   return (
     <article className="relative overflow-hidden rounded-[1.5rem] border border-slate-800 bg-slate-950/60 p-5 transition hover:border-blue-500/35">
@@ -4664,7 +3671,7 @@ function RemanejamentoCard({
             </span>
 
             <span className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-400">
-              Prova: {formatarData(dataProvaRef)}
+              Aplicação: {formatarPeriodo(dataProvaRef,remanejamento.data_prova_fim || dataProvaRef)}
             </span>
 
             <span className="rounded-full border border-cyan-500/25 bg-cyan-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-cyan-300">
@@ -4697,7 +3704,7 @@ function RemanejamentoCard({
               </p>
               <p className="mt-1 text-sm font-black text-white">{dataRetirada}</p>
               <p className="mt-1 text-[10px] font-semibold text-slate-500">
-                Um dia útil antes • horário a combinar
+                Antes do primeiro dia • horário a combinar
               </p>
             </div>
 
@@ -4707,7 +3714,7 @@ function RemanejamentoCard({
               </p>
               <p className="mt-1 text-sm font-black text-white">{dataDevolucao}</p>
               <p className="mt-1 text-[10px] font-semibold text-slate-500">
-                Um dia útil depois • horário a combinar
+                Após o último dia • horário a combinar
               </p>
             </div>
 
@@ -4748,7 +3755,7 @@ function RemanejamentoCard({
             Guia PDF
           </button>
 
-          {remanejamento.status === "sugerido" && (
+          {podeGerenciar && remanejamento.status === "sugerido" && (
             <button
               type="button"
               onClick={onAprovar}
@@ -4759,7 +3766,7 @@ function RemanejamentoCard({
             </button>
           )}
 
-          {remanejamento.status !== "concluido" &&
+          {podeGerenciar && remanejamento.status !== "concluido" &&
             remanejamento.status !== "cancelado" && (
               <button
                 type="button"
@@ -4771,7 +3778,7 @@ function RemanejamentoCard({
               </button>
             )}
 
-          {remanejamento.status !== "cancelado" && (
+          {podeGerenciar && remanejamento.status !== "cancelado" && (
             <button
               type="button"
               onClick={onCancelar}
@@ -4821,7 +3828,7 @@ function DoadoraCard({ doadora }: { doadora: SarespDoadora }) {
       </div>
 
       <div className="space-y-2 text-xs font-semibold text-slate-500">
-        <p>Capacidade: {formatarNumero(doadora.equipamentos_base)}</p>
+        <p>Notebooks/tablets funcionando: {formatarNumero(doadora.equipamentos_base)}</p>
         <p>Fonte: {textoSeguro(doadora.fonte_capacidade, "Não informada")}</p>
         <p>Tipos considerados: Notebook, Tablet e Desktop PED</p>
         <p>Endereço: {textoSeguro(doadora.endereco, "Não informado")}</p>
@@ -5247,42 +4254,6 @@ function DetailText({
       <p className="mt-2 break-words text-sm font-bold leading-relaxed text-white">
         {textoSeguro(value, "-")}
       </p>
-    </div>
-  )
-}
-
-function Modal({
-  title,
-  onClose,
-  children,
-  maxWidth,
-}: {
-  title: string
-  onClose: () => void
-  children: ReactNode
-  maxWidth: string
-}) {
-  return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#020617]/90 p-4 backdrop-blur-md">
-      <div
-        className={`max-h-[92vh] w-full ${maxWidth} overflow-hidden rounded-[2rem] border border-slate-700 bg-[#020617] shadow-2xl`}
-      >
-        <div className="flex items-center justify-between gap-4 border-b border-slate-800 bg-slate-950 p-5">
-          <h2 className="text-xl font-black text-white">{title}</h2>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl p-2 text-slate-500 transition hover:bg-red-500/10 hover:text-red-300"
-          >
-            ✕
-          </button>
-        </div>
-
-        <div className="max-h-[calc(92vh-84px)] overflow-y-auto p-5 md:p-6">
-          {children}
-        </div>
-      </div>
     </div>
   )
 }
