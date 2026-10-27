@@ -1194,6 +1194,13 @@ export default function FieldsPage() {
             </p>
 
             <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+              <Link
+                href="/fields/recomendacoes"
+                className="inline-flex min-h-[52px] items-center justify-center gap-3 rounded-2xl border border-cyan-400/30 bg-cyan-500/15 px-5 text-sm font-black uppercase tracking-widest text-cyan-200 transition hover:bg-cyan-500/25"
+              >
+                <span aria-hidden="true">🧭</span>
+                Assistente de Atendimentos
+              </Link>
               {podeGerirFields && <>
               <button
                 type="button"

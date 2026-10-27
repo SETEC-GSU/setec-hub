@@ -145,6 +145,12 @@ export default async function Sidebar() {
           permission: "fields.view",
         },
         {
+          href: "/fields/recomendacoes",
+          label: "Assistente de Atendimentos",
+          icon: "🧭",
+          permission: "fields.recomendacoes.view",
+        },
+        {
           href: "/fields/central-relatorios",
           label: "Central de Relatórios",
           icon: "📊",

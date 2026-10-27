@@ -12,6 +12,7 @@ export type Permission =
   | "escolas.view"
   | "calendar.view"
   | "fields.view"
+  | "fields.recomendacoes.view"
   | "escolas.manage"
   | "dashboard.escolar"
   | "agenda.field"
@@ -69,7 +70,6 @@ const PERMISSOES_ANALISTA: Permission[] = [
     "toners.historico",
     "edu.monitor",
     "segundo.link",
-    "fields.demandas",
     "fields.mapa",
     "fields.painel",
     "fields.relatorio",
@@ -93,6 +93,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "escolas.view",
     "calendar.view",
     "fields.view",
+    "fields.recomendacoes.view",
     "escolas.manage",
     "dashboard.escolar",
     "agenda.field",
@@ -167,6 +168,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "calendar.view",
     "dashboard.escolar",
     "fields.view",
+    "fields.recomendacoes.view",
     "agenda.field",
     "intoperacional.field",
     "inventario.view",
@@ -196,6 +198,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "calendar.view",
     "dashboard.escolar",
     "fields.view",
+    "fields.recomendacoes.view",
     "agenda.field",
     "intoperacional.field",
     "inventario.view",
