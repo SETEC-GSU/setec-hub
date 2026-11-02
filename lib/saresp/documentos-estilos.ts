@@ -241,3 +241,25 @@ export const estilosDocumentoSaresp = `
     a { color: inherit; text-decoration: none; }
   }
 `
+
+/** Complementos dos períodos integrados e do dashboard. */
+export const estilosComplementaresSaresp = `
+  .integrado { color:#116f83; font-weight:700; }
+  .periodos-integrados { display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 0 12px;font-size:8pt; }
+  .periodos-integrados > div { border:1px solid #cfdae5;border-radius:4px;padding:8px 10px; }
+  .periodos-integrados strong,.periodos-integrados span { display:block; }
+  .periodos-integrados p { grid-column:1/-1;margin:0;color:#53657b; }
+  .dashboard-kpis { display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:0 0 15px; }
+  .dashboard-kpis > div { border:1px solid #cfdae5;border-top:3px solid #168eab;border-radius:4px;padding:9px 12px;background:#f5f9fc; }
+  .dashboard-kpis span { display:block;color:#56677c;font-size:7.5pt; }
+  .dashboard-kpis strong { display:block;color:#163d6a;font-size:20pt;line-height:1.1;margin-top:4px; }
+  .dashboard-graficos { display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:15px; }
+  .dashboard-graficos > div { border:1px solid #cfdae5;border-radius:5px;padding:13px; }
+  .dashboard-graficos h2 { font-size:10.5pt;margin:0 0 10px;color:#163d6a; }
+  .dashboard-cobertura { display:flex;align-items:center;gap:18px; }
+  .dashboard-cobertura svg { width:110px;height:110px;flex:none; }
+  .dashboard-cobertura p { font-size:9pt;margin:7px 0; }
+  .dashboard-barra { display:grid;grid-template-columns:1fr auto;gap:4px;margin:10px 0;font-size:8.5pt; }
+  .dashboard-barra > div { grid-column:1/-1;background:#e2e8f0;height:7px;border-radius:5px;overflow:hidden; }
+  .dashboard-barra i { display:block;background:#168eab;height:100%;border-radius:5px; }
+`

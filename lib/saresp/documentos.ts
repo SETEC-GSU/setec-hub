@@ -7,7 +7,9 @@ import {
   type EdicaoPeriodo,
   type PeriodoSaresp,
 } from './operacao'
-import { estilosDocumentoSaresp } from './documentos-estilos'
+import type { IntegracaoSaresp } from './integracao'
+import { indicadoresRemanejamento, temPermanenciaIntegrada } from './indicadores'
+import { estilosDocumentoSaresp, estilosComplementaresSaresp } from './documentos-estilos'
 import { BRASAO_SP } from './documentos-identidade'
 import { paginacaoDocumentoSaresp } from './documentos-paginacao'
 
@@ -18,7 +20,10 @@ type EdicaoDocumento = EdicaoPeriodo & {
 
 type ItemDocumento = PeriodoSaresp & {
   id: string
+  integracao_id?: string | null
+  integracao?: IntegracaoSaresp | null
   edicao_id?: string | null
+  escola_origem_id?: string | null
   escola_destino_id?: string | null
   escola_origem_nome: string | null
   escola_origem_cie?: string | null
@@ -114,6 +119,7 @@ function documento(titulo: string, corpo: string, paisagem = false, compacto = f
     <style>
       @page { size: A4 ${paisagem ? 'landscape' : 'portrait'}; margin: 15mm; }
       ${estilosDocumentoSaresp}
+      ${estilosComplementaresSaresp}
     </style>
   </head>
   <body class="${paisagem ? 'plano' : 'guia'}${compacto ? ' documento-curto' : ''}">
@@ -142,7 +148,7 @@ export function montarPlanoSaresp(
   const ativos = itens.filter(item => item.status !== 'cancelado')
   const total = ativos.reduce((soma, item) => soma + (Number(item.quantidade) || 0), 0)
   const conferencias = demandas.map(demanda => ({
-    demanda, ...conferirDemandaSaresp(demanda, ativos),
+    demanda, ...conferirDemandaSaresp(demanda, ativos), integrado:temPermanenciaIntegrada(demanda,ativos),
   })).sort((a, b) => b.falta - a.falta || b.excedente - a.excedente ||
     String(a.demanda.escola_nome).localeCompare(String(b.demanda.escola_nome), 'pt-BR'))
 
@@ -154,11 +160,11 @@ export function montarPlanoSaresp(
       <tr>
         <td class="numero">${indice + 1}</td>
         <td><strong>${htmlSeguro(item.escola_origem_nome)}</strong><small>CIE ${htmlSeguro(item.escola_origem_cie || 'Não informado')}</small></td>
-        <td><strong>${htmlSeguro(item.escola_destino_nome)}</strong><small>CIE ${htmlSeguro(item.escola_destino_cie || 'Não informado')}</small></td>
+        <td><strong>${htmlSeguro(item.escola_destino_nome)}</strong><small>CIE ${htmlSeguro(item.escola_destino_cie || 'Não informado')}</small>${item.integracao ? `<small class="integrado">Mesmo empréstimo em: ${item.integracao.edicoes.map(e=>htmlSeguro(e.titulo)).join(' / ')}</small>` : ''}</td>
         <td class="numero"><strong>${quantidade(item.quantidade)}</strong></td>
         <td>${htmlSeguro(formatarPeriodo(inicio, fim))}<small>${htmlSeguro(turno(item.turno_referencia))}</small></td>
-        <td>${data(deslocarDiaUtil(inicio, -1))}</td>
-        <td>${data(deslocarDiaUtil(fim, 1))}</td>
+        <td>${data(item.integracao?.retirada || deslocarDiaUtil(inicio, -1))}</td>
+        <td>${data(item.integracao?.devolucao || deslocarDiaUtil(fim, 1))}</td>
         <td class="status">${item.status === 'sugerido' ? 'Sugerido<small>Aguarda aprovação</small>' : htmlSeguro(situacao(item.status))}</td>
       </tr>
     `
@@ -188,7 +194,7 @@ export function montarPlanoSaresp(
         <h2>Orientações para as unidades</h2>
         <p>Combinar os horários diretamente entre as escolas. Conferir funcionamento, acessórios, patrimônio e número de série na retirada e na devolução. Preencher e assinar duas vias da guia e encaminhá-la à SETEC após a retirada.</p>
         <p><strong>Logística:</strong> retirada no dia útil anterior ao início da aplicação e devolução no dia útil posterior ao término. As datas excluem fins de semana e feriados nacionais; alinhar feriados locais com as unidades.</p>
-        <p>¹ A quantidade soma as operações do plano. Um equipamento pode ser reutilizado em períodos distintos; esse total não representa estoque único. A emissão do documento não altera inventários nem status.</p>
+        <p>¹ A quantidade soma as operações do plano. Um equipamento pode ser reutilizado em períodos distintos; esse total não representa estoque único. A emissão do documento não altera inventários nem status. Integrações representam o mesmo empréstimo físico nos dois planos; a retirada e a devolução são as do conjunto.</p>
       </div>
       <div class="assinaturas">
         ${assinatura('SEINTEC', 'Conferência e ciência')}
@@ -210,7 +216,7 @@ export function montarConferenciaSaresp(
   const emitidoEm = emissao()
   const ativos = itens.filter(item => item.status !== 'cancelado')
   const conferencias = demandas.map(demanda => ({
-    demanda, ...conferirDemandaSaresp(demanda, ativos),
+    demanda, ...conferirDemandaSaresp(demanda, ativos), integrado:temPermanenciaIntegrada(demanda,ativos),
   })).sort((a, b) => b.falta - a.falta || b.excedente - a.excedente ||
     String(a.demanda.escola_nome).localeCompare(String(b.demanda.escola_nome), 'pt-BR'))
 
@@ -225,7 +231,7 @@ export function montarConferenciaSaresp(
       <td class="numero">${quantidade(item.previsto)}</td>
       <td class="numero">${quantidade(item.confirmado)}</td>
       <td class="numero ${item.falta > 0 ? 'falta' : 'coberto'}"><strong>${quantidade(item.falta)}</strong></td>
-      <td>${item.excedente > 0 ? `${quantidade(item.excedente)}<small>${item.semNecessidade ? 'Sem déficit inicial' : 'Margem acima da falta'}</small>` : '-'}</td>
+      <td>${item.excedente > 0 ? `${quantidade(item.excedente)}<small>${item.integrado ? 'Permanência entre edições' : item.semNecessidade ? 'Sem déficit inicial' : 'Margem acima da falta'}</small>` : '-'}</td>
     </tr>
   `).join('')
 
@@ -253,7 +259,7 @@ export function montarConferenciaSaresp(
       <div class="obs">
         <h2>Como interpretar a conferência</h2>
         <p><strong>Previsto:</strong> sugeridos, aprovados e concluídos. <strong>Confirmado:</strong> aprovados e concluídos. Cancelados não são contabilizados. Em aplicações de dois dias, considera-se a menor cobertura diária do período.</p>
-        <p>² Quantidade prevista acima da falta inicial, antes da margem opcional. Pode representar uma reserva deliberada e requer conferência. Nenhum plano é cancelado automaticamente. O registro não comprova a entrega física.</p>
+        <p>² Quantidade prevista acima da falta inicial, antes da margem opcional. Pode representar uma reserva deliberada, inclusive pelo maior quantitativo de duas edições integradas, e requer conferência. Nenhum plano é cancelado automaticamente. O registro não comprova a entrega física.</p>
         <p>¹ Soma de necessidades por aplicação, não de estoque único. A disponibilidade da cedente permanece limitada aos móveis funcionando, ao cadastro conhecido, ao uso próprio e às demais reservas.</p>
       </div>
       ${rodape('SETEC Hub | Conferência do planejamento SARESP', emitidoEm)}
@@ -263,50 +269,52 @@ export function montarConferenciaSaresp(
   return documento(`Conferência SARESP Digital - ${edicao?.titulo || 'Edição'}`, conferencia, true)
 }
 
-/** Guia com espaço para conferência manual e assinatura em todas as folhas. */
+/** Guia com numeração crescente e assinaturas apenas ao final. */
 export function montarGuiaSaresp(edicao: EdicaoDocumento | null, item: ItemDocumento) {
-  const inicio = item.data_prova || edicao?.data_prova_padrao
-  const fim = fimPeriodo(item, edicao)
-  const total = Math.max(Math.trunc(Number(item.quantidade) || 0), 1)
-  const referencia = item.id.slice(0, 8).toUpperCase()
-  const indices = Array.from({ length: total }, (_, indice) => indice + 1)
-  const linhas = Array.from({ length: Math.ceil(total / 2) }, (_, linha) => `
-    <tr>${[indices[linha * 2], indices[linha * 2 + 1]].map(numero =>
-      numero ? `<td class="numero">${numero}</td><td></td><td></td>` : '<td></td><td></td><td></td>',
-    ).join('')}</tr>
-  `).join('')
+  const vinculadas = item.integracao?.edicoes || []
+  const inicio = vinculadas[0]?.data_prova || item.data_prova || edicao?.data_prova_padrao
+  const fim = vinculadas.at(-1)?.data_prova_fim || fimPeriodo(item, edicao)
+  const total = Math.max(Math.trunc(Number(item.integracao?.quantidade || item.quantidade) || 0), 1)
+  const referencia = (item.integracao?.id || item.id).slice(0, 8).toUpperCase()
+  const edicaoGuia = vinculadas.length ? {
+    titulo:vinculadas.map(e=>e.titulo).join(' / '), data_prova_padrao:inicio, data_prova_fim_padrao:fim,
+  } : edicao
+  // Lista vertical em ordem crescente, contínua entre as páginas.
+  const linhas = Array.from({ length: total }, (_, indice) =>
+    `<tr><td class="numero">${indice + 1}</td><td></td><td></td></tr>`,
+  ).join('')
 
   const corpo = `
     <section class="pagina" data-bloco="guia">
-      ${cabecalho('Guia de remanejamento de equipamentos', edicao, 'Registro de entrega e recebimento')}
+      ${cabecalho('Guia de remanejamento de equipamentos', edicaoGuia, 'Registro de entrega e recebimento')}
       <div class="ficha">
         <div><span class="rotulo">Unidade cedente - de</span><strong>${htmlSeguro(item.escola_origem_nome)}</strong><small>CIE ${htmlSeguro(item.escola_origem_cie || 'Não informado')}</small></div>
         <div><span class="rotulo">Unidade contemplada - para</span><strong>${htmlSeguro(item.escola_destino_nome)}</strong><small>CIE ${htmlSeguro(item.escola_destino_cie || 'Não informado')}</small></div>
       </div>
+      ${vinculadas.length ? `<div class="periodos-integrados">${vinculadas.map(e=>`<div><strong>${htmlSeguro(e.titulo)}</strong><span>${htmlSeguro(formatarPeriodo(e.data_prova,e.data_prova_fim))}</span></div>`).join('')}<p>Empréstimo físico único de ${quantidade(total)} equipamentos, mantidos na contemplada entre as aplicações.</p></div>` : ''}
       <div class="resumo">
-        <div><span>Quantidade total</span><strong>${quantidade(item.quantidade)}</strong></div>
+        <div><span>Quantidade total</span><strong>${quantidade(total)}</strong></div>
         <div><span>Aplicação</span><strong class="texto-data">${htmlSeguro(formatarPeriodo(inicio, fim))}</strong></div>
-        <div><span>Retirada prevista</span><strong class="texto-data">${data(deslocarDiaUtil(inicio, -1))}</strong></div>
-        <div><span>Devolução prevista</span><strong class="texto-data">${data(deslocarDiaUtil(fim, 1))}</strong></div>
+        <div><span>Retirada prevista</span><strong class="texto-data">${data(item.integracao?.retirada || deslocarDiaUtil(inicio, -1))}</strong></div>
+        <div><span>Devolução prevista</span><strong class="texto-data">${data(item.integracao?.devolucao || deslocarDiaUtil(fim, 1))}</strong></div>
       </div>
       <div class="referencia"><span><strong>Referência:</strong> ${htmlSeguro(referencia)}</span><span><strong>Situação:</strong> ${htmlSeguro(situacao(item.status))}</span></div>
-      <h2 class="titulo-secao">Conferência dos equipamentos 1 a ${total}</h2>
+      <h2 class="titulo-secao">Relação de equipamentos</h2>
       <table class="serial">
         <colgroup>
-          <col style="width:6%"><col style="width:28%"><col style="width:16%">
-          <col style="width:6%"><col style="width:28%"><col style="width:16%">
+          <col style="width:8%"><col style="width:42%"><col style="width:50%">
         </colgroup>
-        <thead><tr><th>#</th><th>Número de série</th><th>Patrimônio</th><th>#</th><th>Número de série</th><th>Patrimônio</th></tr></thead>
+        <thead><tr><th>Nº</th><th>Modelo</th><th>Número de série</th></tr></thead>
         <tbody>${linhas}</tbody>
       </table>
       <div class="obs">
         <h2>Conferência e responsabilidade</h2>
-        <p>Conferir funcionamento, acessórios, patrimônio e integridade na entrega e na devolução. Registrar divergências e comunicar às direções e à SETEC. Manter os equipamentos em local seguro.</p>
-        <p>Combinar horários entre as unidades. Assinar duas vias e encaminhar à SETEC após a retirada. Preencher os responsáveis em todas as folhas.</p>
+        <p>Conferir modelo, número de série, funcionamento, acessórios e integridade na entrega e na devolução. Registrar divergências e comunicar às direções e à SETEC. Manter os equipamentos em local seguro.</p>
+        <p>Combinar horários entre as unidades. Assinar duas vias e encaminhar à SETEC após a retirada. Preencher os responsáveis e assinar ao final da relação.</p>
       </div>
       <div class="assinaturas">
-        ${assinatura('Entregue por', 'Nome / cargo: ______________________<br>Data: ____/____/________')}
-        ${assinatura('Recebido por', 'Nome / cargo: ______________________<br>Data: ____/____/________')}
+        ${assinatura('Unidade cedente', `${htmlSeguro(item.escola_origem_nome)}<br>Responsável / cargo: ______________________<br>Data: ____/____/________`)}
+        ${assinatura('Unidade contemplada', `${htmlSeguro(item.escola_destino_nome)}<br>Responsável / cargo: ______________________<br>Data: ____/____/________`)}
       </div>
       ${rodape(`SETEC Hub | Guia ${referencia}`, emissao())}
     </section>
@@ -315,45 +323,81 @@ export function montarGuiaSaresp(edicao: EdicaoDocumento | null, item: ItemDocum
   return documento(`Guia_SARESP_${referencia}`, corpo)
 }
 
-/** Rascunho de e-mail. Nenhuma mensagem é enviada automaticamente. */
-export function montarEmailSaresp(edicao: EdicaoDocumento | null, item: ItemDocumento, origem?: EscolaContato | null, destino?: EscolaContato | null) {
- const ini=item.data_prova||edicao?.data_prova_padrao, fim=fimPeriodo(item,edicao)
- const de=origem?.nome_escola||item.escola_origem_nome||'Unidade cedente', para=destino?.nome_escola||item.escola_destino_nome||'Unidade contemplada'
- const destinatarios=Array.from(new Set([origem?.email,destino?.email].flatMap(v=>(v||'').split(/[;,\s]+/)).map(v=>v.trim()).filter(v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)))).join('; ')
- const assunto=`SARESP Digital | ${quantidade(item.quantidade)} equipamentos | ${formatarPeriodo(ini,fim)} | ${para}`
- const corpo=`Prezados(as),
+/** Rascunho padronizado. Nenhuma mensagem é enviada automaticamente. */
+export function montarEmailSaresp(
+  edicao: EdicaoDocumento | null, item: ItemDocumento,
+  origem?: EscolaContato | null, destino?: EscolaContato | null,
+) {
+  const vinculadas = item.integracao?.edicoes || []
+  const inicio = vinculadas[0]?.data_prova || item.data_prova || edicao?.data_prova_padrao
+  const fim = vinculadas.at(-1)?.data_prova_fim || fimPeriodo(item,edicao)
+  const de = origem?.nome_escola || item.escola_origem_nome || 'Unidade cedente'
+  const para = destino?.nome_escola || item.escola_destino_nome || 'Unidade contemplada'
+  const titulo = vinculadas.length ? vinculadas.map(e=>e.titulo).join(' / ') : edicao?.titulo || 'Edição selecionada'
+  const qtd = item.integracao?.quantidade || item.quantidade
+  const destinatarios = Array.from(new Set([origem?.email,destino?.email]
+    .flatMap(v=>(v||'').split(/[;,\s]+/)).map(v=>v.trim())
+    .filter(v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)))).join('; ')
+  const assunto = `${de} → ${para} | REMANEJAMENTO DE EQUIPAMENTOS - SARESP DIGITAL | ${titulo}`
+  const aplicacoes = vinculadas.length
+    ? vinculadas.map(e=>`• ${e.titulo}: ${formatarPeriodo(e.data_prova,e.data_prova_fim)}.`).join('\n')
+    : `• ${titulo}: ${formatarPeriodo(inicio,fim)}.`
+  const corpo = `Prezados(as),
 
-Encaminhamos o planejamento de empréstimo de equipamentos para a aplicação do SARESP Digital — ${edicao?.titulo||'edição selecionada'}.
-${item.status==='sugerido'?'Esta proposta está sujeita à aprovação da SETEC. Aguarde a confirmação antes de realizar a movimentação.':`Situação do registro: ${situacao(item.status)}.`}
+Encaminhamos o planejamento de empréstimo de equipamentos para o SARESP Digital.
+
+EDIÇÃO / APLICAÇÃO
+${aplicacoes}
 
 RESUMO DO EMPRÉSTIMO
-• Quantidade: ${quantidade(item.quantidade)} equipamento(s).
-• Aplicação: ${formatarPeriodo(ini,fim)}.
-• Turno de referência: ${turno(item.turno_referencia)}.
-• Retirada prevista: ${data(deslocarDiaUtil(ini,-1))}.
-• Devolução prevista: ${data(deslocarDiaUtil(fim,1))}.
-
+• Quantidade física: ${quantidade(qtd)} equipamento(s).
+• Retirada prevista: ${data(item.integracao?.retirada || deslocarDiaUtil(inicio,-1))}.
+• Devolução prevista: ${data(item.integracao?.devolucao || deslocarDiaUtil(fim,1))}.
+${vinculadas.length ? `• Os mesmos ${quantidade(qtd)} equipamentos permanecerão na unidade contemplada entre as duas aplicações, com devolução após a última. O quantitativo considera a maior necessidade dos dois planos.\n` : `• Turno de referência: ${turno(item.turno_referencia)}.\n`}
 UNIDADE CEDENTE
-${de} — CIE ${origem?.cie||item.escola_origem_cie||'não informado'}
-Local de retirada: ${origem?.endereco||'confirmar diretamente com a unidade'}
-Telefone: ${origem?.telefone||'não informado'}
+${de} — CIE ${origem?.cie || item.escola_origem_cie || 'não informado'}
+Local de retirada: ${origem?.endereco || 'confirmar diretamente com a unidade'}
+Telefone: ${origem?.telefone || 'não informado'}
 
 UNIDADE CONTEMPLADA
-${para} — CIE ${destino?.cie||item.escola_destino_cie||'não informado'}
-Telefone: ${destino?.telefone||'não informado'}
+${para} — CIE ${destino?.cie || item.escola_destino_cie || 'não informado'}
+Telefone: ${destino?.telefone || 'não informado'}
 
 PROVIDÊNCIAS
-1. A unidade contemplada deverá alinhar os horários de retirada e devolução diretamente com a cedente. As datas acima são previsões que excluem fins de semana e feriados nacionais; ajustar feriados locais e particularidades com ciência à SETEC.
-2. Na retirada, conferir funcionamento, acessórios, patrimônio, número de série e integridade dos equipamentos. Preencher a Guia de Remanejamento, assinar duas vias e encaminhar à SETEC.
-3. Manter os itens em local seguro durante todo o período. Qualquer dano ou divergência deverá ser comunicado imediatamente à direção da cedente, com ciência à SETEC.
+1. A unidade contemplada deverá combinar os horários de retirada e devolução diretamente com a cedente.
+2. Conferir modelo, número de série, funcionamento, acessórios e integridade dos equipamentos. Preencher a guia, assinar duas vias ao final da relação e encaminhá-la à SETEC após a retirada.
+3. Manter os itens em local seguro durante todo o período. Comunicar danos ou divergências à direção da cedente, com ciência à SETEC.
 4. Devolver os equipamentos nas mesmas condições de recebimento, com nova conferência entre as unidades.
 
-Solicitamos que respondam a este e-mail confirmando o responsável, o horário combinado e, após a execução, a retirada e a devolução.
+Solicitamos resposta a este e-mail confirmando o responsável, o horário combinado e, após a execução, a retirada e a devolução.
 
-Atenciosamente,
-SEINTEC / SETEC
-Unidade Regional de Ensino de Guarulhos Sul
+Referência do planejamento: ${(item.integracao?.id || item.id).slice(0,8).toUpperCase()}`
+  return {assunto,corpo,destinatarios}
+}
 
-Referência do planejamento: ${item.id.slice(0,8).toUpperCase()}`
- return {assunto,corpo,destinatarios}
+/** Dashboard da edição, gerado com a mesma base local da tela. */
+export function montarDashboardSaresp(edicao:EdicaoDocumento|null,itens:ItemDocumento[],demandas:DemandaConferencia[]) {
+  const d=indicadoresRemanejamento(demandas,itens),emitido=emissao(),volta=2*Math.PI*48
+  const max=Math.max(1,...d.porStatus.map(s=>s.quantidade))
+  const statusNome:Record<string,string>={sugerido:'Aguardando aprovação',aprovado:'Aprovados',concluido:'Concluídos'}
+  const resumo=`<section class="pagina" data-bloco="dashboard-resumo">
+    ${cabecalho('Dashboard do remanejamento',edicao,'Panorama da edição')}
+    <div class="dashboard-kpis">${[
+      ['Equipamentos no plano',d.quantidade],['Operações ativas',d.operacoes],['Unidades contempladas',d.contempladas],
+      ['Quantidade ainda necessária',d.quantidadeFaltante],['Cobertura prevista',`${d.percentualCoberto}%`],['Empréstimos integrados',d.integracoes],
+    ].map(([t,v])=>`<div><span>${htmlSeguro(t)}</span><strong>${typeof v==='number'?quantidade(v):htmlSeguro(v)}</strong></div>`).join('')}</div>
+    <div class="dashboard-graficos"><div><h2>Cobertura das aplicações</h2><div class="dashboard-cobertura"><svg viewBox="0 0 120 120" role="img" aria-label="Cobertura prevista ${d.percentualCoberto}%"><circle cx="60" cy="60" r="48" fill="none" stroke="#e2e8f0" stroke-width="11"/><circle cx="60" cy="60" r="48" fill="none" stroke="#168eab" stroke-width="11" stroke-dasharray="${volta*d.percentualCoberto/100} ${volta}" transform="rotate(-90 60 60)"/><text x="60" y="62" text-anchor="middle" fill="#163d6a" font-size="23" font-weight="700">${d.percentualCoberto}%</text><text x="60" y="77" text-anchor="middle" fill="#56677c" font-size="7">COBERTURA PREVISTA</text></svg><div><p>Capacidade própria: <strong>${d.capacidadePropria}</strong></p><p>Cobertas pelo plano: <strong>${d.cobertasPeloPlano}</strong></p><p>Com falta: <strong>${d.pendentes}</strong></p></div></div></div>
+    <div><h2>Equipamentos por situação</h2>${d.porStatus.map(s=>`<div class="dashboard-barra"><span>${statusNome[s.status]}</span><strong>${quantidade(s.quantidade)}</strong><div><i style="width:${100*s.quantidade/max}%"></i></div></div>`).join('')}</div></div>
+    <p class="intro">${d.cedentes} cedente(s) · ${d.contempladas} contemplada(s) · ${d.equipamentosEmPermanencia} equipamento(s) em permanência integrada planejada. Os indicadores abrangem a edição selecionada.</p>
+    ${rodape('SETEC Hub | Dashboard do remanejamento',emitido)}
+  </section>`
+  const linhas=d.faltantes.slice(0,10).map(c=>`<tr><td><strong>${htmlSeguro(c.demanda.escola_nome)}</strong><small>CIE ${htmlSeguro(c.demanda.cie)} | ${htmlSeguro(c.demanda.serie)}</small></td><td class="numero">${c.maiorTurno}</td><td class="numero">${c.cadastrados}</td><td class="numero">${c.previsto}</td><td class="numero falta">${c.falta}</td></tr>`).join('')
+  const atencao=`<section class="pagina" data-bloco="dashboard-atencao">
+    ${cabecalho('Cobertura e pontos de atenção',edicao,'Acompanhamento da edição')}
+    <p class="intro">Aplicações com maior quantidade ainda necessária. ${d.faltantes.length>10?`Exibidas 10 de ${d.faltantes.length}; consulte a conferência para a relação completa.`:''}</p>
+    <table><colgroup><col style="width:52%"><col style="width:12%"><col style="width:12%"><col style="width:12%"><col style="width:12%"></colgroup><thead><tr><th>Unidade / aplicação</th><th>Maior turno</th><th>Cadastrados</th><th>Previsto</th><th>Ainda falta</th></tr></thead><tbody>${linhas||'<tr><td colspan="5" class="vazio">As aplicações cadastradas têm cobertura prevista.</td></tr>'}</tbody></table>
+    <div class="obs"><h2>Critérios de leitura</h2><p>Necessidade pela coluna Equipamentos cadastrados. Previsto inclui sugeridos, aprovados e concluídos; confirmado inclui aprovados e concluídos. Cancelados não entram. A cobertura de uma aplicação com dois dias considera o menor atendimento diário.</p><p>Empréstimos integrados correspondem ao mesmo conjunto físico nos dois planos. O maior quantitativo permanece reservado desde a retirada até a devolução final. Não some os dois planos para medir estoque físico. Os status do Hub não comprovam a entrega dos equipamentos.</p></div>
+    ${rodape('SETEC Hub | Dashboard: pontos de atenção',emitido)}
+  </section>`
+  return documento(`Dashboard SARESP - ${edicao?.titulo||'Edição'}`,resumo+atencao,true)
 }

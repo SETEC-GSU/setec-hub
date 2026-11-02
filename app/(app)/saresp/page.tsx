@@ -11,9 +11,13 @@ import {
 } from "react"
 import { createClient } from "@/lib/supabase"
 import Modal from "@/components/saresp/ModalSaresp"
+import DashboardRemanejamento from "@/components/saresp/DashboardRemanejamento"
+import IntegracaoEdicoes from "@/components/saresp/IntegracaoEdicoes"
+import type { IntegracaoSaresp } from "@/lib/saresp/integracao"
+import { temPermanenciaIntegrada } from "@/lib/saresp/indicadores"
 import pageStyles from "@/components/saresp/SarespPage.module.css"
 import { conferirDemandaSaresp, coberturaNoPeriodo, dataValida, deslocarDiaUtil, fimPeriodo, formatarPeriodo, mensagemErroSaresp, periodosSobrepostos } from "@/lib/saresp/operacao"
-import { montarConferenciaSaresp, montarEmailSaresp, montarGuiaSaresp, montarPlanoSaresp } from "@/lib/saresp/documentos"
+import { montarDashboardSaresp, montarConferenciaSaresp, montarEmailSaresp, montarGuiaSaresp, montarPlanoSaresp } from "@/lib/saresp/documentos"
 
 
 type SarespEdicao = {
@@ -131,6 +135,8 @@ type SarespSugestao = {
 
 type SarespRemanejamento = {
   id: string
+  integracao_id?: string | null
+  integracao?: IntegracaoSaresp | null
   edicao_id: string
   escola_origem_id: string | null
   escola_origem_cie: string | null
@@ -889,6 +895,8 @@ export default function CentralSarespPage() {
   const [sugestoesView, setSugestoesView] = useState<SarespSugestao[]>([])
   const [remanejamentos, setRemanejamentos] = useState<SarespRemanejamento[]>([])
   const [podeGerenciar, setPodeGerenciar] = useState(false)
+  const [mostrarDashboard,setMostrarDashboard] = useState(false)
+  const [mostrarIntegracoes,setMostrarIntegracoes] = useState(false)
   const [alertasPlano, setAlertasPlano] = useState<{id:string;origem:string;destino:string;quantidade:number;disponivel:number}[]>([])
   const [atualizadoEm, setAtualizadoEm] = useState<string | null>(null)
   const consultaRef = useRef(0)
@@ -1875,10 +1883,10 @@ export default function CentralSarespPage() {
         concluido_em: novoStatus === "concluido" ? new Date().toISOString() : null,
       }
 
-      const { error } = await supabase
-        .from("saresp_remanejamentos")
-        .update(payload)
-        .eq("id", remanejamento.id)
+      if (remanejamento.integracao_id && novoStatus === "cancelado" && !window.confirm("Cancelar o conjunto nas duas edições? O empréstimo deixará de cobrir ambas as aplicações.")) return
+      const { error } = remanejamento.integracao_id
+        ? await supabase.rpc("hub_saresp_status_integrado",{p_integracao_id:remanejamento.integracao_id,p_status:novoStatus})
+        : await supabase.from("saresp_remanejamentos").update(payload).eq("id",remanejamento.id)
 
       if (error) throw error
 
@@ -2203,6 +2211,14 @@ export default function CentralSarespPage() {
     setFeedback({ tipo: "success", texto: "PDF da conferência preparado em documento separado." })
   }
 
+  function exportarDashboard() {
+    const janela=window.open("","_blank")
+    if(!janela){setFeedback({tipo:"warning",texto:"Libere pop-ups para abrir o dashboard em PDF."});return}
+    janela.document.open()
+    janela.document.write(montarDashboardSaresp(edicaoSelecionada,remanejamentos,resultados))
+    janela.document.close()
+  }
+
   async function copiarTexto(texto: string, mensagemSucesso: string) {
     try {
       await navigator.clipboard.writeText(texto)
@@ -2351,6 +2367,10 @@ export default function CentralSarespPage() {
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
         <span>{podeGerenciar ? "Gestão habilitada" : "Modo de consulta"} · {atualizadoEm ? `Atualizado em ${formatarDataHora(atualizadoEm)}` : "Carregando base da edição"}</span>
         {podeGerenciar && <a href="/saresp/gestao" className="font-semibold text-cyan-300 hover:underline">Gerenciar edições e datas →</a>}
+      </div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+        <button type="button" disabled={!edicaoId||loadingDados} onClick={()=>setMostrarDashboard(true)} className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 px-5 py-3 text-sm font-bold text-cyan-200 disabled:opacity-50">Gerar dashboard da edição</button>
+        {podeGerenciar&&<button type="button" disabled={!edicaoId||loadingDados} onClick={()=>setMostrarIntegracoes(true)} className="rounded-2xl border border-indigo-500/30 bg-indigo-500/10 px-5 py-3 text-sm font-bold text-indigo-200 disabled:opacity-50">Integrar duas edições</button>}
       </div>
       <div role="status" className="rounded-2xl border border-cyan-500/25 bg-cyan-500/10 p-4 text-sm text-cyan-100"><strong>Base da necessidade: Equipamentos cadastrados, da planilha importada.</strong> A falta é o maior turno menos esse total. O inventário é uma referência separada e limita o que uma cedente pode emprestar. Margem operacional é adicional opcional.</div>
       <ConferenciaPlanejamento resultados={resultadosFiltrados} planos={remanejamentos} />
@@ -3260,6 +3280,9 @@ export default function CentralSarespPage() {
         </>
       )}
 
+      {mostrarDashboard&&<DashboardRemanejamento edicao={edicaoSelecionada} resultados={resultados} planos={remanejamentos} onClose={()=>setMostrarDashboard(false)} onPdf={exportarDashboard}/>}
+      {mostrarIntegracoes&&<IntegracaoEdicoes edicaoId={edicaoId} planos={remanejamentos} onClose={()=>setMostrarIntegracoes(false)} onAplicado={async()=>{setMostrarIntegracoes(false);await carregarDadosEdicao(edicaoId);setFeedback({tipo:"success",texto:"Planos sincronizados. O conjunto mantém uma única reserva física no intervalo."})}}/>}
+
       {sugestaoSelecionada && (
         <Modal
           title="Confirmar quantidade para o plano"
@@ -3512,7 +3535,7 @@ export default function CentralSarespPage() {
 }
 
 function ConferenciaPlanejamento({ resultados, planos }: { resultados: SarespResultado[]; planos: SarespRemanejamento[] }) {
-  const linhas = resultados.map(r => ({ resultado:r, ...conferirDemandaSaresp(r,planos) }))
+  const linhas = resultados.map(r => ({ resultado:r, ...conferirDemandaSaresp(r,planos), integrado:temPermanenciaIntegrada(r,planos) }))
     .sort((a,b)=>b.falta-a.falta || b.excedente-a.excedente || String(a.resultado.escola_nome).localeCompare(String(b.resultado.escola_nome),'pt-BR'))
   const pendentes = linhas.filter(l=>l.falta>0)
   const rever = linhas.filter(l=>l.excedente>0)
@@ -3528,7 +3551,7 @@ function ConferenciaPlanejamento({ resultados, planos }: { resultados: SarespRes
           <td className="p-3">{l.resultado.situacao_inventario==='confirmado' ? formatarNumero(l.resultado.equipamentos_inventario) : "A validar"}</td>
           <td className="p-3">{formatarNumero(l.previsto)}</td><td className="p-3">{formatarNumero(l.confirmado)}</td>
           <td className={`p-3 font-bold ${l.falta>0 ? "text-red-300" : "text-emerald-300"}`}>{formatarNumero(l.falta)}</td>
-          <td className="p-3 text-amber-300">{l.excedente>0 ? `${formatarNumero(l.excedente)}${l.semNecessidade ? " · sem déficit" : " · margem"}` : "—"}</td>
+          <td className="p-3 text-amber-300">{l.excedente>0 ? `${formatarNumero(l.excedente)}${l.integrado ? " · permanência integrada" : l.semNecessidade ? " · sem déficit" : " · margem"}` : "—"}</td>
         </tr>)}</tbody>
       </table>
     </div>
@@ -3731,8 +3754,8 @@ function RemanejamentoCard({
 }) {
   const status = getRemanejamentoStatus(remanejamento.status)
   const dataProvaRef = remanejamento.data_prova
-  const dataRetirada = getDataRetiradaFormatada(dataProvaRef)
-  const dataDevolucao = getDataDevolucaoFormatada(remanejamento.data_prova_fim || dataProvaRef)
+  const dataRetirada = remanejamento.integracao?.retirada ? formatarData(remanejamento.integracao.retirada) : getDataRetiradaFormatada(dataProvaRef)
+  const dataDevolucao = remanejamento.integracao?.devolucao ? formatarData(remanejamento.integracao.devolucao) : getDataDevolucaoFormatada(remanejamento.data_prova_fim || dataProvaRef)
 
   return (
     <article className="relative overflow-hidden rounded-[1.5rem] border border-slate-800 bg-slate-950/60 p-5 transition hover:border-blue-500/35">
@@ -3756,6 +3779,8 @@ function RemanejamentoCard({
               {formatarDistancia(remanejamento.distancia_km)}
             </span>
           </div>
+
+          {remanejamento.integracao&&<div className="mb-4 rounded-xl border border-cyan-500/25 bg-cyan-500/10 p-3 text-xs leading-relaxed text-cyan-100"><strong>Empréstimo físico único: {remanejamento.integracao.quantidade} equipamentos.</strong><br/>{remanejamento.integracao.edicoes.map(e=>`${e.titulo} (${formatarPeriodo(e.data_prova,e.data_prova_fim)})`).join(" / ")}<br/>Manter na contemplada até a devolução final. E-mail e guia abrangem as duas edições.</div>}
 
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_auto_1fr] lg:items-center">
             <SchoolFlow
@@ -3840,7 +3865,7 @@ function RemanejamentoCard({
               disabled={salvando}
               className="rounded-2xl border border-blue-500/25 bg-blue-500/10 px-3 py-3 text-xs font-black uppercase tracking-widest text-blue-300 transition hover:bg-blue-500/20 disabled:opacity-60"
             >
-              Aprovar
+              {remanejamento.integracao_id?"Aprovar conjunto":"Aprovar"}
             </button>
           )}
 
@@ -3852,7 +3877,7 @@ function RemanejamentoCard({
                 disabled={salvando}
                 className="rounded-2xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-3 text-xs font-black uppercase tracking-widest text-emerald-300 transition hover:bg-emerald-500/20 disabled:opacity-60"
               >
-                Concluir
+                {remanejamento.integracao_id?"Concluir conjunto":"Concluir"}
               </button>
             )}
 
@@ -3863,7 +3888,7 @@ function RemanejamentoCard({
               disabled={salvando}
               className="rounded-2xl border border-red-500/25 bg-red-500/10 px-3 py-3 text-xs font-black uppercase tracking-widest text-red-300 transition hover:bg-red-500/20 disabled:opacity-60"
             >
-              Cancelar
+              {remanejamento.integracao_id?"Cancelar conjunto":"Cancelar"}
             </button>
           )}
         </div>

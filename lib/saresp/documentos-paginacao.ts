@@ -43,6 +43,7 @@ export const paginacaoDocumentoSaresp = String.raw`<script>
       var ultima = grupo.secoes[grupo.secoes.length - 1];
       var modelo = primeira.querySelector('table');
       var rodape = primeira.querySelector('footer');
+      if (!modelo) { var estatica=primeira.cloneNode(true);main.appendChild(estatica);paginas.push(estatica);conferirPagina(estatica);return; }
       var linhas = grupo.secoes.flatMap(function (s) {
         return Array.from(s.querySelectorAll('tbody tr'));
       });
@@ -73,7 +74,7 @@ export const paginacaoDocumentoSaresp = String.raw`<script>
           tabela.querySelector('tbody').replaceChildren();
           pagina.appendChild(tabela);
         }
-        if (guia && notas.childElementCount) pagina.appendChild(notas.cloneNode(true));
+
         pagina.appendChild(rodape.cloneNode(true));
         main.appendChild(pagina);
         paginas.push(pagina);
@@ -93,7 +94,7 @@ export const paginacaoDocumentoSaresp = String.raw`<script>
         conferirPagina(atual);
       });
 
-      if (!guia && notas.childElementCount) {
+      if (notas.childElementCount) {
         atual.insertBefore(notas, atual.querySelector('footer'));
         if (excedeu(atual)) {
           notas.remove();
@@ -125,11 +126,12 @@ export const paginacaoDocumentoSaresp = String.raw`<script>
       var rodape = pagina.querySelector('footer');
       rodape.lastElementChild.textContent = 'Página ' + (indice + 1) + ' de ' + paginas.length;
       if (guia) {
-        var numeros = Array.from(pagina.querySelectorAll('tbody tr td:nth-child(3n+1)'))
+        var numeros = Array.from(pagina.querySelectorAll('.serial tbody tr td:first-child'))
           .map(function (el) { return Number(el.textContent); }).filter(Boolean);
         var titulo = pagina.querySelector('.titulo-secao');
+        if(titulo && !numeros.length) titulo.textContent='Conferência e assinaturas';
         if (titulo && numeros.length) {
-          titulo.textContent = 'Conferência dos equipamentos ' + Math.min.apply(null, numeros) + ' a ' + Math.max.apply(null, numeros);
+          titulo.textContent = 'Equipamentos ' + numeros[0] + ' a ' + numeros[numeros.length-1];
         }
       }
       conferirPagina(pagina);
