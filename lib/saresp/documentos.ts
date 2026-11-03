@@ -346,6 +346,8 @@ export function montarEmailSaresp(
 
 Encaminhamos o planejamento de empréstimo de equipamentos para o SARESP Digital.
 
+O remanejamento é realizado conforme orientação da COEGD (Coordenadoria Geral de Estratégia e Governança Digital), visando à aplicação da prova em todas as unidades escolares.
+
 EDIÇÃO / APLICAÇÃO
 ${aplicacoes}
 
