@@ -1,6 +1,8 @@
 import type { Permission } from "./permissions"
 
 export const routePermissions: Record<string, Permission> = {
+  "/assistente": "assistente.view",
+  "/api/assistente": "assistente.view",
   "/": "dashboard.view",
   "/chamados": "chamados.view",
   "/chamados/ure": "chamados.ure.create",

@@ -1,6 +1,7 @@
 import type { Role } from "./roles"
 
 export type Permission =
+  | "assistente.view"
   | "dashboard.view"
   | "usuarios.view"
   | "usuarios.create"
@@ -80,6 +81,7 @@ const PERMISSOES_ANALISTA: Permission[] = [
 
 export const rolePermissions: Record<Role, Permission[]> = {
   admin: [
+    "assistente.view",
     "inventario.field.view",
     "inventario.field.manage",
     "dashboard.view",
@@ -187,6 +189,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     "fields.central.view",
   ],
   seintec: [
+    "assistente.view",
     "inventario.field.view",
     "dashboard.view",
     "chamados.view",

@@ -21,6 +21,8 @@ const ModalRelatorioGerencial = dynamic(
   { ssr: false }
 )
 
+const AvisosVisita = dynamic(() => import("@/components/fields/AvisosVisita"), { ssr: false })
+
 /* -------------------------------------------------------------------------- */
 /* HELPERS                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -342,6 +344,7 @@ export default function FieldsPage() {
   const supabase = useMemo(() => createClient(), [])
   const { permitido: podeGerirFields, conferir: conferirGestaoFields, usuarioId: usuarioGestaoId } = useAcessoGestaoFields(supabase)
   const [modalRelatorioAberto, setModalRelatorioAberto] = useState(false)
+  const [modalAvisosAberto, setModalAvisosAberto] = useState(false)
   const restauracaoRelatorioRef = useRef<string | null>(null)
   const chaveRelatorio = usuarioGestaoId ? `hub:fields:relatorio:${usuarioGestaoId}` : ""
   function abrirRelatorioGerencial() {
@@ -395,6 +398,7 @@ export default function FieldsPage() {
     if (podeGerirFields) return
     setModalListaAberto(false)
     setModalRelatorioAberto(false)
+    setModalAvisosAberto(false)
     setListaGerada("")
     setListaCopiada(false)
   }, [podeGerirFields])
@@ -1204,6 +1208,14 @@ export default function FieldsPage() {
               {podeGerirFields && <>
               <button
                 type="button"
+                onClick={() => setModalAvisosAberto(true)}
+                className="inline-flex min-h-[52px] items-center justify-center gap-3 rounded-2xl border border-sky-400/30 bg-sky-500/15 px-5 text-sm font-black uppercase tracking-widest text-sky-200 transition hover:bg-sky-500/25"
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5 shrink-0"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m3 6 9 7 9-7"/></svg>
+                Avisos de visita
+              </button>
+              <button
+                type="button"
                 onClick={abrirModalLista}
                 className="group inline-flex min-h-[52px] items-center justify-center gap-3 rounded-2xl bg-blue-600 px-5 text-sm font-black uppercase tracking-widest text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-700"
               >
@@ -1883,6 +1895,8 @@ export default function FieldsPage() {
           <PaginacaoChamados {...paginacaoTabelaProps} prefixo="rodape" />
         </section>
       </Glass>
+
+      {podeGerirFields && modalAvisosAberto && <AvisosVisita fechar={() => setModalAvisosAberto(false)} />}
 
       {/* MODAL GERADOR DE LISTA DE CHAMADOS */}
       {podeGerirFields && modalRelatorioAberto && (

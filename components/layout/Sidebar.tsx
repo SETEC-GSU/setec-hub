@@ -1,5 +1,6 @@
 import { getUser } from "@/lib/getUser"
 import { canAccess } from "@/lib/canAccess"
+import { NOME_ASSISTENTE } from "@/lib/assistente/config"
 import { podeVerCentralRelatorios, PERMISSAO_CENTRAL_RELATORIOS } from "@/lib/relatorios/acesso"
 import SidebarClient, {
   type SidebarItem,
@@ -35,6 +36,12 @@ export default async function Sidebar() {
       label: "Calendário SEINTEC–SETEC",
       icon: "📅",
       permission: "calendario.seintec.view",
+    },
+    {
+      href: "/assistente",
+      label: NOME_ASSISTENTE,
+      icon: "✦",
+      permission: "assistente.view",
     },
     {
       href: "/fields/inventario",
