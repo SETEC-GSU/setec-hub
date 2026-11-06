@@ -26,11 +26,11 @@ function erroBanco(error:{code?:string;message?:string},modulo?:Modulo){
  console.error('[S.E.T.H.] Falha na consulta',{referencia,modulo:modulo||'opcoes',codigo,mensagem:String(error.message||'').slice(0,500)})
  const ref=` Referência: ${referencia} (${codigo}).`
  if(error.code==='42501')return new ErroAssistenteHub('Seu acesso ao assistente não está disponível. Confira sua sessão e perfil.'+ref,403)
- if(['PGRST202','42883','42P01'].includes(error.code||''))return new ErroAssistenteHub('A consulta do assistente precisa ser atualizada no banco. Confira os SQLs 016 e 018 do pacote.'+ref,503)
- if(error.code==='22023')return new ErroAssistenteHub('Confira os filtros e as datas da consulta.'+ref,400)
+ if(['PGRST202','42883','42P01'].includes(error.code||''))return new ErroAssistenteHub('A consulta do assistente precisa ser atualizada no banco. Confira o SQL 019 do pacote; para instalação inicial, use o SQL 016.'+ref,503)
+ if(error.code==='22023')return new ErroAssistenteHub((modulo==='escolas'?'Confira a escola e os filtros. Se ainda não aplicou a atualização de escolas, execute o SQL 019 do pacote.':'Confira os filtros e as datas da consulta.')+ref,400)
  if(error.code==='57014')return new ErroAssistenteHub('A consulta excedeu o tempo de processamento do banco. Selecione um período menor ou uma edição e tente novamente.'+ref,503)
- if(error.code==='54001')return new ErroAssistenteHub('A consulta excedeu o limite de processamento. Aplique a correção SQL 018 do assistente e tente novamente.'+ref,503)
- if(['42702','42703'].includes(error.code||''))return new ErroAssistenteHub('A estrutura da consulta está incompatível com o banco. Aplique a correção SQL 018 do assistente.'+ref,503)
+ if(error.code==='54001')return new ErroAssistenteHub('A consulta excedeu o limite de processamento. Aplique a atualização SQL 019 do assistente e tente novamente.'+ref,503)
+ if(['42702','42703'].includes(error.code||''))return new ErroAssistenteHub('A estrutura da consulta está incompatível com o banco. Confira a atualização SQL 019 do assistente e os campos do cadastro.'+ref,503)
  return new ErroAssistenteHub('Não foi possível concluir a consulta. Sua pergunta e as respostas anteriores foram mantidas.'+ref,503)
 }
 export async function opcoesAssistente(acesso:Awaited<ReturnType<typeof acessoAssistente>>,signal:AbortSignal){

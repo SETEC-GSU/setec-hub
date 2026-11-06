@@ -1,6 +1,7 @@
 import type { Modulo } from './types'
 
 export const CATALOGO:Record<Modulo,{nome:string;descricao:string;href:string;pergunta:string;icone:string}>={
+  escolas:{nome:'Dados das escolas',descricao:'CIE, direção, contatos e funcionamento',href:'/escolas',pergunta:'Mostre as escolas cadastradas no Hub',icone:'school'},
   chamados:{nome:'Chamados do Hub',descricao:'Aberturas, andamento e conclusões',href:'/gestao-chamados',pergunta:'Como estão os chamados do Hub neste mês?',icone:'ticket'},
   fields:{nome:'Atendimentos Fields',descricao:'Atendimentos e categorias principais',href:'/fields',pergunta:'Mostre o ranking de atendimentos Fields neste mês',icone:'field'},
   relatorios:{nome:'Central de Relatórios',descricao:'Entregas, dispensas e pendências',href:'/fields/central-relatorios',pergunta:'Quais relatórios estão pendentes neste mês?',icone:'report'},
@@ -12,6 +13,7 @@ export const CATALOGO:Record<Modulo,{nome:string;descricao:string;href:string;pe
 }
 
 export const GUIAS = [
+  {chave:'escolas',titulo:'Consultar dados de uma escola',termos:['escola','cie','diretor','diretora','endereco','telefone','ensino','periodo'],href:'/escolas',texto:'Pergunte pelo nome da escola ou pelo CIE. Posso consultar CIE, direção, telefone, e-mail, endereço, tipo de ensino, período e horários cadastrados. Exemplo: “Qual o CIE da escola [nome]?” ou “Mostre os dados completos da escola [nome]”. Se houver nomes semelhantes, selecione a escola nos filtros ou informe o CIE. Dados ausentes são indicados como não informados; a consulta não altera o cadastro.'},
   {chave:'relatorios',titulo:'Relatórios e dispensas',termos:['relatorio','relatorios','dispensa','cobranca','parecer'],href:'/fields/central-relatorios',texto:'A Central cruza o número do chamado com os relatórios de equipamentos e de redes. A pendência começa quando o atendimento está Realizado. Um relatório finalizado com itens atende à exigência. Outros / Inventário tem dispensa automática; as demais dispensas dependem de aprovação SETEC. Relatórios internos da URE podem ser emitidos sem chamado, conforme o local de atendimento.'},
   {chave:'inventario',titulo:'Atualizar e consultar o inventário',termos:['inventario','danificado','garantia','equipamento','localizado'],href:'/fields/inventario',texto:'O Inventário Field reúne as escolas setorizadas e os equipamentos sob responsabilidade do técnico. A atualização alimenta a base principal. A Visão Geral reúne o último inventário com itens de cada escola e distingue funcionando, aguardando garantia, danificados e não localizados. Equipamentos recebidos e quantidades declaradas são medidas diferentes.'},
   {chave:'calendario',titulo:'Calendário e reservas',termos:['calendario','agenda','reserva','compromisso','evento','aniversario','reuniao'],href:'/calendario-seintec',texto:'Cadastre a atividade com início, fim, setor e responsável no Calendário SEINTEC–SETEC. Na mesma atividade, informe os equipamentos e as quantidades para reserva. A disponibilidade considera o intervalo e as demais reservas. Os detalhes e a movimentação dos equipamentos ficam na página do calendário.'},
@@ -20,4 +22,4 @@ export const GUIAS = [
   {chave:'fields',titulo:'Atendimentos e recomendações Fields',termos:['field','fields','visita','visitas','tecnico','tecnicos','demanda'],href:'/fields/recomendacoes',texto:'O Assistente de Atendimentos cruza as demandas cadastradas com o histórico geral de visitas, a setorização e os chamados ativos. Os filtros por técnico e categoria principal ajudam a planejar o atendimento. As recomendações servem para avaliação da equipe; a abertura do chamado continua no fluxo próprio do Hub.'},
 ] as const
 
-export const SUGESTOES_INICIAIS = [CATALOGO.relatorios.pergunta,CATALOGO.inventario.pergunta,CATALOGO.calendario.pergunta,CATALOGO.chamados.pergunta]
+export const SUGESTOES_INICIAIS = ['Quero consultar o CIE de uma escola',CATALOGO.relatorios.pergunta,CATALOGO.inventario.pergunta,CATALOGO.calendario.pergunta]

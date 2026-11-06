@@ -1,6 +1,8 @@
 import type { Permission } from "./permissions"
+import { PERMISSAO_PAINEL_PLENO, ROTA_PAINEL_PLENO } from "./fields/painel-pleno"
 
 export const routePermissions: Record<string, Permission> = {
+  [ROTA_PAINEL_PLENO]: PERMISSAO_PAINEL_PLENO,
   "/assistente": "assistente.view",
   "/api/assistente": "assistente.view",
   "/": "dashboard.view",

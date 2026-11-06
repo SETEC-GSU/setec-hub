@@ -1,5 +1,7 @@
-export const MODULOS = ['chamados','fields','relatorios','inventario','calendario','saresp','demandas','conhecimento'] as const
+export const MODULOS = ['escolas','chamados','fields','relatorios','inventario','calendario','saresp','demandas','conhecimento'] as const
 export type Modulo = typeof MODULOS[number]
+export const CAMPOS_ESCOLA = ['todos','cie','diretor','periodo','tipo_ensino','endereco','telefone','email','horario','tecnico','total_alunos','qtd_salas'] as const
+export type CampoEscola = typeof CAMPOS_ESCOLA[number]
 export type Periodo = { inicio: string; fim: string }
 export type Filtros = {
   modulo: Modulo | 'auto'; periodo: 'auto' | 'hoje' | 'mes' | 'mes_anterior' | 'ano' | 'ultimos30' | 'proximos7' | 'personalizado'
@@ -14,6 +16,7 @@ export type Consulta = Periodo & {
   modulo: Modulo; escola: string; tecnico: string; categoria: string; edicao: string
   situacao: 'todos' | 'pendentes' | 'concluidos' | 'cancelados' | 'danificados' | 'garantia' | 'nao_localizados' | 'funcionando'
   foco: 'resumo' | 'ranking' | 'lista'; agrupamento:'categoria'|'escola'|'tecnico'; busca: string
+  campoEscola?: CampoEscola
 }
 export type Contexto = Consulta
 export type Interpretacao = {consulta:Consulta} | {ajuda:true; assunto:string} | {esclarecer:string; sugestoes:string[]}

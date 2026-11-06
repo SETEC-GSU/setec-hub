@@ -1,6 +1,7 @@
 import { getUser } from "@/lib/getUser"
 import { canAccess } from "@/lib/canAccess"
 import { NOME_ASSISTENTE } from "@/lib/assistente/config"
+import { PERMISSAO_PAINEL_PLENO, ROTA_PAINEL_PLENO } from "@/lib/fields/painel-pleno"
 import { podeVerCentralRelatorios, PERMISSAO_CENTRAL_RELATORIOS } from "@/lib/relatorios/acesso"
 import SidebarClient, {
   type SidebarItem,
@@ -150,6 +151,12 @@ export default async function Sidebar() {
           label: "Atendimento",
           icon: "🧑‍🔧",
           permission: "fields.view",
+        },
+        {
+          href: ROTA_PAINEL_PLENO,
+          label: "Painel de Atividades Pleno",
+          icon: "📊",
+          permission: PERMISSAO_PAINEL_PLENO,
         },
         {
           href: "/fields/recomendacoes",
