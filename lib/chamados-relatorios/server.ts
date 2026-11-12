@@ -20,16 +20,16 @@ export async function acessoServidorHub() {
   return { supabase, usuarioId: user.id, nome: String(perfil.nome || "Usuário autenticado") };
 }
 export async function consultarBaseHub(supabase: Awaited<ReturnType<typeof createServerSupabase>>, f: FiltrosHub, signal: AbortSignal) {
-  const limite = limitesPeriodo(f), rows: ChamadoHub[] = [], ids = new Set<string>();
+  const limite = f.periodicidade === "completo" ? null : limitesPeriodo(f), rows: ChamadoHub[] = [], ids = new Set<string>();
   let ultimoId = "", total = -1;
-  const criarConsulta = (contar: boolean) => supabase.from("chamados").select("id,codigo,titulo,descricao,categoria,subcategoria,servico_id,origem,prioridade,status,setor,escola,solicitante_nome,analista_responsavel,created_at,updated_at,started_at,resolved_at,closed_at,retorno_devolutivo", { count: contar ? "exact" : undefined });
+  const criarConsulta = (contar: boolean) => supabase.from("chamados").select("id,codigo,titulo,descricao,categoria,subcategoria,servico_id,origem,prioridade,status,setor,escola,solicitante_nome,solicitante_email,usuario_id,analista_responsavel,created_at,updated_at,started_at,resolved_at,closed_at,retorno_devolutivo", { count: contar ? "exact" : undefined });
   // Cursor estável por ID e avanço pelo tamanho real recebido: funciona mesmo
   // quando o limite REST do projeto é inferior a 500. Não usa service_role.
   while (true) {
     if (signal.aborted) throw new ErroRelatorioHub("Consulta interrompida. Reduza o período ou tente novamente.", 503);
     let q: ReturnType<typeof criarConsulta> = criarConsulta(total < 0);
-    if (f.referencia === "abertura") q = q.gte("created_at", limite.inicio).lt("created_at", limite.fimExclusivo);
-    else q = q.or(`and(resolved_at.gte.${limite.inicio},resolved_at.lt.${limite.fimExclusivo}),and(resolved_at.is.null,closed_at.gte.${limite.inicio},closed_at.lt.${limite.fimExclusivo})`);
+    if (limite && f.referencia === "abertura") q = q.gte("created_at", limite.inicio).lt("created_at", limite.fimExclusivo);
+    else if (limite) q = q.or(`and(resolved_at.gte.${limite.inicio},resolved_at.lt.${limite.fimExclusivo}),and(resolved_at.is.null,closed_at.gte.${limite.inicio},closed_at.lt.${limite.fimExclusivo})`);
     if (f.responsavel && f.responsavel !== "__sem_responsavel__") q = q.eq("analista_responsavel", f.responsavel);
     if (ultimoId) q = q.gt("id", ultimoId);
     const { data, error, count } = await q.order("id", { ascending: true }).limit(500).abortSignal(signal);
@@ -50,14 +50,14 @@ export async function consultarBaseHub(supabase: Awaited<ReturnType<typeof creat
     ultimoId = pagina[pagina.length - 1].id;
   }
   if (Buffer.byteLength(JSON.stringify(rows), "utf8") > 24 * 1024 * 1024) throw new ErroRelatorioHub("O recorte contém textos muito extensos. Reduza o período ou filtre um responsável.", 422);
-  const responsaveis = [...new Set(rows.map(r => r.analista_responsavel).filter((v): v is string => Boolean(v)))], nomes = new Map<string, string>();
+  const responsaveis = [...new Set(rows.flatMap(r => [r.analista_responsavel, r.usuario_id]).filter((v): v is string => Boolean(v)))], nomes = new Map<string, string>(), emails = new Map<string, string>();
   for (let i = 0; i < responsaveis.length; i += 100) {
-    const { data, error } = await supabase.from("usuarios").select("id,nome").in("id", responsaveis.slice(i, i + 100)).order("id").limit(100).abortSignal(signal);
+    const { data, error } = await supabase.from("usuarios").select("id,nome,email").in("id", responsaveis.slice(i, i + 100)).order("id").limit(100).abortSignal(signal);
     if (error) throw new ErroRelatorioHub("Não foi possível conferir os responsáveis. Tente novamente.", 503);
-    for (const u of data || []) if (u.nome) nomes.set(String(u.id), String(u.nome));
+    for (const u of data || []) { if (u.nome) nomes.set(String(u.id), String(u.nome)); if (u.email) emails.set(String(u.id), String(u.email)); }
   }
-  const registros = prepararRegistros(rows, nomes, f);
-  const assinatura = createHash("sha256").update(JSON.stringify({ versao: 1, filtros: f, registros })).digest("hex");
+  const registros = prepararRegistros(rows, nomes, f, emails);
+  const assinatura = createHash("sha256").update(JSON.stringify({ versao: 2, filtros: f, registros })).digest("hex");
   const responsavelFiltro = !f.responsavel ? "Todos os responsáveis" : f.responsavel === "__sem_responsavel__" ? "Sem responsável" : nomes.get(f.responsavel) || `Responsável ${f.responsavel.slice(0, 8)}`;
   return { registros, assinatura, responsavelFiltro };
 }

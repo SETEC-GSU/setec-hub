@@ -153,12 +153,6 @@ export default async function Sidebar() {
           permission: "fields.view",
         },
         {
-          href: ROTA_PAINEL_PLENO,
-          label: "Painel de Atividades Pleno",
-          icon: "📊",
-          permission: PERMISSAO_PAINEL_PLENO,
-        },
-        {
           href: "/fields/recomendacoes",
           label: "Assistente de Atendimentos",
           icon: "🧭",
@@ -316,6 +310,12 @@ export default async function Sidebar() {
           label: "SETEC DataHub",
           icon: "📈",
           permission: "relatorios.view",
+        },
+        {
+          href: ROTA_PAINEL_PLENO,
+          label: "Painel de Atividades Pleno",
+          icon: "📊",
+          permission: PERMISSAO_PAINEL_PLENO,
         },
         {
           href: "/edumonitor",

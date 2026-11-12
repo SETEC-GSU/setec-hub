@@ -2,9 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
 import dynamic from "next/dynamic"
+import { resumoSLAUtil } from "@/lib/chamados/sla"
+import { useRelogioSLA } from "@/lib/chamados/useRelogioSLA"
 import { createClient } from "@/lib/supabase"
 import { podeGerarRelatoriosHub } from "@/lib/chamados-relatorios/perfis"
-import { opcoesDaPagina } from "@/lib/chamados-relatorios/analise"
+import { filtrosIniciais, intervaloPeriodo } from "@/lib/chamados-relatorios/periodos"
+import type { FiltrosHub } from "@/lib/chamados-relatorios/types"
+import { normalizar as normalizarHub, normalizarPrioridadeHub, normalizarStatus as statusHub, dataConclusao, opcoesDaPagina } from "@/lib/chamados-relatorios/analise"
 import { classificacaoChamado } from "@/lib/chamados/catalogo"
 import { lerTodasPaginas } from "@/lib/chamados/consulta"
 import FiltrosClassificacao from "@/components/chamados/FiltrosClassificacao"
@@ -116,6 +120,7 @@ const prioridadeLabel: Record<string, string> = {
   alta: "Alta",
   media: "Média",
   baixa: "Baixa",
+  nao_informada: "Não informada",
 }
 
 const ADMIN_PANEL_ROLES = new Set(["admin", "seintec", "analista", "dirigente"])
@@ -124,34 +129,15 @@ function podeVerPainelAdministrativo(role?: string | null) {
   return ADMIN_PANEL_ROLES.has(normalizarTexto(role))
 }
 
-function normalizarTexto(value: unknown) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim()
-}
+function normalizarTexto(value: unknown) { return normalizarHub(value) }
 
 function textoSeguro(value: unknown, fallback = "Não informado") {
   const clean = String(value || "").trim()
   return clean || fallback
 }
 
-function normalizarStatus(value?: string | null) {
-  const status = normalizarTexto(value || "aberto").replaceAll(" ", "_")
-  return status === "encerrado" ? "fechado" : status
-}
-
-function normalizarPrioridade(value?: string | null) {
-  const prioridade = normalizarTexto(value || "media")
-
-  if (prioridade.includes("critica")) return "critica"
-  if (prioridade.includes("alta")) return "alta"
-  if (prioridade.includes("media")) return "media"
-  if (prioridade.includes("baixa")) return "baixa"
-
-  return prioridade || "media"
-}
+function normalizarStatus(value?: string | null) { return statusHub(value) }
+function normalizarPrioridade(value?: string | null) { return normalizarPrioridadeHub(value) }
 
 function formatarStatus(value?: string | null) {
   const status = normalizarStatus(value)
@@ -167,7 +153,7 @@ function formatarStatus(value?: string | null) {
 
 function formatarPrioridade(value?: string | null) {
   const prioridade = normalizarPrioridade(value)
-  return prioridadeLabel[prioridade] || "Média"
+  return prioridadeLabel[prioridade] || textoSeguro(value, "Não informada")
 }
 
 function getHojeSP() {
@@ -251,6 +237,7 @@ function diferencaHoras(inicio?: string | null, fim?: string | null) {
     return null
   }
 
+  if (dataFim.getTime() > Date.now()) return null
   const horas = (dataFim.getTime() - dataInicio.getTime()) / 3_600_000
 
   return horas >= 0 ? horas : null
@@ -353,6 +340,7 @@ function SafeTooltip({ active, payload, label }: any) {
 }
 
 export default function PainelChamados() {
+  const agoraSLA = useRelogioSLA()
   const supabase = useMemo(() => createClient(), [])
 
   const [chamados, setChamados] = useState<ChamadoRow[]>([])
@@ -382,6 +370,7 @@ export default function PainelChamados() {
   function alterarRelatorioHub(aberto: boolean) {
     setRelatorioHubAberto(aberto)
     if (chaveRelatorioHub) {
+      if (aberto) { try { sessionStorage.setItem(`${chaveRelatorioHub}:filtros`, JSON.stringify(filtrosAtuaisDoPainel)) } catch {} }
       try { sessionStorage.setItem(`${chaveRelatorioHub}:aberto`, aberto ? "1" : "0") } catch {}
     }
   }
@@ -665,8 +654,8 @@ export default function PainelChamados() {
 
     return chamados.filter((chamado) => {
       const classificacao = classificacaoChamado(chamado)
-      if (categoriaCatalogo && classificacao.categoria !== categoriaCatalogo) return false
-      if (assuntoCatalogo && classificacao.assunto !== assuntoCatalogo) return false
+      if (categoriaCatalogo && normalizarTexto(classificacao.categoria) !== normalizarTexto(categoriaCatalogo)) return false
+      if (assuntoCatalogo && normalizarTexto(classificacao.assunto) !== normalizarTexto(assuntoCatalogo)) return false
 
       const origem = textoSeguro(chamado.origem, "Outros").toUpperCase()
       const mes = getMesKey(chamado.created_at)
@@ -759,8 +748,8 @@ export default function PainelChamados() {
     const hoje = getHojeSP()
 
     const resolvidosHoje = chamadosFiltrados.filter((chamado) => {
-      const dataFinalizacao = chamado.resolved_at || chamado.closed_at
-      return getDateKeySP(dataFinalizacao) === hoje
+      const dataFinalizacao = dataConclusao(chamado)
+      return chamadoFinalizado(chamado) && getDateKeySP(dataFinalizacao) === hoje
     }).length
 
     const naoVisualizadosGestao = chamadosFiltrados.filter(
@@ -863,13 +852,13 @@ export default function PainelChamados() {
 
         const horas = diferencaHoras(
           chamado.created_at,
-          chamado.resolved_at || chamado.closed_at
+          dataConclusao(chamado)
         )
 
         if (horas != null) {
           atual.temposResolucao.push(horas)
         }
-      } else {
+      } else if (["aberto", "assumido", "em_atendimento"].includes(normalizarStatus(chamado.status))) {
         atual.ativos += 1
       }
 
@@ -912,7 +901,7 @@ export default function PainelChamados() {
     const comResponsavel = total - semResponsavel
 
     const ativos = chamadosFiltrados.filter(
-      (chamado) => !chamadoFinalizado(chamado)
+      (chamado) => ["aberto", "assumido", "em_atendimento"].includes(normalizarStatus(chamado.status))
     )
 
     const criticosAtivos = ativos.filter(
@@ -924,12 +913,8 @@ export default function PainelChamados() {
       return horas != null && horas >= 72
     }).length
 
-    const foraSla = ativos.filter((chamado) => {
-      const sla = Number(chamado.sla_horas || 0)
-      const horas = idadeHoras(chamado.created_at)
-
-      return sla > 0 && horas != null && horas > sla
-    }).length
+    const slaAtivos = resumoSLAUtil(ativos, new Date(agoraSLA))
+    const foraSla = slaAtivos.foraPrazo
 
     const finalizados = chamadosFiltrados.filter(chamadoFinalizado)
 
@@ -947,7 +932,7 @@ export default function PainelChamados() {
       finalizados.map((chamado) =>
         diferencaHoras(
           chamado.created_at,
-          chamado.resolved_at || chamado.closed_at
+          dataConclusao(chamado)
         )
       )
     )
@@ -959,6 +944,7 @@ export default function PainelChamados() {
       criticosAtivos,
       backlog72h,
       foraSla,
+      slaAtivos,
       comDevolutiva,
       taxaDevolutiva:
         finalizados.length > 0
@@ -967,7 +953,7 @@ export default function PainelChamados() {
       tempoMedioInicio,
       tempoMedioResolucao,
     }
-  }, [chamadosFiltrados])
+  }, [chamadosFiltrados, agoraSLA])
 
   const dadosStatus = useMemo(() => {
     return agruparPorCampo(
@@ -1051,6 +1037,17 @@ export default function PainelChamados() {
         (filtroAnalistaAdmin || filtroPrioridadeAdmin)
     )
 
+  const padraoRelatorio = filtrosIniciais();
+  const anoMes = filtroMes ? filtroMes.split("-").map(Number) : [padraoRelatorio.ano, padraoRelatorio.indice];
+  const filtrosAtuaisDoPainel: FiltrosHub = {
+    ...padraoRelatorio, periodicidade: filtroMes ? "mensal" : "completo", ano: anoMes[0], indice: anoMes[1],
+    ...(filtroMes ? intervaloPeriodo("mensal", anoMes[0], anoMes[1]) : { inicio: "", fim: "" }),
+    referencia: "abertura", status: filtroStatus || "todos", origem: filtroOrigem,
+    categoria: categoriaCatalogo, assunto: assuntoCatalogo, busca,
+    responsavel: modoAdministrativo && podeAcessarAdministrativo ? filtroAnalistaAdmin : "",
+    prioridade: modoAdministrativo && podeAcessarAdministrativo ? filtroPrioridadeAdmin : "",
+  };
+
   if (loading) {
     return <LoadingPainel />
   }
@@ -1058,7 +1055,7 @@ export default function PainelChamados() {
   return (
     <main className="mx-auto w-full max-w-[1800px] space-y-6 pb-12">
       {podeGerarRelatorioHub && relatorioHubAberto && (
-        <ModalRelatorioHub opcoes={opcoesRelatorioHub} chavePersistencia={chaveRelatorioHub} fechar={() => alterarRelatorioHub(false)} />
+        <ModalRelatorioHub filtrosDoPainel={filtrosAtuaisDoPainel} totalNoPainel={chamadosFiltrados.length} opcoes={opcoesRelatorioHub} chavePersistencia={chaveRelatorioHub} fechar={() => alterarRelatorioHub(false)} />
       )}
       <section className="relative overflow-hidden rounded-[2rem] border border-slate-800 bg-[#020617] p-5 shadow-2xl md:p-8">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.17),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(6,182,212,0.10),transparent_30%)]" />
@@ -1334,25 +1331,25 @@ export default function PainelChamados() {
             <AdminMetricCard
               label="Backlog +72h"
               value={adminStats.backlog72h}
-              detail="Ativos há 3 dias ou mais"
+              detail="Ativos há 72 horas corridas ou mais"
               tone="yellow"
             />
             <AdminMetricCard
               label="Fora do SLA"
               value={adminStats.foraSla}
-              detail="Ativos acima do SLA cadastrado"
+              detail="Ativos acima do prazo em horas úteis"
               tone="purple"
             />
             <AdminMetricCard
               label="Tempo até início"
               value={formatarHoras(adminStats.tempoMedioInicio)}
-              detail="Média abertura → início"
+              detail="Média em horas corridas"
               tone="cyan"
             />
             <AdminMetricCard
               label="Tempo de resolução"
               value={formatarHoras(adminStats.tempoMedioResolucao)}
-              detail="Média abertura → finalização"
+              detail="Média em horas corridas"
               tone="emerald"
             />
           </div>
@@ -1418,13 +1415,10 @@ export default function PainelChamados() {
                   detail={`${stats.taxaResolucao}% do recorte`}
                 />
                 <AdminProgress
-                  label="Dentro do fluxo de SLA"
-                  value={Math.max(
-                    adminStats.total - adminStats.foraSla,
-                    0
-                  )}
-                  total={adminStats.total}
-                  detail={`${adminStats.foraSla} ativo(s) acima do SLA`}
+                  label="SLA dos chamados ativos"
+                  value={adminStats.slaAtivos.dentroPrazo}
+                  total={adminStats.slaAtivos.avaliados}
+                  detail={`${adminStats.foraSla} vencidos · ${adminStats.slaAtivos.semDados} sem data válida`}
                 />
               </div>
 
@@ -1864,7 +1858,7 @@ function ChamadoAdminDetails({
   const tempoTotal = finalizado
     ? diferencaHoras(
         chamado.created_at,
-        chamado.resolved_at || chamado.closed_at
+        dataConclusao(chamado)
       )
     : idadeHoras(chamado.created_at)
 
@@ -1950,7 +1944,7 @@ function ChamadoAdminDetails({
           <DetailMini
             label="Finalização"
             value={formatarDataHoraBR(
-              chamado.resolved_at || chamado.closed_at
+              dataConclusao(chamado)
             )}
           />
         </div>

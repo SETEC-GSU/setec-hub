@@ -19,25 +19,26 @@ export const metadata: Metadata = {
   applicationName: "SETEC Hub",
   icons: {
     icon: [
+      { url: "/brand/setec-hub-app-icon.svg?v=elo-20261111", type: "image/svg+xml", sizes: "any" },
       {
-        url: "/favicon.ico",
+        url: "/favicon.ico?v=elo-20261111",
         type: "image/x-icon",
       },
       {
-        url: "/icon.png",
+        url: "/icon.png?v=elo-20261111",
         type: "image/png",
         sizes: "512x512",
       },
       {
-        url: "/brand/setec-hub-icon-192.png",
+        url: "/brand/setec-hub-icon-192.png?v=elo-20261111",
         type: "image/png",
         sizes: "192x192",
       },
     ],
-    shortcut: "/favicon.ico",
+    shortcut: "/favicon.ico?v=elo-20261111",
     apple: [
       {
-        url: "/apple-touch-icon.png",
+        url: "/apple-touch-icon.png?v=elo-20261111",
         type: "image/png",
         sizes: "180x180",
       },

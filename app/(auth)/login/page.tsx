@@ -1,6 +1,6 @@
 "use client"
 
-import Image from "next/image"
+import BrandLogo from "@/components/brand/BrandLogo"
 
 import { useState, type FormEvent, type ReactNode } from "react"
 
@@ -257,90 +257,6 @@ export default function LoginPage() {
         </form>
       </section>
     </main>
-  )
-}
-
-function BrandLogo({
-  size,
-
-  className = "",
-}: {
-  size: "large" | "compact"
-
-  className?: string
-}) {
-  const [imageError, setImageError] = useState(false)
-
-  const isLarge = size === "large"
-
-  return (
-    <div
-      className={`flex items-center ${
-        isLarge ? "gap-4" : "gap-3"
-      } ${!isLarge ? "justify-center" : ""} ${className}`}
-    >
-      <div
-        className={`relative shrink-0 overflow-hidden ${
-          isLarge
-            ? "h-[76px] w-[76px] rounded-[22px]"
-            : "h-[58px] w-[58px] rounded-[18px]"
-        }`}
-      >
-        {!imageError ? (
-          <Image
-            src="/brand/setec-hub-icon.png"
-
-            alt="Símbolo SETEC Hub"
-
-            fill
-
-            priority
-
-            sizes={isLarge ? "76px" : "58px"}
-
-            onError={() => setImageError(true)}
-
-            className="object-contain"
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center border border-blue-400/20 bg-gradient-to-br from-blue-600 to-blue-500 shadow-[0_0_30px_rgba(37,99,235,0.45)]">
-            <span
-              className={`font-black tracking-tight text-white ${
-                isLarge ? "text-2xl" : "text-lg"
-              }`}
-            >
-              SH
-            </span>
-          </div>
-        )}
-      </div>
-
-      <div className="min-w-0 text-left">
-        <div
-          className={`flex items-baseline whitespace-nowrap font-black tracking-tight ${
-            isLarge
-              ? "text-[2.35rem] leading-none"
-              : "text-[1.75rem] leading-none"
-          }`}
-        >
-          <span className="bg-gradient-to-r from-blue-300 via-blue-400 to-blue-600 bg-clip-text text-transparent">
-            SETEC
-          </span>
-
-          <span className="ml-1.5 font-light text-slate-100">Hub</span>
-        </div>
-
-        <p
-          className={`mt-2 whitespace-nowrap font-black uppercase text-blue-200/75 ${
-            isLarge
-              ? "text-[13px] tracking-[0.24em]"
-              : "text-[11px] tracking-[0.18em]"
-          }`}
-        >
-          URE Guarulhos Sul
-        </p>
-      </div>
-    </div>
   )
 }
 

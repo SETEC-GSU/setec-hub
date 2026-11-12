@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     const detalhes = filtros.detalhar ? base.registros.slice((parte - 1) * DETALHES_POR_PARTE, parte * DETALHES_POR_PARTE) : [];
     browser = await abrirRenderizador();
     const bytes = await pdfHub(browser, htmlRelatorioHub(previa, detalhes, parte), base.assinatura.slice(0, 12), controller.signal);
-    const nome = `Hub_Chamados_${filtros.modalidade}_${filtros.inicio}_${filtros.fim}${previa.partes > 1 ? `_parte-${parte}-de-${previa.partes}` : ""}.pdf`;
+    const nome = `Hub_Chamados_${filtros.modalidade}_${filtros.periodicidade === "completo" ? "todo-periodo" : `${filtros.inicio}_${filtros.fim}`}${previa.partes > 1 ? `_parte-${parte}-de-${previa.partes}` : ""}.pdf`;
     return new NextResponse(new Uint8Array(bytes), { headers: { ...headersPrivados, "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="${nome}"` } });
   } catch (e) {
     const status = e instanceof ErroRelatorioHub ? e.status : controller.signal.aborted ? 503 : 500;

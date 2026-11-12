@@ -1,4 +1,5 @@
-// Modelo institucional preservado integralmente da página enviada.
+// Modelo compartilhado pela página, pela Central e pelo backup. Dados preservados.
+import { cabecalhoTecnicoHtml, estilosDocumentoTecnico, scriptImpressaoTecnica } from "@/lib/brand/relatorios";
 export type ParecerHistorico = {
   id: string;
   escola_id: string | null;
@@ -164,10 +165,6 @@ export function montarHtmlPdf(parecer: ParecerHistorico) {
     normalizarTexto(item.resultado).includes("resolvido"),
   ).length;
   const nomeArquivoPdf = getNomeArquivoParecer(parecer);
-  const logoUrl =
-    typeof window !== "undefined"
-      ? `${window.location.origin}/brand/setec-hub-icon.png`
-      : "/brand/setec-hub-icon.png";
 
   const itensHtml = itens
     .map((item, index) => {
@@ -674,32 +671,18 @@ export function montarHtmlPdf(parecer: ParecerHistorico) {
         page-break-inside: avoid;
       }
     }
+    ${estilosDocumentoTecnico}
   </style>
 </head>
 
 <body>
   <main class="page">
-    <header class="header">
-      <div class="brand">
-        <img
-          class="logo-image"
-          src="${escapeHtml(logoUrl)}"
-          alt="SETEC Hub"
-        />
-
-        <div class="brand-title">
-          <h1>Parecer Técnico de Atendimento</h1>
-          <p>SETEC Hub • URE Guarulhos Sul</p>
-        </div>
-      </div>
-
-      <div class="doc-box">
+    ${cabecalhoTecnicoHtml("Parecer Técnico de Atendimento", `
         <p><strong>Data:</strong> ${escapeHtml(formatarData(parecer.data_atendimento))}</p>
         <p><strong>Status:</strong> ${escapeHtml(parecer.status)}</p>
         <p><strong>Gerado:</strong> ${escapeHtml(formatarDataHora(new Date().toISOString()))}</p>
         <span class="doc-badge">Documento Institucional</span>
-      </div>
-    </header>
+      `)}
 
     <section class="headline">
       <div class="school-card">
@@ -802,6 +785,7 @@ export function montarHtmlPdf(parecer: ParecerHistorico) {
         : ""
     }
 
+    <div class="document-end">
     <footer class="footer">
       <div class="signature">
         ${escapeHtml(parecer.tecnico_nome || "Técnico responsável")}<br />
@@ -817,6 +801,7 @@ export function montarHtmlPdf(parecer: ParecerHistorico) {
     <p class="note">
       Documento gerado pelo SETEC Hub. Este relatório registra as informações técnicas declaradas no atendimento realizado pela equipe responsável.
     </p>
+    </div>
   </main>
 
   <div class="no-print" style="position: fixed; right: 16px; bottom: 16px; display: flex; gap: 8px; font-family: Arial, Helvetica, sans-serif;">
@@ -825,31 +810,7 @@ export function montarHtmlPdf(parecer: ParecerHistorico) {
     </button>
   </div>
 
-  <script>
-    window.addEventListener("load", function () {
-      var imagens = Array.from(document.images || []);
-
-      Promise.all(
-        imagens.map(function (imagem) {
-          if (imagem.complete) return Promise.resolve();
-
-          return new Promise(function (resolve) {
-            imagem.addEventListener("load", resolve, { once: true });
-            imagem.addEventListener("error", resolve, { once: true });
-          });
-        }),
-      ).then(function () {
-        window.setTimeout(function () {
-          try {
-            window.focus();
-            window.print();
-          } catch (error) {
-            console.error("Falha ao abrir impressão automática:", error);
-          }
-        }, 450);
-      });
-    });
-  </script>
+  ${scriptImpressaoTecnica()}
 </body>
 </html>
 `;

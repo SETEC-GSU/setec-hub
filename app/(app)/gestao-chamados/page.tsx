@@ -10,6 +10,8 @@ import {
 } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase"
+import { calcularSLAUtil as calcularSLA } from "@/lib/chamados/sla"
+import { useRelogioSLA } from "@/lib/chamados/useRelogioSLA"
 import { classificacaoChamado } from "@/lib/chamados/catalogo"
 import { lerTodasPaginas } from "@/lib/chamados/consulta"
 import FiltrosClassificacao from "@/components/chamados/FiltrosClassificacao"
@@ -78,13 +80,6 @@ type ModalResolucao = {
   titulo?: string | null
 }
 
-const SLA_HORAS_PADRAO: Record<string, number> = {
-  critica: 8,
-  alta: 24,
-  media: 48,
-  baixa: 72,
-}
-
 const PRIORIDADE_PESO: Record<string, number> = {
   critica: 4,
   alta: 3,
@@ -106,36 +101,6 @@ const PRIORIDADE_LABEL: Record<string, string> = {
   media: "Média",
   baixa: "Baixa",
 }
-
-/*
-  SLA útil — Guarulhos/SP
-  Expediente considerado: segunda a sexta, das 08h às 18h.
-
-  Ajuste este array anualmente conforme calendário oficial da SEDUC,
-  Governo do Estado, Prefeitura de Guarulhos e pontos facultativos internos.
-  Formato: YYYY-MM-DD
-*/
-const FERIADOS_GUARULHOS_SP = new Set([
-  "2026-01-01",
-  "2026-02-16",
-  "2026-02-17",
-  "2026-04-03",
-  "2026-04-21",
-  "2026-05-01",
-  "2026-06-04",
-  "2026-07-09",
-  "2026-09-07",
-  "2026-10-12",
-  "2026-10-28",
-  "2026-11-02",
-  "2026-11-15",
-  "2026-11-20",
-  "2026-12-08",
-  "2026-12-25",
-])
-
-const EXPEDIENTE_INICIO = 8
-const EXPEDIENTE_FIM = 18
 
 function normalizarTexto(value: unknown) {
   return String(value || "")
@@ -217,221 +182,6 @@ function formatarTempoRelativo(dataIso?: string | null) {
   return `${diffDias} dia(s) atrás`
 }
 
-function pad2(value: number) {
-  return String(value).padStart(2, "0")
-}
-
-function getDateKey(date: Date) {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(
-    date.getDate()
-  )}`
-}
-
-function isFeriadoGuarulhos(date: Date) {
-  return FERIADOS_GUARULHOS_SP.has(getDateKey(date))
-}
-
-function isDiaUtilGuarulhos(date: Date) {
-  const dia = date.getDay()
-
-  if (dia === 0 || dia === 6) return false
-  if (isFeriadoGuarulhos(date)) return false
-
-  return true
-}
-
-function inicioExpediente(date: Date) {
-  const result = new Date(date)
-  result.setHours(EXPEDIENTE_INICIO, 0, 0, 0)
-  return result
-}
-
-function fimExpediente(date: Date) {
-  const result = new Date(date)
-  result.setHours(EXPEDIENTE_FIM, 0, 0, 0)
-  return result
-}
-
-function proximoDiaUtilInicio(date: Date) {
-  const result = new Date(date)
-  result.setDate(result.getDate() + 1)
-  result.setHours(EXPEDIENTE_INICIO, 0, 0, 0)
-
-  while (!isDiaUtilGuarulhos(result)) {
-    result.setDate(result.getDate() + 1)
-    result.setHours(EXPEDIENTE_INICIO, 0, 0, 0)
-  }
-
-  return result
-}
-
-function normalizarParaHorarioUtil(date: Date) {
-  let result = new Date(date)
-
-  if (!isDiaUtilGuarulhos(result)) {
-    result.setHours(EXPEDIENTE_INICIO, 0, 0, 0)
-
-    while (!isDiaUtilGuarulhos(result)) {
-      result.setDate(result.getDate() + 1)
-      result.setHours(EXPEDIENTE_INICIO, 0, 0, 0)
-    }
-
-    return result
-  }
-
-  const inicio = inicioExpediente(result)
-  const fim = fimExpediente(result)
-
-  if (result < inicio) return inicio
-
-  if (result >= fim) {
-    return proximoDiaUtilInicio(result)
-  }
-
-  return result
-}
-
-function adicionarHorasUteisGuarulhos(dataInicial: Date, horas: number) {
-  let atual = normalizarParaHorarioUtil(dataInicial)
-  let minutosRestantes = Math.max(Math.round(horas * 60), 0)
-
-  while (minutosRestantes > 0) {
-    atual = normalizarParaHorarioUtil(atual)
-
-    const fimDoDia = fimExpediente(atual)
-    const minutosDisponiveisHoje = Math.max(
-      Math.floor((fimDoDia.getTime() - atual.getTime()) / 60000),
-      0
-    )
-
-    if (minutosRestantes <= minutosDisponiveisHoje) {
-      return new Date(atual.getTime() + minutosRestantes * 60000)
-    }
-
-    minutosRestantes -= minutosDisponiveisHoje
-    atual = proximoDiaUtilInicio(atual)
-  }
-
-  return atual
-}
-
-function calcularMinutosUteisEntre(inicioIso: string | null, fim: Date) {
-  if (!inicioIso) return 0
-
-  const inicio = new Date(inicioIso)
-
-  if (Number.isNaN(inicio.getTime())) return 0
-
-  let atual = normalizarParaHorarioUtil(inicio)
-  let total = 0
-
-  while (atual < fim) {
-    if (!isDiaUtilGuarulhos(atual)) {
-      atual = proximoDiaUtilInicio(atual)
-      continue
-    }
-
-    const fimDoDia = fimExpediente(atual)
-    const limite = fim < fimDoDia ? fim : fimDoDia
-
-    if (limite > atual) {
-      total += Math.floor((limite.getTime() - atual.getTime()) / 60000)
-    }
-
-    if (fim <= fimDoDia) break
-
-    atual = proximoDiaUtilInicio(atual)
-  }
-
-  return total
-}
-
-function formatarMinutos(minutos: number) {
-  const abs = Math.abs(minutos)
-  const dias = Math.floor(abs / 600)
-  const horas = Math.floor((abs % 600) / 60)
-  const mins = abs % 60
-
-  if (dias > 0) return `${dias}d ${horas}h`
-  if (horas > 0) return `${horas}h ${mins}m`
-
-  return `${mins}m`
-}
-
-function calcularSLA(chamado: ChamadoRow) {
-  const status = normalizarStatus(chamado.status)
-
-  if (status === "resolvido" || status === "fechado") {
-    return {
-      label: "Concluído",
-      descricao: "Chamado finalizado",
-      atrasado: false,
-      vencendo: false,
-      minutosRestantes: 0,
-      percent: 100,
-    }
-  }
-
-  if (!chamado.created_at) {
-    return {
-      label: "Sem SLA",
-      descricao: "Data de abertura ausente",
-      atrasado: false,
-      vencendo: false,
-      minutosRestantes: 0,
-      percent: 0,
-    }
-  }
-
-  const criado = new Date(chamado.created_at)
-
-  if (Number.isNaN(criado.getTime())) {
-    return {
-      label: "Sem SLA",
-      descricao: "Data inválida",
-      atrasado: false,
-      vencendo: false,
-      minutosRestantes: 0,
-      percent: 0,
-    }
-  }
-
-  const prioridade = normalizarPrioridade(chamado.prioridade)
-  const horasSLA = chamado.sla_horas || SLA_HORAS_PADRAO[prioridade] || 24
-  const limite = adicionarHorasUteisGuarulhos(criado, horasSLA)
-  const agora = new Date()
-
-  const minutosTotais = Math.max(Math.round(horasSLA * 60), 1)
-  const minutosConsumidos = calcularMinutosUteisEntre(chamado.created_at, agora)
-  const percent = Math.min(Math.max((minutosConsumidos / minutosTotais) * 100, 0), 100)
-
-  if (agora > limite) {
-    const atrasoMs = agora.getTime() - limite.getTime()
-    const atrasoMin = Math.floor(atrasoMs / 60000)
-
-    return {
-      label: "Atrasado",
-      descricao: `Vencido há ${formatarMinutos(atrasoMin)}`,
-      atrasado: true,
-      vencendo: false,
-      minutosRestantes: -atrasoMin,
-      percent: 100,
-    }
-  }
-
-  const diffMs = limite.getTime() - agora.getTime()
-  const minutosRestantes = Math.floor(diffMs / 60000)
-  const vencendo = minutosRestantes <= 240
-
-  return {
-    label: formatarMinutos(minutosRestantes),
-    descricao: `Prazo útil até ${formatarData(limite.toISOString())}`,
-    atrasado: false,
-    vencendo,
-    minutosRestantes,
-    percent,
-  }
-}
 
 function prioridadeClass(prioridade?: string | null) {
   const value = normalizarPrioridade(prioridade)
@@ -519,10 +269,12 @@ function possuiFiltrosAtivos({
 }
 
 export default function GestaoChamadosCommandCenter() {
+  const agoraSLA = useRelogioSLA()
   const router = useRouter()
   const supabase = useMemo(() => createClient(), [])
 
   const [chamados, setChamados] = useState<ChamadoRow[]>([])
+  const slas = useMemo(() => new Map(chamados.map(c => [c.id, calcularSLA(c, new Date(agoraSLA))])), [chamados, agoraSLA])
   const [usuarioAtual, setUsuarioAtual] = useState<UsuarioResumo | null>(null)
 
   const [busca, setBusca] = useState("")
@@ -1016,8 +768,8 @@ export default function GestaoChamadosCommandCenter() {
         )
       }
 
-      const slaA = calcularSLA(a)
-      const slaB = calcularSLA(b)
+      const slaA = slas.get(a.id)!
+      const slaB = slas.get(b.id)!
 
       if (slaA.atrasado && !slaB.atrasado) return -1
       if (!slaA.atrasado && slaB.atrasado) return 1
@@ -1036,13 +788,15 @@ export default function GestaoChamadosCommandCenter() {
     filtroPrioridade,
     filtroResponsavel,
     ordenacao,
+    agoraSLA,
+    slas,
     usuarioAtual?.id,
   ])
 
   const stats = useMemo(() => {
     const filaAtiva = chamadosFiltrados.filter(
       (chamado) =>
-        !["resolvido", "fechado"].includes(normalizarStatus(chamado.status))
+        ["aberto", "assumido", "em_atendimento"].includes(normalizarStatus(chamado.status))
     ).length
 
     const emAtendimento = chamadosFiltrados.filter((chamado) =>
@@ -1050,7 +804,7 @@ export default function GestaoChamadosCommandCenter() {
     ).length
 
     const atrasados = chamadosFiltrados.filter(
-      (chamado) => calcularSLA(chamado).atrasado
+      (chamado) => slas.get(chamado.id)?.atrasado
     ).length
 
     const resolvidos = chamadosFiltrados.filter((chamado) =>
@@ -1064,7 +818,7 @@ export default function GestaoChamadosCommandCenter() {
       atrasados,
       resolvidos,
     }
-  }, [chamadosFiltrados])
+  }, [chamadosFiltrados, agoraSLA, slas])
 
   const filtrosAtivos = Boolean(categoriaCatalogo || assuntoCatalogo) || Boolean(
     possuiFiltrosAtivos({

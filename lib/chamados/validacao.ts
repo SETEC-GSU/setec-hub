@@ -1,6 +1,7 @@
 import { encontrarServico, type OrigemChamado, type ServicoChamado } from "./catalogo";
 import { descricaoSoModelo } from "./modelosDescricao";
-export type PedidoChamado = { origem: OrigemChamado; servicoId: string; titulo: string; nome: string; unidade: string; ambiente: string; descricao: string; respostas: Record<string, string> };
+import { descricaoObrigatoria, limparObservacoes, servicoFormulario } from "./formulario";
+export type PedidoChamado = { origem: OrigemChamado; servicoId: string; titulo: string; nome: string; unidade: string; ambiente: string; descricao: string; respostas: Record<string, string>; compacto?: boolean; versaoFormulario?: 3 };
 export function validarPedido(p: PedidoChamado) {
   if (!["escola", "ure"].includes(p.origem)) return "Origem inválida.";
   const s = encontrarServico(p.servicoId, p.origem);
@@ -9,11 +10,14 @@ export function validarPedido(p: PedidoChamado) {
   if (p.nome.trim().length < 3 || p.nome.length > 120) return "Informe o nome do solicitante, com até 120 caracteres.";
   if (p.unidade.trim().length < (p.origem === "escola" ? 3 : 2) || p.unidade.length > 160) return p.origem === "escola" ? "Informe a unidade escolar." : "Informe o setor solicitante.";
   if (p.ambiente.length > 160) return "O local / ambiente deve ter até 160 caracteres.";
-  if (p.descricao.trim().length < 15 || p.descricao.length > 30000) return "Descreva sua necessidade entre 15 e 30.000 caracteres.";
-  if (descricaoSoModelo(p.servicoId, p.descricao, p.origem)) return "Preencha os tópicos do roteiro na descrição; o modelo ainda está sem respostas.";
+  const novaVersao = p.versaoFormulario === 3;
+  const descricaoNecessaria = novaVersao ? descricaoObrigatoria(s.id, 3) : !p.compacto || descricaoObrigatoria(s.id);
+  const descricao = novaVersao ? limparObservacoes(p.descricao, s.id, p.origem).conteudo : p.descricao.trim();
+  if ((descricaoNecessaria && descricao.length < 15) || p.descricao.length > 30000) return "Descreva o que precisa ser feito, com pelo menos 15 caracteres. Responda após os dois-pontos ou escreva com suas palavras.";
+  if (!novaVersao && descricaoSoModelo(p.servicoId, p.descricao, p.origem)) return "Preencha os tópicos do roteiro na descrição; o modelo ainda está sem respostas.";
   if (!p.respostas || typeof p.respostas !== "object" || Array.isArray(p.respostas)) return "As informações da solicitação são inválidas.";
   if (Object.keys(p.respostas).some(k => !s.campos.some(c => c.id === k))) return "Há informações de outro assunto. Selecione novamente a solicitação.";
-  for (const campo of s.campos) {
+  for (const campo of (novaVersao ? servicoFormulario(s, p.origem).campos : s.campos)) {
     const valor = p.respostas[campo.id] ?? "";
     if (typeof valor !== "string" || valor.length > 2000) return `Confira o campo “${campo.label}” (até 2.000 caracteres).`;
     if (!valor.trim() && campo.opcional) continue;
@@ -26,8 +30,12 @@ export function validarPedido(p: PedidoChamado) {
   return null;
 }
 export function dadosDoPedido(p: PedidoChamado, s: ServicoChamado) {
+  if (p.versaoFormulario === 3) {
+    s = servicoFormulario(s, p.origem);
+    p = { ...p, descricao: limparObservacoes(p.descricao, s.id, p.origem).texto };
+  }
   const respostas = Object.fromEntries(s.campos.filter(c => p.respostas[c.id]?.trim()).map(c => [c.id, p.respostas[c.id].trim()]));
   const complemento = s.campos.filter(c => respostas[c.id]).map(c => `${c.label}: ${respostas[c.id]}`).join("\n");
-  return { descricao: [p.descricao.trim(), p.ambiente.trim() && `Local / ambiente: ${p.ambiente.trim()}`, complemento && `Informações da solicitação:\n${complemento}`].filter(Boolean).join("\n\n"),
+  return { descricao: [p.descricao.trim() || s.label, p.ambiente.trim() && `Local / ambiente: ${p.ambiente.trim()}`, complemento && `Informações da solicitação:\n${complemento}`].filter(Boolean).join("\n\n"),
     dados: { versao: 1, servico_id: s.id, respostas, ambiente: p.ambiente.trim() } };
 }

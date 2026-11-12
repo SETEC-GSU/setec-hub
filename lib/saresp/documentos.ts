@@ -1,3 +1,4 @@
+import { marcaDocumentoHtml } from "@/lib/brand/relatorios"
 import {
   conferirDemandaSaresp,
   deslocarDiaUtil,
@@ -83,7 +84,7 @@ function cabecalho(titulo: string, edicao: EdicaoDocumento | null, assunto: stri
           <p>SEINTEC - SERVIÇO DE INFORMAÇÕES EDUCACIONAIS E TECNOLOGIA</p>
           <p>SETEC - SEÇÃO DE TECNOLOGIA</p>
         </div>
-        <div aria-hidden="true"></div>
+        <div class="marca-hub">${marcaDocumentoHtml("claro",94)}</div>
       </div>
       <div class="titulo-documento">
         <p class="sobretitulo">SARESP Digital / ${htmlSeguro(assunto)}</p>

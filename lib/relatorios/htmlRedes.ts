@@ -1,4 +1,5 @@
-// Modelo institucional preservado integralmente da página enviada.
+// Modelo compartilhado pela página, pela Central e pelo backup. Dados preservados.
+import { cabecalhoTecnicoHtml, estilosDocumentoTecnico, scriptImpressaoTecnica } from "@/lib/brand/relatorios";
 type ItemRedeBanco = {
   id: string
   ordem: number
@@ -205,10 +206,6 @@ export function montarHtmlPdf(relatorio: RelatorioRedeHistorico) {
   const totalExternos = itens.filter(
     (item) => item.acionamento_fde || item.acionamento_operadora,
   ).length
-  const logoUrl =
-    typeof window !== "undefined"
-      ? `${window.location.origin}/brand/setec-hub-icon.png`
-      : "/brand/setec-hub-icon.png"
 
   const itensHtml = itens
     .slice()
@@ -363,25 +360,17 @@ export function montarHtmlPdf(relatorio: RelatorioRedeHistorico) {
     .signature { border-top: 1px solid #334155; padding-top: 10px; text-align: center; color: #334155; font-size: 9.8px; font-weight: 800; min-height: 62px; }
     .note { margin-top: 8px; padding-top: 7px; border-top: 1px solid #e2e8f0; text-align: center; color: #64748b; font-size: 8.5px; }
     @media print { .no-print { display: none !important; } .item, .card, .summary-card, .footer { break-inside: avoid; } }
+    ${estilosDocumentoTecnico}
   </style>
 </head>
 <body>
   <main>
-    <header class="header">
-      <div class="brand">
-        <img class="logo" src="${escapeHtml(logoUrl)}" alt="SETEC Hub" />
-        <div>
-          <h1>Relatório Técnico de Atendimento de Redes</h1>
-          <p>SETEC Hub • URE Guarulhos Sul</p>
-        </div>
-      </div>
-      <div class="doc">
+    ${cabecalhoTecnicoHtml("Relatório Técnico de Atendimento de Redes", `
         <p><strong>Data:</strong> ${escapeHtml(formatarData(relatorio.data_atendimento))}</p>
         <p><strong>Status:</strong> ${escapeHtml(relatorio.status)}</p>
         <p><strong>Gerado:</strong> ${escapeHtml(formatarDataHora(new Date().toISOString()))}</p>
         <span class="doc-badge">Documento Institucional</span>
-      </div>
-    </header>
+      `)}
 
     <section class="headline">
       <div class="card">
@@ -425,29 +414,19 @@ export function montarHtmlPdf(relatorio: RelatorioRedeHistorico) {
         : ""
     }
 
+    <div class="document-end">
     <footer class="footer">
       <div class="signature">${escapeHtml(relatorio.tecnico_nome)}<br />Técnico Responsável</div>
       <div class="signature">${relatorio.local_atendimento === "ure" ? "Responsável pelo atendimento na URE" : "Responsável da Unidade Escolar"}<br />Assinatura / Carimbo</div>
     </footer>
 
     <p class="note">Documento gerado pelo SETEC Hub. Este relatório registra as informações técnicas declaradas no atendimento de redes.</p>
+    </div>
   </main>
   <div class="no-print" style="position:fixed;right:16px;bottom:16px">
     <button onclick="window.print()" style="border:0;border-radius:12px;background:#0f766e;color:#fff;padding:12px 16px;font-weight:900;cursor:pointer">Imprimir / Salvar PDF</button>
   </div>
-  <script>
-    window.addEventListener('load', function () {
-      Promise.all(Array.from(document.images || []).map(function (img) {
-        if (img.complete) return Promise.resolve();
-        return new Promise(function (resolve) {
-          img.addEventListener('load', resolve, { once: true });
-          img.addEventListener('error', resolve, { once: true });
-        });
-      })).then(function () {
-        window.setTimeout(function () { window.focus(); window.print(); }, 450);
-      });
-    });
-  </script>
+  ${scriptImpressaoTecnica()}
 </body>
 </html>`
 }

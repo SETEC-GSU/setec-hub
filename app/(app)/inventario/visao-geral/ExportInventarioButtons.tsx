@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
+import { logoSetecDataUri } from "@/lib/brand/identidade"
 
 type ResumoExportacao = {
   escolaSelecionada: string
@@ -1429,6 +1430,18 @@ function buildPdfHtml(
           page-break-inside: avoid;
         }
       }
+      /* Identidade Elo e respiro do documento; métricas e recortes preservados. */
+      html,body { font-size:10px; line-height:1.5; }
+      .cover-top { padding:22px; gap:24px; }
+      .brand-logo { width:234px; margin-bottom:17px; }
+      .cover h1 { font-size:24px; line-height:1.2; }
+      .cover-subtitle { line-height:1.6; }
+      th,td { padding:9px 10px; line-height:1.45; overflow-wrap:anywhere; }
+      th { padding:8px 6px; overflow-wrap:normal; word-break:normal; }
+      thead { display:table-header-group; }
+      tr { break-inside:avoid; page-break-inside:avoid; }
+      .section-header { break-after:avoid; }
+      .insight,.responsavel { break-inside:avoid; }
     </style>
   </head>
 
@@ -1714,10 +1727,7 @@ export default function ExportInventarioButtons(props: ExportInventarioButtonsPr
   function gerarPdf() {
     setErro(null)
 
-    const logoUrl = new URL(
-      "/brand/setec-hub-logo-horizontal-dark.png",
-      window.location.origin
-    ).toString()
+    const logoUrl = logoSetecDataUri("escuro")
 
     const html = buildPdfHtml(props, logoUrl)
     const janela = window.open("", "_blank", "width=1280,height=900")

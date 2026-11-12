@@ -240,6 +240,11 @@ export const estilosDocumentoSaresp = `
     .pagina + .pagina { margin-top: 0; break-before: page; page-break-before: always; }
     a { color: inherit; text-decoration: none; }
   }
+  /* As duas colunas laterais têm a mesma largura para centralizar o institucional. */
+  .institucional,.guia .institucional { grid-template-columns:104px minmax(0,1fr) 104px; gap:12px; }
+  .brasao,.guia .brasao { justify-self:center; }
+  .marca-hub { min-width:0; width:104px; justify-self:end; display:flex; justify-content:flex-end; }
+
 `
 
 /** Complementos dos períodos integrados e do dashboard. */

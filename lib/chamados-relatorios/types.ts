@@ -1,8 +1,9 @@
-export type PeriodicidadeHub = "mensal" | "trimestral" | "semestral" | "anual" | "personalizado";
+export type PeriodicidadeHub = "mensal" | "trimestral" | "semestral" | "anual" | "personalizado" | "completo";
 export type FiltrosHub = {
   periodicidade: PeriodicidadeHub; ano: number; indice: number; inicio: string; fim: string;
   modalidade: "estrategico" | "quantitativo"; referencia: "conclusao" | "abertura";
   responsavel: string; unidade: string; categoria: string; origem: string; prioridade: string;
+  assunto?: string;
   status: "todos" | "atendidos" | "ativos" | "aberto" | "assumido" | "em_atendimento" | "resolvido" | "fechado" | "cancelado" | "outros";
   busca: string; detalhar: boolean;
 };
@@ -10,7 +11,7 @@ export type ChamadoHub = {
   id: string; codigo: string | null; titulo: string | null; descricao: string | null;
   categoria: string | null; subcategoria: string | null; servico_id: string | null;
   origem: string | null; prioridade: string | null; status: string | null;
-  setor: string | null; escola: string | null; solicitante_nome: string | null;
+  setor: string | null; escola: string | null; solicitante_nome: string | null; solicitante_email?: string | null; usuario_id?: string | null;
   analista_responsavel: string | null; created_at: string | null; updated_at: string | null;
   started_at: string | null; resolved_at: string | null; closed_at: string | null;
   retorno_devolutivo: string | null;

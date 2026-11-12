@@ -1,5 +1,5 @@
 import "server-only";
-import { access, readFile } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import path from "node:path";
 import chromium from "@sparticuz/chromium";
 import puppeteer, { type Browser } from "puppeteer-core";
@@ -7,6 +7,7 @@ import { montarHtmlPdf as htmlEquipamentos, type ParecerHistorico } from "./html
 import { montarHtmlPdf as htmlRedes, type RelatorioRedeHistorico } from "./htmlRedes";
 import type { DetalheRelatorio } from "./types";
 import { ErroApiRelatorios } from "./server";
+import { ajustarPaginacaoTecnica } from "@/lib/brand/relatorios";
 
 async function chromeLocal() {
   if (process.env.RELATORIOS_CHROME_PATH) return process.env.RELATORIOS_CHROME_PATH;
@@ -32,14 +33,7 @@ export async function htmlDocumento(detalhe: DetalheRelatorio) {
     ? htmlEquipamentos(detalhe.relatorio as unknown as ParecerHistorico)
     : htmlRedes(detalhe.relatorio as unknown as RelatorioRedeHistorico);
   html = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
-  // A mesma marca usada pelas páginas, incorporada no documento sem chamadas externas.
-  try {
-    const imagem = await readFile(path.join(process.cwd(), "public", "brand", "setec-hub-icon.png"));
-    html = html.replaceAll('src="/brand/setec-hub-icon.png"', `src="data:image/png;base64,${imagem.toString("base64")}"`);
-  } catch {
-    // O acervo e o texto permanecem disponíveis quando a marca não está instalada.
-    html = html.replace(/<img\b[^>]*src="\/brand\/setec-hub-icon.png"[^>]*>/g, '<strong style="color:#0e7490;font:900 13px Arial">SETEC Hub</strong>');
-  }
+  // A marca vetorial já acompanha o HTML; não depende de arquivos ou rede.
   return html;
 }
 
@@ -49,6 +43,7 @@ export async function renderizarPDF(browser: Browser, html: string, signal?: Abo
   const cancelar = () => { void page.close().catch(() => undefined); };
   signal?.addEventListener("abort", cancelar, { once: true });
   try {
+    await page.setViewport({ width: Math.floor(182 * 96 / 25.4), height: 1000, deviceScaleFactor: 1 });
     await page.setJavaScriptEnabled(false);
     await page.setRequestInterception(true);
     page.on("request", request => { const url = request.url();
@@ -56,6 +51,7 @@ export async function renderizarPDF(browser: Browser, html: string, signal?: Abo
       void tarefa.catch(() => undefined); });
     await page.emulateMediaType("print");
     await page.setContent(html, { waitUntil: "load", timeout: 20000 });
+    await page.evaluate(ajustarPaginacaoTecnica);
     return Buffer.from(await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true, timeout: 20000 }));
   } finally {
     signal?.removeEventListener("abort", cancelar);

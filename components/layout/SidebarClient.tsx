@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 
-import Image from "next/image"
+import BrandLogo from "@/components/brand/BrandLogo"
 
 import Link from "next/link"
 
@@ -129,7 +129,6 @@ export default function SidebarClient({
 
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({})
 
-  const [logoError, setLogoError] = useState(false)
 
   const allHrefs = useMemo(() => {
     const hrefs = safeSections.flatMap((section) =>
@@ -177,7 +176,7 @@ export default function SidebarClient({
 
       safeSections.forEach((section) => {
         const hasActiveItem = section.items.some((item) =>
-          isHrefMatch(pathname, item.href),
+          normalizePath(item.href) === normalizePath(activeHref),
         )
 
         if (hasActiveItem) {
@@ -187,7 +186,7 @@ export default function SidebarClient({
 
       return next
     })
-  }, [pathname, safeSections])
+  }, [pathname, safeSections, activeHref])
 
   function toggleSection(title: string) {
     setOpenSections((current) => ({
@@ -217,7 +216,7 @@ export default function SidebarClient({
           className={cx(
             "sticky top-0 z-20 flex h-24 shrink-0 items-center border-b border-slate-800 bg-[#020617]/95 backdrop-blur-md transition-all",
 
-            collapsed ? "justify-center px-0" : "px-6",
+            collapsed ? "flex-col justify-center gap-1 px-0 py-2" : "gap-2 px-4",
           )}
         >
           <Link
@@ -228,54 +227,15 @@ export default function SidebarClient({
             className={cx(
               "group/logo flex min-w-0 items-center",
 
-              collapsed ? "justify-center" : "gap-3",
+              collapsed ? "w-11 shrink-0 justify-center" : "flex-1",
             )}
 
             title="SETEC Hub"
           >
-            <div className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-blue-400/20 bg-blue-500/5 shadow-[0_0_24px_rgba(37,99,235,0.30)] transition-all group-hover/logo:scale-105 group-hover/logo:border-blue-400/40">
-              {!logoError ? (
-                <Image
-                  src="/brand/setec-hub-icon.png"
-
-                  alt="Símbolo do SETEC Hub"
-
-                  width={1024}
-
-                  height={1024}
-
-                  priority
-
-                  sizes="48px"
-
-                  onError={() => setLogoError(true)}
-
-                  className="h-full w-full object-contain"
-                />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-blue-600 to-blue-500">
-                  <span className="text-lg font-black tracking-tight text-white">
-                    SH
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {!collapsed && (
-              <div className="min-w-0 leading-tight">
-                <div className="flex items-baseline text-2xl font-black tracking-tight">
-                  <span className="bg-gradient-to-r from-blue-400 to-blue-600 bg-clip-text text-transparent">
-                    SETEC
-                  </span>
-
-                  <span className="ml-1 font-light text-slate-200">Hub</span>
-                </div>
-
-                <span className="mt-0.5 block truncate text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-                  URE Guarulhos Sul
-                </span>
-              </div>
-            )}
+            <BrandLogo
+              variant={collapsed ? "simbolo" : "completa"}
+              style={{ width: collapsed ? 44 : "100%", maxWidth: "100%" }}
+            />
           </Link>
 
           <button
@@ -288,9 +248,9 @@ export default function SidebarClient({
             title={collapsed ? "Expandir menu" : "Recolher menu"}
 
             className={cx(
-              "absolute top-8 hidden h-9 w-9 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-400 shadow-lg transition-all hover:border-blue-500/40 hover:bg-slate-800 hover:text-white md:flex",
+              "hidden h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-400 shadow-lg transition-all hover:border-blue-500/40 hover:bg-slate-800 hover:text-white md:flex",
 
-              collapsed ? "right-[-18px] rotate-180" : "right-4",
+              collapsed && "rotate-180",
             )}
           >
             <svg
@@ -401,7 +361,7 @@ export default function SidebarClient({
               const isOpen = Boolean(openSections[section.title])
 
               const sectionActive = section.items.some((item) =>
-                isHrefMatch(pathname, item.href),
+                normalizePath(item.href) === normalizePath(activeHref),
               )
 
               return (

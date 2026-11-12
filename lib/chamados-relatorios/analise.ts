@@ -7,6 +7,11 @@ export function normalizarStatus(v: unknown) {
   const s = normalizar(v).replaceAll(" ", "_");
   return s === "encerrado" ? "fechado" : s === "cancelada" ? "cancelado" : s || "aberto";
 }
+export function normalizarPrioridadeHub(v: unknown) {
+  const p = normalizar(v);
+  if (!p) return "nao_informada";
+  return ["critica", "alta", "media", "baixa"].find(n => p.includes(n)) || p;
+}
 export const atendido = (s: string) => ["resolvido", "fechado"].includes(s);
 export const ativo = (s: string) => ["aberto", "assumido", "em_atendimento"].includes(s);
 export function statusLabel(s: string) {
@@ -14,7 +19,7 @@ export function statusLabel(s: string) {
 }
 export const prioridadeLabel = (p: string) => ({ critica: "Crítica", alta: "Alta", media: "Média", baixa: "Baixa", nao_informada: "Não informada" } as Record<string, string>)[p] || p;
 export function dataValida(v: string | null | undefined) { return Boolean(v && Number.isFinite(Date.parse(v))); }
-export function dataConclusao(r: ChamadoHub) {
+export function dataConclusao(r: Pick<ChamadoHub, "resolved_at" | "closed_at">) {
   // Resolução é a primeira conclusão. Fechar administrativamente depois não
   // move um atendimento já resolvido para outro mês.
   return dataValida(r.resolved_at) ? r.resolved_at : dataValida(r.closed_at) ? r.closed_at : null;
@@ -35,7 +40,7 @@ export function opcoesDaPagina(registros: (Pick<ChamadoHub, "categoria" | "orige
     origens: [...new Set(registros.map(r => r.origem?.trim().toUpperCase() || "OUTROS"))].sort(ordenar),
   };
 }
-export function prepararRegistros(rows: ChamadoHub[], nomes: Map<string, string>, f: FiltrosHub): RegistroHub[] {
+export function prepararRegistros(rows: ChamadoHub[], nomes: Map<string, string>, f: FiltrosHub, emails = new Map<string, string>()): RegistroHub[] {
   const termo = normalizar(f.busca);
   return rows.flatMap(r => {
     const classificacao = classificacaoChamado(r), statusPainel = normalizarStatus(r.status), conclusao = dataConclusao(r);
@@ -46,17 +51,18 @@ export function prepararRegistros(rows: ChamadoHub[], nomes: Map<string, string>
     if (!["todos", "atendidos", "ativos", "outros"].includes(f.status) && statusPainel !== f.status) return [];
     if (f.responsavel === "__sem_responsavel__" ? Boolean(r.analista_responsavel) : Boolean(f.responsavel && r.analista_responsavel !== f.responsavel)) return [];
     const origemPainel = r.origem?.trim().toUpperCase() || "OUTROS", unidadePainel = unidadeChamado(r);
-    const prioridadePainel = normalizar(r.prioridade) || "nao_informada";
+    const prioridadePainel = normalizarPrioridadeHub(r.prioridade);
     if (f.unidade && normalizar(unidadePainel) !== normalizar(f.unidade)) return [];
+    if (f.assunto && normalizar(classificacao.assunto) !== normalizar(f.assunto)) return [];
     if (f.categoria && normalizar(classificacao.categoria) !== normalizar(f.categoria)) return [];
     if (f.origem && normalizar(origemPainel) !== normalizar(f.origem)) return [];
     if (f.prioridade && prioridadePainel !== f.prioridade) return [];
     const responsavelNome = r.analista_responsavel ? nomes.get(r.analista_responsavel) || `Responsável ${r.analista_responsavel.slice(0, 8)} (cadastro indisponível)` : "Sem responsável";
-    if (termo && !normalizar([r.codigo, r.titulo, r.descricao, r.retorno_devolutivo, r.solicitante_nome, responsavelNome, unidadePainel, classificacao.categoria, classificacao.assunto].join(" ")).includes(termo)) return [];
+    if (termo && !normalizar([r.codigo, r.titulo, r.descricao, r.retorno_devolutivo, r.categoria, classificacao.categoria, classificacao.assunto, r.origem, r.prioridade, r.status, r.solicitante_nome, r.solicitante_email, r.setor, r.escola, nomes.get(r.usuario_id || ""), emails.get(r.usuario_id || ""), nomes.get(r.analista_responsavel || ""), emails.get(r.analista_responsavel || "")].join(" ")).includes(termo)) return [];
     const referencia = f.referencia === "conclusao" ? conclusao : r.created_at;
-    if (!dataValida(referencia)) return [];
-    const dataReferencia = diaSaoPaulo(new Date(referencia!));
-    if (dataReferencia < f.inicio || dataReferencia > f.fim) return [];
+    if (!dataValida(referencia) && (f.periodicidade !== "completo" || f.referencia !== "abertura")) return [];
+    const dataReferencia = dataValida(referencia) ? diaSaoPaulo(new Date(referencia!)) : "";
+    if (f.periodicidade !== "completo" && (dataReferencia < f.inicio || dataReferencia > f.fim)) return [];
     return [{ ...r, responsavelNome, categoriaPainel: classificacao.categoria, assuntoPainel: classificacao.assunto,
       unidadePainel, dataReferencia, conclusao, statusPainel, origemPainel, prioridadePainel, outraSolicitacao: classificacao.outra }];
   }).sort((a, b) => a.dataReferencia.localeCompare(b.dataReferencia) || a.id.localeCompare(b.id));
@@ -88,12 +94,19 @@ export function analisarHub(rows: RegistroHub[], f: FiltrosHub, agora = new Date
   const meio = Math.floor(amostra.length / 2), arredondar = (n: number) => Math.round(n * 100) / 100;
   const porResponsavel = agrupar(rows, r => r.responsavelNome, r => r.analista_responsavel || "__sem_responsavel__");
   const porCategoria = agrupar(rows, r => r.categoriaPainel), meses = agrupar(rows, r => r.dataReferencia.slice(0, 7));
-  const porMes: GrupoHub[] = [], data = new Date(f.inicio.slice(0, 7) + "-01T12:00:00Z");
-  while (data.toISOString().slice(0, 7) <= f.fim.slice(0, 7)) {
-    const nome = data.toISOString().slice(0, 7);
-    porMes.push(meses.find(g => g.nome === nome) || { chave: nome, nome, total: 0, atendidos: 0, ativos: 0, outros: 0 });
-    data.setUTCMonth(data.getUTCMonth() + 1);
+  const porMes: GrupoHub[] = [];
+  if (f.periodicidade === "completo") {
+    porMes.push(...meses.filter(g => g.nome).sort((a, b) => a.nome.localeCompare(b.nome)));
+  } else {
+    const data = new Date(f.inicio.slice(0, 7) + "-01T12:00:00Z");
+    while (data.toISOString().slice(0, 7) <= f.fim.slice(0, 7)) {
+      const nome = data.toISOString().slice(0, 7);
+      porMes.push(meses.find(g => g.nome === nome) || { chave: nome, nome, total: 0, atendidos: 0, ativos: 0, outros: 0 });
+      data.setUTCMonth(data.getUTCMonth() + 1);
+    }
   }
+  const semMes = rows.filter(r => !r.dataReferencia).length;
+  if (semMes) porMes.push({ chave: "sem_data", nome: "Sem data válida", total: semMes, atendidos: rows.filter(r => !r.dataReferencia && atendido(r.statusPainel)).length, ativos: rows.filter(r => !r.dataReferencia && ativo(r.statusPainel)).length, outros: rows.filter(r => !r.dataReferencia && !atendido(r.statusPainel) && !ativo(r.statusPainel)).length });
   const semDescricao = rows.filter(r => !r.descricao?.trim()), semRetorno = concluidos.filter(r => !r.retorno_devolutivo?.trim());
   const semResponsavel = rows.filter(r => !r.analista_responsavel), outras = rows.filter(r => r.outraSolicitacao);
   const conclusoesSemData = concluidos.filter(r => !r.conclusao).length;

@@ -5,12 +5,14 @@ const arquivosPdf = [
   "./node_modules/@sparticuz/chromium/bin/**/*",
   "./public/brand/brasao-sp-relatorios.jpg",
   "./public/brand/setec-hub-icon.png",
+  "./public/brand/setec-hub-logo-horizontal-light.png",
 ];
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["puppeteer-core", "@sparticuz/chromium"],
 
   outputFileTracingIncludes: {
+    "/api/escolas/relatorios": arquivosPdf,
     "/api/fields/relatorios/gerencial": arquivosPdf,
     "/api/chamados/relatorios/gerencial": arquivosPdf,
     "/api/fields/relatorios/documento": arquivosPdf,

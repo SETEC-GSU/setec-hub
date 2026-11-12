@@ -16,7 +16,8 @@ export async function createChamado(formData: FormData) {
     let respostas
     try { respostas = JSON.parse(raw) } catch { return { ok: false as const, erro: "As informações complementares são inválidas." } }
     const pedido: PedidoChamado = { origem, servicoId: texto("servico_id"), titulo: texto("titulo"), nome: texto("nome"),
-      unidade: texto(origem === "escola" ? "escola" : "setor"), ambiente: texto("ambiente"), descricao: texto("descricao"), respostas }
+      unidade: texto(origem === "escola" ? "escola" : "setor"), ambiente: texto("ambiente"), descricao: texto("descricao"), respostas,
+      compacto: ["2", "3"].includes(texto("formulario_versao")), versaoFormulario: texto("formulario_versao") === "3" ? 3 : undefined }
     const erro = validarPedido(pedido)
     if (erro) return { ok: false as const, erro }
     const servico = encontrarServico(pedido.servicoId, origem)!
